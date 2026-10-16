@@ -20,10 +20,15 @@ internal data class ConversationEntity(
     @ColumnInfo(name = "applied_runtime_run_ids_json") val appliedRuntimeRunIdsJson: String = "[]",
     @ColumnInfo(name = "roleplay_json", defaultValue = "''") val roleplayJson: String = "",
     @ColumnInfo(name = "revisions_json", defaultValue = "''") val revisionsJson: String = "",
+    @ColumnInfo(name = "last_model_usage_json", defaultValue = "''") val lastModelUsageJson: String = "",
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     /** 会话最近使用的本地 Model.id；null 表示跟随默认模型。 */
     @ColumnInfo(name = "model_id") val modelId: String? = null,
+    /** 收藏置顶：置顶会话排在最前，批量删除时跳过，避免误删。 */
+    @ColumnInfo(name = "pinned", defaultValue = "0") val pinned: Boolean = false,
+    /** 所属会话分类；null 表示未分类，分类被删除后回落到未分类。 */
+    @ColumnInfo(name = "category_id") val categoryId: String? = null,
 )
 
 internal data class ConversationMetadata(
@@ -34,9 +39,13 @@ internal data class ConversationMetadata(
     @ColumnInfo(name = "applied_runtime_run_ids_json") val appliedRuntimeRunIdsJson: String,
     @ColumnInfo(name = "roleplay_json") val roleplayJson: String = "",
     @ColumnInfo(name = "revisions_json") val revisionsJson: String = "",
+    @ColumnInfo(name = "last_model_usage_json") val lastModelUsageJson: String = "",
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     @ColumnInfo(name = "model_id") val modelId: String? = null,
+    @ColumnInfo(name = "pinned") val pinned: Boolean = false,
+    /** 所属会话分类；null 表示未分类，分类被删除后回落到未分类。 */
+    @ColumnInfo(name = "category_id") val categoryId: String? = null,
 )
 
 @Serializable
@@ -99,6 +108,7 @@ internal data class ConversationMessageEntity(
     @ColumnInfo(name = "output_tokens") val outputTokens: Int? = null,
     @ColumnInfo(name = "reasoning_tokens") val reasoningTokens: Int? = null,
     @ColumnInfo(name = "cached_tokens") val cachedTokens: Int? = null,
+    @ColumnInfo(name = "request_duration_ms") val requestDurationMs: Long? = null,
     @ColumnInfo(name = "elapsed_seconds") val elapsedSeconds: Int? = null,
     @ColumnInfo(name = "tool_name") val toolName: String? = null,
     @ColumnInfo(name = "tool_status") val toolStatus: String? = null,

@@ -21,18 +21,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ShortText
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.rounded.AddComment
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -45,6 +49,9 @@ import io.github.mangi.eta.ui.components.CharacterAvatar
 import io.github.mangi.eta.ui.components.ConversationSidePaneScaffold
 import io.github.mangi.eta.ui.components.MiuixBackButton
 import io.github.mangi.eta.ui.components.RoleplayChatUi
+import io.github.mangi.eta.ui.components.ShortcutIcon
+import io.github.mangi.eta.ui.components.openVirtualScreen
+import io.github.mangi.eta.ui.components.rememberVirtualScreenMenuEntries
 import io.github.mangi.eta.ui.components.TopBarBackdrop
 import io.github.mangi.eta.ui.components.captureForTopBar
 import io.github.mangi.eta.ui.components.rememberTopBarBackdrop
@@ -95,14 +102,22 @@ internal fun AgentAppShell(
     onOpenBrowser: () -> Unit,
     onSelectConversation: (String) -> Unit,
     onConversationRename: (ConversationSummaryUi) -> Unit,
+    onMoveToCategory: (ConversationSummaryUi) -> Unit,
     onConversationExport: (ConversationSummaryUi) -> Unit,
     onConversationDelete: (ConversationSummaryUi) -> Unit,
+    onConversationPin: (ConversationSummaryUi) -> Unit,
+    onBatchDelete: (List<ConversationSummaryUi>) -> Unit,
     onOpenTools: () -> Unit,
     onOpenSkills: () -> Unit,
     onOpenCharacters: () -> Unit,
     onOpenPermissions: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRootSettings: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onOpenModelProviders: () -> Unit,
+    onOpenTasks: () -> Unit,
+    onOpenCategories: () -> Unit,
+    conversationStatus: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
     homeCharacter: RoleplayChatUi? = null,
     onOpenCharacter: () -> Unit = {},
@@ -126,6 +141,7 @@ internal fun AgentAppShell(
                             color = topBarColor,
                             onBack = onBack,
                             onOpenConversationPane = onOpenConversationPane,
+                            onOpenCategories = onOpenCategories,
                             onNewConversation = onNewConversation,
                             onOpenTerminal = onOpenTerminal,
                             onLaunchKimiWeb = onLaunchKimiWeb,
@@ -136,6 +152,7 @@ internal fun AgentAppShell(
                             onOpenBrowser = onOpenBrowser,
                             homeCharacter = homeCharacter,
                             onOpenCharacter = onOpenCharacter,
+                            conversationStatus = conversationStatus,
                         )
                     }
                 }
@@ -161,16 +178,24 @@ internal fun AgentAppShell(
                 onOpen = onOpenConversationPane,
                 onDismiss = onDismissConversationPane,
                 onSearchChange = onSearchConversations,
+                onNewConversation = onNewConversation,
                 onConversationSelected = onSelectConversation,
                 onConversationRename = onConversationRename,
+                onMoveToCategory = onMoveToCategory,
                 onConversationExport = onConversationExport,
                 onConversationDelete = onConversationDelete,
+                onConversationPin = onConversationPin,
+                onBatchDelete = onBatchDelete,
                 onOpenSettings = onOpenSettings,
+                onOpenRootSettings = onOpenRootSettings,
+                onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                 onOpenModelProviders = onOpenModelProviders,
                 onOpenTools = onOpenTools,
                 onOpenSkills = onOpenSkills,
                 onOpenCharacters = onOpenCharacters,
                 onOpenPermissions = onOpenPermissions,
+                onOpenTasks = onOpenTasks,
+                onOpenCategories = onOpenCategories,
             ) {
                 pageContent()
             }
@@ -187,6 +212,7 @@ private fun AgentTopBar(
     color: Color,
     onBack: () -> Unit,
     onOpenConversationPane: () -> Unit,
+    onOpenCategories: () -> Unit,
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
@@ -197,6 +223,7 @@ private fun AgentTopBar(
     onOpenBrowser: () -> Unit,
     homeCharacter: RoleplayChatUi?,
     onOpenCharacter: () -> Unit,
+    conversationStatus: (@Composable () -> Unit)?,
 ) {
     val isHome = route is AppRoute.Home
     val navigationIcon: @Composable () -> Unit = {
@@ -221,7 +248,17 @@ private fun AgentTopBar(
     val actions: @Composable RowScope.() -> Unit = {
         if (isHome) {
             SpeechAutoReadToggle()
+            conversationStatus?.invoke()
+            // 顶栏第一排：紧挨速度/内存/工具档，放一个新建对话入口。
+            IconButton(onClick = onNewConversation) {
+                Icon(
+                    imageVector = Icons.Rounded.AddComment,
+                    contentDescription = stringResource(R.string.action_new_conversation),
+                    modifier = Modifier.size(TopBarMenuIconSize),
+                )
+            }
             TopBarOverflowMenu(
+                onOpenCategories = onOpenCategories,
                 onNewConversation = onNewConversation,
                 onOpenTerminal = onOpenTerminal,
                 onLaunchKimiWeb = onLaunchKimiWeb,
@@ -244,6 +281,9 @@ private fun AgentTopBar(
             scrollBehavior = scrollBehavior,
             navigationIcon = navigationIcon,
             actions = actions,
+            // miuix 的 actions 行本身是 Arrangement.End（靠右），右边原来有 16dp 默认留白，
+            // 收到 6dp：胶囊组、＋、⋯ 一起往右贴，行尾也不空。
+            actionIconPadding = 6.dp,
         )
     } else {
         AdaptiveTopAppBar(
@@ -264,6 +304,7 @@ private val TopBarMenuIconSize = 20.dp
  */
 @Composable
 private fun TopBarOverflowMenu(
+    onOpenCategories: () -> Unit,
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
@@ -287,30 +328,47 @@ private fun TopBarOverflowMenu(
             alignment = PopupPositionProvider.Align.End,
             onDismissRequest = { showMenu = false },
         ) {
-            val newConversationText = stringResource(R.string.action_new_conversation)
+            val context = LocalContext.current
+            val scope = rememberCoroutineScope()
+            val virtualEntries = rememberVirtualScreenMenuEntries()
+            val categoriesText = stringResource(R.string.sidebar_categories)
             val openTerminalText = stringResource(R.string.action_open_terminal)
-            val launchKimiWebText = kimiWebLabel
             val stopKimiWebText = stringResource(R.string.capability_kimi_stop)
             val openBrowserText = stringResource(R.string.action_open_browser)
-            val menuItems = remember(
-                newConversationText,
-                openTerminalText,
-                launchKimiWebText,
-                openBrowserText,
-                stopKimiWebText,
-                canStopKimiWeb,
-            ) {
-                listOf(
+            // 虚拟屏入口与收藏应用平铺在菜单最上方：点开菜单就能直达，不再有二级页面。
+            val menuItems: List<DropdownItem> = buildList {
+                virtualEntries.forEach { entry ->
+                    add(
+                        DropdownItem(
+                            text = entry.label,
+                            icon = { modifier ->
+                                val bitmap = entry.icon
+                                if (bitmap != null) {
+                                    ShortcutIcon(bitmap, modifier.size(TopBarMenuIconSize))
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Smartphone,
+                                        contentDescription = null,
+                                        modifier = modifier.size(TopBarMenuIconSize),
+                                    )
+                                }
+                            },
+                        ),
+                    )
+                }
+                add(
                     DropdownItem(
-                        text = newConversationText,
+                        text = categoriesText,
                         icon = { modifier ->
                             Icon(
-                                imageVector = Icons.Rounded.AddComment,
+                                imageVector = Icons.Rounded.Folder,
                                 contentDescription = null,
                                 modifier = modifier.size(TopBarMenuIconSize),
                             )
                         },
                     ),
+                )
+                add(
                     DropdownItem(
                         text = openTerminalText,
                         icon = { modifier ->
@@ -321,16 +379,8 @@ private fun TopBarOverflowMenu(
                             )
                         },
                     ),
-                    DropdownItem(
-                        text = launchKimiWebText,
-                        icon = { modifier ->
-                            Icon(
-                                painter = painterResource(R.drawable.ic_kimi_code),
-                                contentDescription = null,
-                                modifier = modifier.size(TopBarMenuIconSize),
-                            )
-                        },
-                    ),
+                )
+                add(
                     DropdownItem(
                         text = openBrowserText,
                         icon = { modifier ->
@@ -367,12 +417,13 @@ private fun TopBarOverflowMenu(
                         index = index,
                         onSelectedIndexChange = {
                             showMenu = false
-                            when (index) {
-                                0 -> onNewConversation()
-                                1 -> onOpenTerminal()
-                                2 -> onLaunchKimiWeb()
-                                3 -> onOpenBrowser()
-                                4 -> onStopKimiWeb()
+                            val entry = virtualEntries.getOrNull(index)
+                            when {
+                                entry != null -> openVirtualScreen(context, scope, entry.component)
+                                index == virtualEntries.size -> onOpenCategories()
+                                index == virtualEntries.size + 1 -> onOpenTerminal()
+                                index == virtualEntries.size + 2 -> onOpenBrowser()
+                                else -> onStopKimiWeb()
                             }
                         },
                     )
@@ -395,8 +446,13 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.CharacterPersona -> "我的人设"
     is AppRoute.CharacterMemory -> "剧情记忆"
     is AppRoute.Permissions -> stringResource(R.string.route_permissions)
+    is AppRoute.ConversationCategories -> stringResource(R.string.conversation_categories_title)
     is AppRoute.SystemEnhance -> stringResource(R.string.route_system_enhancements)
     is AppRoute.Settings -> stringResource(R.string.route_settings)
+    is AppRoute.TokenUsage -> stringResource(R.string.usage_stats_title)
+    is AppRoute.DataUsage -> stringResource(R.string.data_usage_title)
+    is AppRoute.SelfCheck -> "功能自检"
+    is AppRoute.DiagnosticsPatrol -> stringResource(R.string.diag_patrol_title)
     is AppRoute.SpeechSettings -> stringResource(R.string.speech_settings_title)
     is AppRoute.SpeechRecognition -> stringResource(R.string.speech_recognition_title)
     is AppRoute.SpeechSynthesis -> stringResource(R.string.speech_synthesis_title)
@@ -404,6 +460,8 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.AppearanceSettings -> stringResource(R.string.appearance_title)
     is AppRoute.DataBackup -> stringResource(R.string.data_backup_title)
     is AppRoute.Memory -> stringResource(R.string.route_memory)
+    is AppRoute.Tasks -> stringResource(R.string.automation_title)
+    is AppRoute.VirtualScreen -> stringResource(R.string.virtual_screen_title)
     is AppRoute.LinuxEnvironment -> stringResource(R.string.route_linux_environment)
     is AppRoute.Workspace -> stringResource(R.string.capability_workspace)
     is AppRoute.SharedFolders -> stringResource(R.string.route_shared_folders)

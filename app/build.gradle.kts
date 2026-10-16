@@ -41,6 +41,10 @@ android {
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
         versionCode = 2026101401
         versionName = "3.3.1"
+        testInstrumentationRunner = "io.github.mangi.eta.validation.DeviceValidationRunner"
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     signingConfigs {
@@ -85,7 +89,7 @@ android {
     }
 
     androidResources {
-        localeFilters += listOf("en", "b+zh+Hans", "b+zh+Hant")
+        localeFilters += listOf("b+zh+Hans")
     }
 
     packaging {
@@ -150,6 +154,7 @@ dependencies {
     implementation(libs.libxposed.service)
     implementation(libs.dexkit)
     implementation(libs.miuix.ui)
+    implementation(libs.miuix.icons)
     implementation(libs.miuix.blur)
     implementation(libs.miuix.nav)
     implementation(libs.miuix.preference)
@@ -183,4 +188,12 @@ dependencies {
     testImplementation(libs.json)
     testImplementation(libs.room.testing)
     testImplementation(libs.robolectric)
+}
+
+// Compose 编译器会额外生成「Compose 映射报告」任务：只产出报告，不影响 APK 内容，
+// 但在本机 PRoot 环境里偶发静默卡死（进程无声消失、日志停在那一行）。直接关掉。
+tasks.configureEach {
+    if (name.endsWith("ComposeMappingErrors") || name.endsWith("ComposeMapping")) {
+        enabled = false
+    }
 }

@@ -27,7 +27,16 @@ internal object AgentConversationCodec {
         if (raw.isNullOrBlank()) {
             emptyList()
         } else {
-            json.decodeFromString<List<AgentModelClient.ConversationMessage>>(raw)
+            // 库里的历史可能被写坏（数组头缺失、前导逗号等）；解析失败按空历史处理，
+            // 绝不把异常抛到 ViewModel 构造 / 主线程上导致闪退。
+            runCatching { json.decodeFromString<List<AgentModelClient.ConversationMessage>>(raw) }
+                .getOrElse {
+                    android.util.Log.w(
+                        "Eta",
+                        "decodeTranscript: 历史 JSON 损坏，已按空历史处理（前 40 字：${raw.take(40)}）",
+                    )
+                    emptyList()
+                }
         }
 
     fun toJsonObject(message: AgentModelClient.ConversationMessage): JSONObject =
@@ -38,6 +47,7 @@ internal object AgentConversationCodec {
                 if (message.contextSummary) target.put("_eta_context_summary", true)
                 if (message.compactedUserTurns > 0) target.put("_eta_compacted_users", message.compactedUserTurns)
                 if (message.summaryThroughUserTurn > 0) target.put("_eta_summary_through_user", message.summaryThroughUserTurn)
+                if (message.compactionRound > 0) target.put("_eta_compaction_round", message.compactionRound)
                 when {
                     message.contentJson.isNotBlank() ->
                         target.put("content", JSONTokener(message.contentJson).nextValue())
@@ -62,6 +72,7 @@ internal object AgentConversationCodec {
             contextSummary = message.optBoolean("_eta_context_summary"),
             compactedUserTurns = message.optInt("_eta_compacted_users"),
             summaryThroughUserTurn = message.optInt("_eta_summary_through_user"),
+            compactionRound = message.optInt("_eta_compaction_round"),
             content = (contentValue as? String).orEmpty(),
             contentJson = if (
                 contentValue == null ||

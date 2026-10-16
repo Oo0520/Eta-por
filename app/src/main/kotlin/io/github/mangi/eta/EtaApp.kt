@@ -6,9 +6,14 @@ import android.os.Handler
 import android.os.Looper
 import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.device.RootAccess
+import io.github.mangi.eta.agent.display.VirtualScreenFloatWindow
+import io.github.mangi.eta.agent.display.VscrDiag
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
+import io.github.mangi.eta.core.CrashRecorder
+import io.github.mangi.eta.agent.automation.AutoBackupAlarm
+import io.github.mangi.eta.data.repository.AutoBackupRunner
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
@@ -45,13 +50,23 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
     override fun onCreate() {
         super.onCreate()
         Prefs.initLocal(this)
+        // 崩溃留证：任何进程一启动就装好，写入失败也不影响原有崩溃流程。
+        runCatching { CrashRecorder.install(this) }
+        // 自留日志：任何进程启动就落盘，诊断包不再依赖 logcat 的 2 分钟缓冲。
+        runCatching { io.github.mangi.eta.core.EtaTrace.init(this) }
         if (!AppProcessPolicy.shouldInitializeFullRuntime(Application.getProcessName(), packageName)) {
             return
+        }
+        // 文本库体量：升级后第一次起动把超上限的历史字段按写入侧规则保尾截断（只跑一次）。
+        applicationScope.launch {
+            runCatching { io.github.mangi.eta.data.db.TextStoreMaintenance.runOnceIfNeeded(this@EtaApp) }
         }
         TerminalRuntime.initialize(this)
         RootAccess.initialize(this)
         applicationScope.launch { TerminalRuntime.backgroundJobs(this@EtaApp).resume() }
         SettingsDataStore.init(this)
+        runCatching { VscrDiag.init(this) }
+        VirtualScreenFloatWindow.init(this)
         val predictiveBackEnabled = runBlocking(Dispatchers.IO) {
             AppearanceSettingsRepository.settings().predictiveBackEnabled
         }
@@ -59,6 +74,32 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         AgentMemoryRepository.init(this)
         ProviderRepository.init(this)
         McpServerRepository.init(this)
+        // 悬浮胶囊常驻：上次开着就继续挂上，没有任务时显示空闲。
+        applicationScope.launch(Dispatchers.IO) {
+            val pinned = runCatching { SettingsDataStore.settings().overlayCapsulePinned }.getOrDefault(false)
+            if (pinned) {
+                runCatching {
+                    startService(
+                        android.content.Intent(
+                            this@EtaApp,
+                            io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java,
+                        ).setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_PIN_CAPSULE),
+                    )
+                }
+            }
+        }
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching {
+                io.github.mangi.eta.data.db.EtaDatabase.get(this@EtaApp).agentTaskDao().recoverInterrupted(System.currentTimeMillis())
+                io.github.mangi.eta.agent.automation.AgentTaskScheduler.enqueueDue(this@EtaApp)
+                io.github.mangi.eta.agent.automation.AgentTaskScheduler.refresh(this@EtaApp)
+                // 自动备份：先排下一次唤醒（闹钟可能已被系统清掉），再补一次到期检查。
+                AutoBackupAlarm.refresh(this@EtaApp)
+                AutoBackupRunner.maybeRun(this@EtaApp)
+                // 诊断包每周自动导出一次，直接落到「诊断包备份」。
+                io.github.mangi.eta.core.DiagnosticsAutoExport.refresh(this@EtaApp)
+            }.onFailure { AndroidAgentLogger.warn("Automation recovery unavailable") }
+        }
         XposedServiceHelper.registerListener(this)
         applicationScope.launch {
             try {
@@ -82,6 +123,7 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onServiceBind(service: XposedService) {
         serviceInstance = service
+        Prefs.reconcileVendorAssistantPreferences(service)
         Prefs.reconcileAgentPreferences(service)
         dispatch(service)
     }

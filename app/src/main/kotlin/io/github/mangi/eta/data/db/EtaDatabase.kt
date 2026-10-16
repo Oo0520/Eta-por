@@ -11,6 +11,7 @@ import androidx.room.migration.Migration
     entities = [
         AgentTextChunkEntity::class,
         ConversationEntity::class,
+        ConversationCategoryEntity::class,
         ConversationContextCheckpointEntity::class,
         ConversationMessageEntity::class,
         ConversationStateEntity::class,
@@ -25,8 +26,11 @@ import androidx.room.migration.Migration
         McpServerEntity::class,
         CharacterEntity::class,
         UserPersonaEntity::class,
+        AgentTaskEntity::class,
+        AgentTaskRunEntity::class,
+        TokenUsageRecordEntity::class,
     ],
-    version = 22,
+    version = 28,
     exportSchema = false,
 )
 internal abstract class EtaDatabase : RoomDatabase() {
@@ -36,6 +40,8 @@ internal abstract class EtaDatabase : RoomDatabase() {
     abstract fun skillDao(): SkillDao
     abstract fun mcpServerDao(): McpServerDao
     abstract fun characterDao(): CharacterDao
+    abstract fun agentTaskDao(): AgentTaskDao
+    abstract fun tokenUsageDao(): TokenUsageDao
 
     companion object {
         @Volatile
@@ -65,6 +71,12 @@ internal abstract class EtaDatabase : RoomDatabase() {
                         MIGRATION_19_20,
                         MIGRATION_20_21,
                         MIGRATION_21_22,
+                        MIGRATION_22_23,
+                        MIGRATION_23_24,
+                        MIGRATION_24_25,
+                        MIGRATION_25_26,
+                        MIGRATION_26_27,
+                        MIGRATION_27_28,
                     )
                     .addCallback(object : Callback() {
                         override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) { createTextChunkCleanup(db) }
@@ -81,6 +93,54 @@ internal abstract class EtaDatabase : RoomDatabase() {
                 instance?.close()
                 instance = null
             }
+        }
+
+        // Versions 22-24 of the vivo branch predate upstream's conversation model binding.
+        internal val MIGRATION_24_25 = Migration(24, 25) { database ->
+            val hasModelId = database.query("PRAGMA table_info(conversations)").use { cursor ->
+                val column = cursor.getColumnIndexOrThrow("name")
+                var found = false
+                while (cursor.moveToNext()) if (cursor.getString(column) == "model_id") found = true
+                found
+            }
+            if (!hasModelId) database.execSQL("ALTER TABLE conversations ADD COLUMN model_id TEXT")
+        }
+
+        /** 26：会话收藏置顶。新列默认 0，旧库升级后全部为非置顶。 */
+        internal val MIGRATION_25_26 = Migration(25, 26) { database ->
+            database.execSQL("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        }
+
+        /** 27：会话分类。新增分类表与会话归属列，旧会话全部留在未分类。 */
+        internal val MIGRATION_26_27 = Migration(26, 27) { database ->
+            database.execSQL("CREATE TABLE IF NOT EXISTS conversation_categories (id TEXT NOT NULL, name TEXT NOT NULL, sort_order INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(id))")
+            database.execSQL("ALTER TABLE conversations ADD COLUMN category_id TEXT")
+        }
+
+        /** 28：用量统计。新表独立存放，旧库升级后统计从空开始。 */
+        internal val MIGRATION_27_28 = Migration(27, 28) { database ->
+            database.execSQL("CREATE TABLE IF NOT EXISTS token_usage_records (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, conversation_id TEXT, model_id TEXT, created_at INTEGER NOT NULL, kind TEXT NOT NULL, context_tokens INTEGER, input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER, cached_tokens INTEGER, duration_ms INTEGER)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_token_usage_records_created_at ON token_usage_records (created_at)")
+        }
+
+        internal val MIGRATION_23_24 = Migration(23, 24) { database ->
+            database.execSQL("ALTER TABLE conversations ADD COLUMN last_model_usage_json TEXT NOT NULL DEFAULT ''")
+        }
+
+        internal val MIGRATION_22_23 = Migration(22, 23) { database ->
+            createAgentTaskTables(database)
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN request_duration_ms INTEGER")
+        }
+
+        private fun createAgentTaskTables(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+            database.execSQL("CREATE TABLE IF NOT EXISTS agent_tasks (" +
+                "id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, triggerJson TEXT NOT NULL, " +
+                "enabled INTEGER NOT NULL, nextRunAt INTEGER, cooldownSeconds INTEGER NOT NULL, maxRuns INTEGER NOT NULL, " +
+                "runCount INTEGER NOT NULL, lastStartedAt INTEGER, lastStatus TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")
+            database.execSQL("CREATE TABLE IF NOT EXISTS agent_task_runs (" +
+                "id TEXT NOT NULL PRIMARY KEY, taskId TEXT NOT NULL, fireKey TEXT NOT NULL, status TEXT NOT NULL, " +
+                "eventJson TEXT NOT NULL, queuedAt INTEGER NOT NULL, startedAt INTEGER, finishedAt INTEGER, resultPreview TEXT NOT NULL)")
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_agent_task_runs_taskId_fireKey ON agent_task_runs(taskId,fireKey)")
         }
 
         internal val MIGRATION_19_20 = Migration(19, 20) { database ->

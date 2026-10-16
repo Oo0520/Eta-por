@@ -108,9 +108,12 @@ internal object AgentModelClient {
         assistantScreenContext: String = "",
         onContextSnapshot: (AgentContextSnapshot) -> Unit = {},
         onTranscript: (List<ConversationMessage>) -> Unit = {},
+        restrictedToolNames: Set<String>? = null,
         onEvent: (AgentEvent) -> Unit = {}
     ): ModelResponse.Text {
         config.validate()
+        // 上下文超限时自动降一档：只影响本次运行，不写用户设置。
+        var activeProfileOverride: LocalToolProfile? = null
         val initialCapabilities = capabilitiesProvider()
         val messages = AgentPromptBuilder.buildInitialMessages(
             config,
@@ -122,6 +125,8 @@ internal object AgentModelClient {
             rootAvailable = initialCapabilities.rootAvailable,
             roleplayContext = roleplayContext,
             executionContext = executionContext,
+            virtualScreenEnabled = initialCapabilities.virtualScreenEnabled,
+            virtualScreenFallbackEnabled = initialCapabilities.virtualScreenFallbackEnabled,
         )
         if (rewriteReply) {
             messages.put(messages.length() - 1, AgentConversationCodec.userTextMessage(
@@ -137,10 +142,13 @@ internal object AgentModelClient {
         val transcript = JSONArray()
         // 旧 history 中的无效消息可能在组装时被跳过，系统边界不能由 history 条数倒推。
         val systemCount = AgentPromptBuilder.buildSystemMessages(
-            config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext,
+            config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext, initialCapabilities.virtualScreenEnabled, initialCapabilities.virtualScreenFallbackEnabled,
         ).length()
         fun toolsFor(capabilities: AgentToolCapabilities): JSONArray {
             if (rewriteReply) return JSONArray()
+            val activeProfile = activeProfileOverride ?: LocalToolProfileStore.current(config.providerId, config.model)
+            // 纯聊天档不声明任何工具，请求里也不会带 tools 字段。
+            if (activeProfile == LocalToolProfile.CHAT) return JSONArray()
             val tools = AgentToolCatalog.build(
                 terminalTools = config.terminalTools,
                 browserTools = config.browserTools,
@@ -153,13 +161,30 @@ internal object AgentModelClient {
                 memoryWritable = roleplayContext == null,
                 capabilities = capabilities,
                 localWebSearch = !config.usesHostedWebSearch,
+                localProfile = activeProfile,
             )
             for (index in 0 until additionalTools.length()) {
                 tools.put(additionalTools.opt(index))
             }
-            return tools
+            return if (restrictedToolNames == null) tools else JSONArray().also { filtered ->
+                for (index in 0 until tools.length()) {
+                    val schema = tools.getJSONObject(index)
+                    if (schema.optJSONObject("function")?.optString("name") in restrictedToolNames) filtered.put(schema)
+                }
+            }
         }
         val tools = toolsFor(initialCapabilities)
+        // 只在请求侧丢最老轮次：数据库与界面一条不删；系统提示、记忆与当前输入永不裁。
+        val trimOutcome = if (rewriteReply || compactOnly) AgentHistoryTrimmer.Outcome() else
+            AgentHistoryTrimmer.trimInPlace(
+                messages = messages,
+                systemCount = systemCount,
+                contextWindow = config.knownContextWindow,
+                reservedTokens = AgentHistoryTrimmer.estimateTokens(tools.toString()),
+            )
+        if (trimOutcome.omittedMessages > 0) {
+            onEvent(AgentEvent.HistoryTrimmed(trimOutcome.omittedMessages, trimOutcome.omittedUserRounds))
+        }
         onEvent(
             AgentEvent.RunStarted(
                 initialImages = images.size,
@@ -172,16 +197,22 @@ internal object AgentModelClient {
         // Root 授权真正变化时整体重建；其余能力只增不减：短暂不可用的工具仍保留，执行时自行报告错误码。
         var promptRootAvailable = initialCapabilities.rootAvailable
         var publishedTools = tools
+        var promptVirtualScreenEnabled = initialCapabilities.virtualScreenEnabled
+        var promptVirtualScreenFallbackEnabled = initialCapabilities.virtualScreenFallbackEnabled
         fun toolsForRound(): JSONArray {
             val capabilities = capabilitiesProvider()
-            if (capabilities.rootAvailable != promptRootAvailable) {
+            if (capabilities.rootAvailable != promptRootAvailable ||
+                capabilities.virtualScreenEnabled != promptVirtualScreenEnabled ||
+                capabilities.virtualScreenFallbackEnabled != promptVirtualScreenFallbackEnabled) {
                 val systemMessages = AgentPromptBuilder.buildSystemMessages(
-                    config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext,
+                    config, skillContext, memoryContext, capabilities.rootAvailable, roleplayContext, executionContext, capabilities.virtualScreenEnabled, capabilities.virtualScreenFallbackEnabled,
                 )
                 for (index in 0 until systemMessages.length()) {
                     messages.put(index, systemMessages.getJSONObject(index))
                 }
                 promptRootAvailable = capabilities.rootAvailable
+                promptVirtualScreenEnabled = capabilities.virtualScreenEnabled
+                promptVirtualScreenFallbackEnabled = capabilities.virtualScreenFallbackEnabled
                 publishedTools = toolsFor(capabilities)
                 return publishedTools
             }
@@ -205,24 +236,44 @@ internal object AgentModelClient {
             messages = messages,
             tools = tools,
             provider = provider,
-            // 目录在运行内只增不减，可见不再等于可用：执行前用同一规则复核，
-            // 中途失去的能力返回与目录过滤一致的错误码，而不是让底层接口给出含糊的失败。
-            toolExecutor = AgentModelClient.ToolExecutor { call ->
-                val unavailable = AgentToolRequirements.find(call.name)
-                    ?.let { capabilitiesProvider().unavailableCode(call.name) }
-                if (unavailable == null) {
-                    toolExecutor.execute(call)
+            toolExecutor = ToolExecutor { call ->
+                if (restrictedToolNames != null && call.name !in restrictedToolNames) {
+                    ToolResult(JSONObject().put("ok", false).put("code", "REVIEW_TOOL_DENIED")
+                        .put("message", "此工具不属于自动复盘能力").toString())
                 } else {
-                    ToolResult(
-                        JSONObject().put("ok", false).put("code", unavailable)
-                            .put("message", "该工具当前不可用（$unavailable），本次未执行").toString(),
-                    )
+                    val unavailable = AgentToolRequirements.find(call.name)
+                        ?.let { capabilitiesProvider().unavailableCode(call.name) }
+                    if (unavailable == null) {
+                        toolExecutor.execute(call)
+                    } else {
+                        ToolResult(
+                            JSONObject().put("ok", false).put("code", unavailable)
+                                .put("message", "该工具当前不可用（$unavailable），本次未执行").toString(),
+                        )
+                    }
                 }
             },
             runController = runController,
             traceFormatter = traceFormatter,
             onEvent = onEvent,
             purpose = if (rewriteReply) ProviderRequestPurpose.REPLY_REWRITE else ProviderRequestPurpose.CHAT,
+            onContextOverflow = if (rewriteReply) {
+                null
+            } else {
+                val callback: () -> LocalToolProfile? = {
+                    val current = activeProfileOverride
+                        ?: LocalToolProfileStore.current(config.providerId, config.model)
+                    val leaner = current.leaner()
+                    if (leaner == null) {
+                        null
+                    } else {
+                        activeProfileOverride = leaner
+                        onEvent(AgentEvent.ContextOverflowDowngrade(leaner.id))
+                        leaner
+                    }
+                }
+                callback
+            },
             roleplayContext = roleplayContext,
             initialSupplementIndex = initialSupplementIndex,
             toolsForRound = ::toolsForRound,
@@ -340,6 +391,8 @@ internal object AgentModelClient {
         val contextSummary: Boolean = false,
         val compactedUserTurns: Int = 0,
         val summaryThroughUserTurn: Int = 0,
+        /** 第几次压缩产生的摘要：轮次由它记录，不再靠"数摘要条数"，避免数字回退。 */
+        val compactionRound: Int = 0,
         val messageId: String = "",
     )
 

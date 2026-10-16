@@ -85,8 +85,10 @@ import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.MessageEditUiState
+import io.github.mangi.eta.ui.model.SearchJumpUiState
 import io.github.mangi.eta.ui.model.PendingFileReferenceUi
 import io.github.mangi.eta.ui.model.PendingImageUi
+import io.github.mangi.eta.ui.model.ResumableRunUiState
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolSummaryMessageUi
@@ -99,6 +101,7 @@ import kotlin.math.min
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -146,6 +149,9 @@ internal fun AgentChatBody(
     onModelSelected: (String) -> Unit,
     onSubmit: (String) -> Unit,
     onStop: () -> Unit,
+    isPaused: Boolean = false,
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
     onAttachImage: (String) -> Unit,
     onRemoveImage: (String) -> Unit,
     onAttachFiles: (List<String>) -> Unit,
@@ -160,7 +166,15 @@ internal fun AgentChatBody(
     onSuggestionClick: (String) -> Unit,
     onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
+    characterName: String? = null,
+    /** 草稿键（会话 id）：转给输入框，让未发送的文字按会话存下来。 */
+    draftKey: String? = null,
     isDrawerOpen: Boolean = false,
+    searchJump: SearchJumpUiState? = null,
+    onSearchJumpConsumed: () -> Unit = {},
+    resumableRun: ResumableRunUiState? = null,
+    onResumeInterruptedRun: () -> Unit = {},
+    onDismissInterruptedRun: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberLazyListState()
@@ -170,7 +184,11 @@ internal fun AgentChatBody(
     val isKeyboardVisible = imeBottomPx > 0
     val browserSnapshot by AgentBrowserSession.snapshots.collectAsState()
     val contextUsage = remember(messages, modelPickerState.selectedModel) {
-        latestContextUsage(messages, modelPickerState.selectedModel)
+        val usage = latestContextUsage(messages, modelPickerState.selectedModel)
+        val speed = messages.asReversed()
+            .filterIsInstance<io.github.mangi.eta.ui.model.AgentMessageUi>()
+            .firstOrNull { message -> message.usage != null }?.usage?.averageTokensPerSecond
+        usage.copy(averageTokensPerSecond = speed)
     }
 
     val visibleMessages = remember(messages, messageEdit?.targetMessageId, messageEdit?.preserveFollowingMessages) {
@@ -220,6 +238,7 @@ internal fun AgentChatBody(
         SpeechAutoReadAloud(messages = messages, isStreaming = isStreaming)
         AgentChatScaffold(
             visibleMessages = visibleMessages,
+            draftKey = draftKey,
             hasMessages = visibleMessages.isNotEmpty(),
             scrollState = scrollState,
             input = input,
@@ -247,6 +266,9 @@ internal fun AgentChatBody(
             canCompactContext = canCompactContext,
             onModelSelected = onModelSelected,
             onStop = onStop,
+            isPaused = isPaused,
+            onPause = onPause,
+            onResume = onResume,
             onAttachImage = onAttachImage,
             onRemoveImage = onRemoveImage,
             onAttachFiles = onAttachFiles,
@@ -262,6 +284,11 @@ internal fun AgentChatBody(
             onRunTraceClick = onRunTraceClick,
             onOpenBrowser = onOpenBrowser,
             currentBrowserMessageId = currentBrowserMessageId,
+            searchJump = searchJump,
+            onSearchJumpConsumed = onSearchJumpConsumed,
+            resumableRun = resumableRun,
+            onResumeInterruptedRun = onResumeInterruptedRun,
+            onDismissInterruptedRun = onDismissInterruptedRun,
             modifier = modifier,
         )
     }
@@ -270,6 +297,7 @@ internal fun AgentChatBody(
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 private fun AgentChatScaffold(
+    draftKey: String? = null,
     visibleMessages: List<AgentChatMessageUi>,
     hasMessages: Boolean,
     scrollState: LazyListState,
@@ -292,6 +320,9 @@ private fun AgentChatScaffold(
     canCompactContext: Boolean,
     onModelSelected: (String) -> Unit,
     onStop: () -> Unit,
+    isPaused: Boolean = false,
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
     onAttachImage: (String) -> Unit,
     onRemoveImage: (String) -> Unit,
     onAttachFiles: (List<String>) -> Unit,
@@ -307,6 +338,11 @@ private fun AgentChatScaffold(
     onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
     currentBrowserMessageId: String?,
+    searchJump: SearchJumpUiState? = null,
+    onSearchJumpConsumed: () -> Unit = {},
+    resumableRun: ResumableRunUiState? = null,
+    onResumeInterruptedRun: () -> Unit = {},
+    onDismissInterruptedRun: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val surfaceColor = MiuixTheme.colorScheme.surface
@@ -328,6 +364,7 @@ private fun AgentChatScaffold(
         ),
         bottomBar = {
             AgentChatBottomBar(
+                draftKey = draftKey,
                 messageBackdrop = messageBackdrop.takeIf { frostEnabled },
                 input = input,
                 modelPickerState = modelPickerState,
@@ -346,6 +383,9 @@ private fun AgentChatScaffold(
                 canCompactContext = canCompactContext,
                 onModelSelected = onModelSelected,
                 onStop = onStop,
+            isPaused = isPaused,
+            onPause = onPause,
+            onResume = onResume,
                 onAttachImage = onAttachImage,
                 onRemoveImage = onRemoveImage,
                 onAttachFiles = onAttachFiles,
@@ -357,36 +397,50 @@ private fun AgentChatScaffold(
         },
     ) { innerPadding ->
         val bottomPadding = innerPadding.calculateBottomPadding()
-        if (!hasMessages) {
-            EmptyChatState(
-                showSuggestions = showEmptySuggestions,
-                onSuggestionClick = onSuggestionClick,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = bottomPadding),
-            )
-        } else {
-            AgentConversationMessages(
-                visibleMessages = visibleMessages,
-                scrollState = scrollState,
-                isStreaming = isStreaming,
-                bottomInset = bottomPadding,
-                keepBottomAnchored = keepBottomAnchored,
-                onBottomAnchorChanged = onBottomAnchorChanged,
-                onSuggestionClick = onSuggestionClick,
-                onRunTraceClick = onRunTraceClick,
-                onOpenBrowser = onOpenBrowser,
-                onEditMessage = onEditMessage,
-                onDeleteMessage = onDeleteMessage,
-                onRegenerateMessage = onRegenerateMessage,
-                onSelectReplyCandidate = onSelectReplyCandidate,
-                messageActionsEnabled = !isStreaming && messageEdit == null,
-                editTargetMessageId = messageEdit?.targetMessageId,
-                currentBrowserMessageId = currentBrowserMessageId,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(if (frostEnabled) Modifier.layerBackdrop(messageBackdrop) else Modifier),
-            )
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (resumableRun != null) {
+                AgentResumableRunBanner(
+                    onResume = onResumeInterruptedRun,
+                    onDismiss = onDismissInterruptedRun,
+                    summary = resumableRun.summary,
+                )
+            }
+            if (!hasMessages) {
+                EmptyChatState(
+                    showSuggestions = showEmptySuggestions,
+                    characterName = characterName,
+                    onSuggestionClick = onSuggestionClick,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(bottom = bottomPadding),
+                )
+            } else {
+                AgentConversationMessages(
+                    visibleMessages = visibleMessages,
+                    scrollState = scrollState,
+                    isStreaming = isStreaming,
+                    bottomInset = bottomPadding,
+                    keepBottomAnchored = keepBottomAnchored,
+                    onBottomAnchorChanged = onBottomAnchorChanged,
+                    onSuggestionClick = onSuggestionClick,
+                    onRunTraceClick = onRunTraceClick,
+                    onOpenBrowser = onOpenBrowser,
+                    onEditMessage = onEditMessage,
+                    onDeleteMessage = onDeleteMessage,
+                    onRegenerateMessage = onRegenerateMessage,
+                    onSelectReplyCandidate = onSelectReplyCandidate,
+                    messageActionsEnabled = !isStreaming && messageEdit == null,
+                    editTargetMessageId = messageEdit?.targetMessageId,
+                    currentBrowserMessageId = currentBrowserMessageId,
+                    searchJump = searchJump,
+                    onSearchJumpConsumed = onSearchJumpConsumed,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .then(if (frostEnabled) Modifier.layerBackdrop(messageBackdrop) else Modifier),
+                )
+            }
         }
     }
 }
@@ -411,6 +465,8 @@ internal fun AgentConversationMessages(
     messageActionsEnabled: Boolean = false,
     editTargetMessageId: String? = null,
     currentBrowserMessageId: String? = null,
+    searchJump: SearchJumpUiState? = null,
+    onSearchJumpConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 上一版条目只作复用比对，不参与组合观察。
@@ -433,6 +489,17 @@ internal fun AgentConversationMessages(
     // 滑回时复用同一解析会话与打字机进度，避免整段内容重新解析并重放显现动画。
     val streamingMarkdownStates = remember { mutableStateMapOf<String, StreamingMarkdownState>() }
     val bottomItemIndex = timelineEntries.size
+    // 进入/切换会话后落到最新一条：从胶囊、通知跳进来时也能直接看到最新回复，
+    // 不用再手动点那个"到底部"箭头。只在进入时跳一次，之后用户往上翻历史不会被拽回来。
+    var didJumpToLatest by remember { mutableStateOf(false) }
+    LaunchedEffect(visibleMessages.isNotEmpty()) {
+        if (didJumpToLatest || visibleMessages.isEmpty()) return@LaunchedEffect
+        didJumpToLatest = true
+        // 等列表把历史条目排好再定位，避免滚到中间位置。
+        delay(80)
+        onBottomAnchorChanged(true)
+        scrollState.scrollToItem(Int.MAX_VALUE)
+    }
     val isUserDragging by scrollState.interactionSource.collectIsDraggedAsState()
     val isAtBottom by remember(scrollState) {
         derivedStateOf { !scrollState.canScrollForward }
@@ -510,6 +577,25 @@ internal fun AgentConversationMessages(
         ) {
             scrollState.requestScrollToItem(bottomItemIndex)
         }
+    }
+
+    // 搜索命中跳转：先解除底部锚定（否则流式运行中的跟底会把视图拉回尾部），
+    // 再滚到命中条目并临时高亮；全程走同一次观察到的条目索引。
+    var highlightMessageId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(searchJump?.token) {
+        val jump = searchJump ?: return@LaunchedEffect
+        val index = timelineEntries.indexOfFirst { entry -> entry.containsMessage(jump.messageId) }
+        if (index < 0) {
+            onSearchJumpConsumed()
+            return@LaunchedEffect
+        }
+        onBottomAnchorChanged(false)
+        scrollState.animateScrollToItem(index)
+        onBottomAnchorChanged(false)
+        highlightMessageId = jump.messageId
+        delay(SEARCH_HIGHLIGHT_DURATION_MS)
+        highlightMessageId = null
+        onSearchJumpConsumed()
     }
 
     // 流式输出及渲染收尾期间发布最新的跟底距离。历史消息中的步骤/思考展开同样会改变
@@ -644,6 +730,12 @@ internal fun AgentConversationMessages(
                     // 状态中裁掉的旧消息继续绘制，并与同位置的新流式消息短暂重叠。
                     fadeOutSpec = null,
                 )
+                val highlightedMessageId = highlightMessageId
+                val entryModifier = if (highlightedMessageId != null && entry.containsMessage(highlightedMessageId)) {
+                    itemModifier.then(Modifier.searchHitHighlight())
+                } else {
+                    itemModifier
+                }
                 when (entry) {
                     is AgentTimelineEntry.Message -> {
                         val message = entry.message
@@ -673,7 +765,7 @@ internal fun AgentConversationMessages(
                             onDeleteMessage = onDeleteMessage,
                             onRegenerateMessage = onRegenerateMessage,
                             onSelectReplyCandidate = onSelectReplyCandidate,
-                            modifier = itemModifier,
+                            modifier = entryModifier,
                         )
                     }
 
@@ -693,7 +785,7 @@ internal fun AgentConversationMessages(
                             onOpenBrowser = onOpenBrowser,
                             currentBrowserMessageId = currentBrowserMessageId,
                             retainedStreamingStates = streamingMarkdownStates,
-                            modifier = itemModifier,
+                            modifier = entryModifier,
                         )
                     }
                 }
@@ -793,6 +885,19 @@ internal fun smoothBottomFollowStep(
     return min(distancePx, min(easedStep.coerceAtLeast(BOTTOM_FOLLOW_MIN_STEP_PX), speedLimitedStep))
 }
 
+/** 该列表条目是否包含指定消息：用于搜索命中定位与高亮。 */
+internal fun AgentTimelineEntry.containsMessage(messageId: String): Boolean = when (this) {
+    is AgentTimelineEntry.Message -> message.id == messageId
+    is AgentTimelineEntry.WorkProcess -> messages.any { message -> message.id == messageId }
+}
+
+/** 搜索命中后的临时高亮底色。 */
+@Composable
+private fun Modifier.searchHitHighlight(): Modifier = background(
+    color = MiuixTheme.colorScheme.primary.copy(alpha = 0.15f),
+    shape = RoundedCornerShape(16.dp),
+)
+
 internal sealed interface AgentTimelineEntry {
     val key: String
 
@@ -879,6 +984,7 @@ internal fun resolveFinalResultMessageIds(
 
 @Composable
 private fun AgentChatBottomBar(
+    draftKey: String? = null,
     messageBackdrop: LayerBackdrop?,
     input: String,
     modelPickerState: AgentModelPickerUiState,
@@ -897,6 +1003,9 @@ private fun AgentChatBottomBar(
     canCompactContext: Boolean,
     onModelSelected: (String) -> Unit,
     onStop: () -> Unit,
+    isPaused: Boolean = false,
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
     onAttachImage: (String) -> Unit,
     onRemoveImage: (String) -> Unit,
     onAttachFiles: (List<String>) -> Unit,
@@ -965,6 +1074,7 @@ private fun AgentChatBottomBar(
         ) {
             AgentChatInputBar(
                 input = input,
+                draftKey = draftKey,
                 modelPickerState = modelPickerState,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
@@ -983,6 +1093,9 @@ private fun AgentChatBottomBar(
                 canCompactContext = canCompactContext,
                 onModelSelected = onModelSelected,
                 onStop = onStop,
+            isPaused = isPaused,
+            onPause = onPause,
+            onResume = onResume,
                 onAttachImage = onAttachImage,
                 onRemoveImage = onRemoveImage,
                 onAttachFiles = onAttachFiles,
@@ -1004,6 +1117,8 @@ private const val BOTTOM_FOLLOW_MAX_FRAME_SECONDS = 0.05f
 private const val BOTTOM_FOLLOW_MAX_SPEED_DP_PER_SECOND = 720f
 private const val BOTTOM_FOLLOW_MIN_STEP_PX = 0.5f
 private const val BOTTOM_FOLLOW_SNAP_DISTANCE_PX = 0.75f
+/** 搜索命中高亮保持时长。 */
+private const val SEARCH_HIGHLIGHT_DURATION_MS = 2400L
 
 internal fun resolveKeepBottomAnchored(
     current: Boolean,

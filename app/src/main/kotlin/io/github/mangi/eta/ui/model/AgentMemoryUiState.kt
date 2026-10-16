@@ -6,6 +6,9 @@ import io.github.mangi.eta.data.repository.AgentMemoryStore
 @Immutable
 data class AgentMemoryUiState(
     val enabled: Boolean = true,
+    val autoMemoryEnabled: Boolean = true,
+    val autoCompactEnabled: Boolean = true,
+    val autoSkillsEnabled: Boolean = true,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val draft: String = "",

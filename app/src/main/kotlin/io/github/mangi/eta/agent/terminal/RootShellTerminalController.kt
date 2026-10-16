@@ -199,15 +199,33 @@ internal class RootShellTerminalController(
                 mergeStderr = mergeStderr
             )
         }
-        return runCommand(
-            command = command,
-            cwd = cwd,
-            timeoutSeconds = ((timeoutMs.coerceIn(1, MAX_TIMEOUT_SECONDS * 1000) + 999) / 1000)
-                .coerceIn(1, MAX_TIMEOUT_SECONDS),
-            identity = effectiveIdentity,
-            environment = effectiveEnvironment,
-            mergeStderr = mergeStderr,
-        )
+        val timeoutSeconds = ((timeoutMs.coerceIn(1, MAX_TIMEOUT_SECONDS * 1000) + 999) / 1000)
+            .coerceIn(1, MAX_TIMEOUT_SECONDS)
+        val notices = java.util.Collections.synchronizedList(mutableListOf<String>())
+        return try {
+            val result = HeavyCommandGate.guarded(
+                command = command,
+                waitMs = HeavyCommandGate.TOOL_WAIT_MS,
+                onNotice = { notice -> notices.add(notice) },
+            ) {
+                runCommand(
+                    command = command,
+                    cwd = cwd,
+                    timeoutSeconds = timeoutSeconds,
+                    identity = effectiveIdentity,
+                    environment = effectiveEnvironment,
+                    mergeStderr = mergeStderr,
+                )
+            }
+            if (notices.isEmpty()) result
+            else runCatching { JSONObject(result).put("queued_notice", notices.joinToString("\n")).toString() }
+                .getOrElse { notices.joinToString("\n") + "\n" + result }
+        } catch (wait: IllegalStateException) {
+            val msg = wait.message.orEmpty()
+            if (msg == HeavyCommandGate.TIMEOUT_SLOT_MESSAGE || msg == HeavyCommandGate.TIMEOUT_MEMORY_MESSAGE) {
+                errorJson("HEAVY_COMMAND_BUSY", msg)
+            } else throw wait
+        }
     }
 
     private fun daemonStart(

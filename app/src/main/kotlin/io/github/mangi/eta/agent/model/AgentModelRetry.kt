@@ -2,9 +2,11 @@ package io.github.mangi.eta.agent.model
 
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
+import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 
 /** 重试只包围模型请求；完整响应返回前不提交历史或执行本地工具。 */
 internal class AgentModelRetry(
+    private val nanoTime: () -> Long = System::nanoTime,
     private val waitBeforeRetry: (AgentRunController, Long) -> Unit = { controller, delay ->
         controller.awaitRetryDelay(delay)
     },
@@ -13,25 +15,43 @@ internal class AgentModelRetry(
 
     fun complete(
         initialRound: Int,
-        request: ProviderRequest,
+        initialRequest: ProviderRequest,
         provider: AgentProviderClient,
         controller: AgentRunController,
         onEvent: (AgentEvent) -> Unit,
         onProviderEvent: (Int, ProviderEvent) -> Unit,
         discardAttemptReasoning: () -> Unit,
+        /** 上下文超限时换取「更精简工具档」的新请求；返回 null 表示不再降档。 */
+        downgradeRequest: (Int) -> ProviderRequest? = { null },
     ): Result {
         var round = initialRound
         var retries = 0
+        var overflowRetries = 0
+        var request = initialRequest
         while (true) {
             controller.throwIfCancelled()
             onEvent(AgentEvent.RoundStarted(round, request.messages.length()))
             var hostedToolStarted = false
             var callbackFailed = false
+            var startedAt = nanoTime()
+            var usage: AgentTokenUsage? = null
             try {
                 val response = provider.complete(request, controller) { event ->
+                    if (event == ProviderEvent.RequestStarted) startedAt = nanoTime()
+                    if (event is ProviderEvent.Usage) usage = (usage ?: AgentTokenUsage()).merge(event.usage)
                     if (event is ProviderEvent.HostedToolStarted) hostedToolStarted = true
                     try {
                         onProviderEvent(round, event)
+                    } catch (failure: Exception) {
+                        callbackFailed = true
+                        throw failure
+                    }
+                }
+                usage?.let {
+                    try {
+                        onEvent(AgentEvent.UsageReceived(round, it.copy(
+                            requestDurationMs = ((nanoTime() - startedAt) / 1_000_000).coerceAtLeast(1),
+                        )))
                     } catch (failure: Exception) {
                         callbackFailed = true
                         throw failure
@@ -45,6 +65,21 @@ internal class AgentModelRetry(
                 if (hostedToolStarted) throw AgentModelFailure(
                     classified.code, false, classified.message.orEmpty(), classified,
                 )
+                if (classified.code == AgentModelFailure.CONTEXT_OVERFLOW) {
+                    val downgraded = downgradeRequest(overflowRetries)
+                    if (downgraded != null) {
+                        overflowRetries += 1
+                        discardAttemptReasoning()
+                        round += 1
+                        request = downgraded
+                        continue
+                    }
+                    if (overflowRetries > 0) throw AgentModelFailure(
+                        classified.code, false,
+                        "${classified.message}（已自动降低工具档仍超限，建议新开会话。）",
+                        classified,
+                    )
+                }
                 if (!classified.retryable) throw classified
                 if (retries == MAX_RETRIES) {
                     throw AgentModelFailure(

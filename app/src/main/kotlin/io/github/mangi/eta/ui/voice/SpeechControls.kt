@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.PowerManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +39,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -60,6 +63,7 @@ import io.github.mangi.eta.agent.voice.EtaSpeechPhase
 import io.github.mangi.eta.agent.voice.ReadAloudPlaybackService
 import io.github.mangi.eta.agent.voice.SpeechInputController
 import io.github.mangi.eta.agent.voice.SpeechPlaybackController
+import io.github.mangi.eta.agent.voice.SpeechPlaybackState
 import io.github.mangi.eta.data.model.TtsProvider
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.MainActivity
@@ -90,13 +94,22 @@ internal fun openSpeechSettings(context: Context) {
     )
 }
 
-/** 页面不可见或销毁时终止音频任务。 */
+/**
+ * 页面不可见或销毁时终止音频任务。
+ * 唯一的例外是熄屏：屏幕关闭同样会走 ON_STOP，但此时用户是"听着"而不是"看着"，
+ * 按设置继续朗读；真正离开应用（屏幕还亮着）仍然照旧停止。
+ */
 @Composable
 internal fun SpeechLifecycle(onStop: () -> Unit) {
+    val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val stop by rememberUpdatedState(onStop)
     DisposableEffect(owner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) stop() }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event != Lifecycle.Event.ON_STOP) return@LifecycleEventObserver
+            val interactive = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
+            if (interactive) stop()
+        }
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer); stop() }
     }
@@ -339,6 +352,11 @@ internal fun SpeechAutoReadToggle() {
     }
 }
 
+/** 朗读进度：正文按它高亮当前片段；没有宿主提供时保持空状态，等于不高亮。 */
+internal val LocalSpeechPlaybackProgress = staticCompositionLocalOf<State<SpeechPlaybackState>> {
+    mutableStateOf(SpeechPlaybackState())
+}
+
 /**
  * 朗读控制器随聊天页存在；未配置播报服务时朗读入口整体隐藏。
  * 退到后台或锁屏时继续朗读（出声期间由前台播放服务保活），离开聊天页才停止。
@@ -360,11 +378,13 @@ internal fun SpeechPlaybackHost(content: @Composable () -> Unit) {
         created
     }
     val settings by remember { SpeechSettingsRepository.settingsFlow() }.collectAsState(initial = null)
+    val playbackState = controller.state.collectAsState()
     DisposableEffect(controller) { onDispose { controller.stop() } }
     SpeechPlaybackErrors(controller)
     CompositionLocalProvider(
         LocalSpeechPlayback provides controller,
         LocalSpeechPlaybackEnabled provides (settings != null && settings?.tts != TtsProvider.NONE),
+        LocalSpeechPlaybackProgress provides playbackState,
         content = content,
     )
 }
