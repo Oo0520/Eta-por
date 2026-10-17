@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 圆角方块：与 App 内悬浮胶囊的「停止」按钮同形 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.2,5.8 L16.8,5.8 A2.2,2.2 0 0 1 19,8 L19,16 A2.2,2.2 0 0 1 16.8,18.2 L7.2,18.2 A2.2,2.2 0 0 1 5,16 L5,8 A2.2,2.2 0 0 1 7.2,5.8 Z" />
+</vector>

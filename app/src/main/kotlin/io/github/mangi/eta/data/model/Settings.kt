@@ -56,6 +56,12 @@ data class Settings(
     /** 打开 Eta 后悬浮胶囊常驻显示：没有任务时也留在屏幕上，点它看运行中会话。 */
     val overlayCapsulePinned: Boolean = false,
 
+    /** 任务执行时不显示悬浮胶囊：运行状态只走流体云。 */
+    val overlayCapsuleHidden: Boolean = false,
+
+    /** 流体云常驻：没有任务时也在流体云保留一条 Eta 入口。 */
+    val overlayFluidPinned: Boolean = false,
+
     /** 小胶囊上次停的位置（像素，收起态坐标系）；-1 表示还没拖过，按默认居中偏上。 */
     val overlayCapsulePosX: Int = -1,
     val overlayCapsulePosY: Int = -1,

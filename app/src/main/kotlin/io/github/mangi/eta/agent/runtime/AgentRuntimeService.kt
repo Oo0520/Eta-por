@@ -378,6 +378,11 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 capsulePinned = false
                 if (runningSessionCount() == 0) dismissAndStop()
             }
+            ACTION_PAUSE_RUNS -> requestPause()
+            ACTION_RESUME_RUNS -> requestResume()
+            ACTION_STOP_RUNS -> sessions.keys.toList().forEach { runId -> cancelRun(runId) }
+            ACTION_HIDE_CAPSULE_RUN -> removeOverlayWindows()
+            ACTION_REFRESH_FLUID -> RunProgressNotifier.refreshIdle(this, fluidPinned())
             ACTION_MARK_READ -> {
                 // 从胶囊点进某个会话：只清这一条的未读，不用等回到 Eta 才整体归零。
                 markConversationRead(intent.getStringExtra(EXTRA_MARK_READ_CONVERSATION_ID).orEmpty())
@@ -763,6 +768,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             return
         }
         sessions[request.runId] = session
+        RunProgressNotifier.noteConcurrency(runningSessionCount())
         RunProgressNotifier.start(this)
         RunProgressNotifier.noteSessionLimit(sessionLimit, MAX_CONCURRENT_RUNS)
         if (sessionLimit < MAX_CONCURRENT_RUNS) {
@@ -783,6 +789,12 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             runId = request.runId,
             conversationId = handoffPayload?.conversationId.orEmpty(),
             title = handoffPayload?.title.orEmpty(),
+        )
+        // 进度通知记住这次会话，流体云／通知被点开时直接落回那次会话。
+        RunProgressNotifier.noteConversation(
+            request.runId,
+            handoffPayload?.conversationId.orEmpty(),
+            handoffPayload?.title.orEmpty(),
         )
         // 任何会话只要开始跑就记进「最近打开」：不再只认从胶囊点开过的会话。
         handoffPayload?.conversationId?.takeIf { it.isNotBlank() }?.let { conversationId ->
@@ -948,7 +960,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             lastCompletedRunContext = completedContext
             rememberFinishedSession(session.runId)
             sessions.remove(session.runId)
-            if (sessions.isEmpty()) RunProgressNotifier.stop(this)
+            if (sessions.isEmpty()) RunProgressNotifier.stop(this, pinned = fluidPinned())
+            else RunProgressNotifier.noteConcurrency(runningSessionCount())
             if (!needsOverlay) return@post
             io.github.mangi.eta.core.EtaTrace.log(
                 "run.end",
@@ -1235,6 +1248,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
 
     private fun requestPause() {
         sessions.values.forEach { session -> session.controller.pause() }
+        RunProgressNotifier.setPaused(true)
         state.value = state.value.copy(
             phase = AgentOverlayPhase.PAUSED,
             status = AgentOverlayStatus.Paused,
@@ -1243,6 +1257,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
 
     private fun requestResume() {
         sessions.values.forEach { session -> session.controller.resume() }
+        RunProgressNotifier.setPaused(false)
         state.value = state.value.copy(
             phase = AgentOverlayPhase.RUNNING,
             status = AgentOverlayStatus.Continuing,
@@ -1331,8 +1346,21 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
     }
 
     private fun ensureOverlayVisible() {
+        if (capsuleHidden()) {
+            // 设置里要求运行时不用悬浮胶囊：状态只走流体云，顺手清掉可能残留的窗口。
+            removeOverlayWindows()
+            return
+        }
         showOverlay()
     }
+
+    private fun capsuleHidden(): Boolean = runCatching {
+        runBlocking { SettingsDataStore.settings() }.overlayCapsuleHidden
+    }.getOrDefault(false)
+
+    private fun fluidPinned(): Boolean = runCatching {
+        runBlocking { SettingsDataStore.settings() }.overlayFluidPinned
+    }.getOrDefault(false)
 
     private fun usesVirtualUi(session: AgentRuntimeSession, virtualScreenEnabled: Boolean = false): Boolean =
         (session.virtualUiRouted.get() || virtualScreenEnabled) && !session.mainScreenFallbackApproved.get()
@@ -1987,6 +2015,14 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         const val ACTION_CLEAR_READ = "io.github.mangi.eta.agent.runtime.CLEAR_READ"
         /** 单条会话已读：进过哪个会话就减哪个，立刻生效。 */
         const val ACTION_MARK_READ = "io.github.mangi.eta.agent.runtime.MARK_READ"
+        /** 流体云卡片上的暂停／继续／停止动作，走 startService 直接落到本服务。 */
+        const val ACTION_PAUSE_RUNS = "io.github.mangi.eta.agent.runtime.PAUSE_RUNS"
+        const val ACTION_RESUME_RUNS = "io.github.mangi.eta.agent.runtime.RESUME_RUNS"
+        const val ACTION_STOP_RUNS = "io.github.mangi.eta.agent.runtime.STOP_RUNS"
+        /** 设置里切换「运行时不显示悬浮胶囊」后立即生效。 */
+        const val ACTION_HIDE_CAPSULE_RUN = "io.github.mangi.eta.agent.runtime.HIDE_CAPSULE_RUN"
+        /** 设置里切换「流体云常驻」后立即刷新空闲条目。 */
+        const val ACTION_REFRESH_FLUID = "io.github.mangi.eta.agent.runtime.REFRESH_FLUID"
         const val EXTRA_MARK_READ_CONVERSATION_ID = "io.github.mangi.eta.agent.runtime.MARK_READ_CONVERSATION_ID"
         const val HIDE_DELAY_MS = 2_500L
         const val RESULT_REVIEW_DELAY_MS = 120_000L

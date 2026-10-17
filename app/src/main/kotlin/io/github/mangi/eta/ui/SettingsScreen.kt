@@ -1098,6 +1098,46 @@ private fun VirtualScreenFloatWindowPrefs() {
     EtaPreferenceDivider()
 
     EtaSwitchPreference(
+        title = "运行时不显示悬浮胶囊",
+        summary = "跑任务时只在流体云显示状态，不再弹出悬浮胶囊；需要看详情时点流体云回会话",
+        checked = current.overlayCapsuleHidden,
+        onCheckedChange = { value ->
+            scope.launch {
+                SettingsDataStore.updateSettings { it.copy(overlayCapsuleHidden = value) }
+                runCatching {
+                    context.startService(
+                        Intent(context, io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java)
+                            .setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_HIDE_CAPSULE_RUN),
+                    )
+                }
+            }
+        },
+        startAction = { EtaPreferenceIcon(Icons.Rounded.Visibility, tint = EtaPreferenceColors.Green) },
+    )
+
+    EtaPreferenceDivider()
+
+    EtaSwitchPreference(
+        title = "流体云常驻",
+        summary = "没任务时也在流体云保留一条 Eta，点它回 Eta；任务结束由「空闲」接替进度卡片",
+        checked = current.overlayFluidPinned,
+        onCheckedChange = { value ->
+            scope.launch {
+                SettingsDataStore.updateSettings { it.copy(overlayFluidPinned = value) }
+                runCatching {
+                    context.startService(
+                        Intent(context, io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java)
+                            .setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_REFRESH_FLUID),
+                    )
+                }
+            }
+        },
+        startAction = { EtaPreferenceIcon(Icons.Rounded.Cloud, tint = EtaPreferenceColors.Green) },
+    )
+
+    EtaPreferenceDivider()
+
+    EtaSwitchPreference(
         title = "虚拟屏幕悬浮小窗",
         summary = "虚拟屏启动时自动弹出可拖拽小窗，拖到屏幕边缘自动折叠",
         checked = current.virtualScreenFloatWindowEnabled,
