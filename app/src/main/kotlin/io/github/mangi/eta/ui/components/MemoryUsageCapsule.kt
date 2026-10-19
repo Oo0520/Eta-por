@@ -28,7 +28,7 @@ import kotlin.math.roundToInt
  * 只读 ActivityManager.MemoryInfo，不需要 Root，也不改动任何系统设置。
  */
 @Composable
-internal fun MemoryUsageCapsule() {
+internal fun MemoryUsageCapsule(compact: Boolean = false) {
     val context = LocalContext.current
     var usage by remember { mutableStateOf(readMemoryUsage(context)) }
     var showMenu by remember { mutableStateOf(false) }
@@ -40,7 +40,12 @@ internal fun MemoryUsageCapsule() {
     }
     Box {
         StatusCapsule(
-            text = stringResource(R.string.memory_capsule, usage.usedPercent),
+            // 顶栏窄的时候只留百分比数字，省下的宽度优先给上下文用量。
+            text = if (compact) {
+                stringResource(R.string.memory_capsule_compact, usage.usedPercent)
+            } else {
+                stringResource(R.string.memory_capsule, usage.usedPercent)
+            },
             modifier = Modifier.clickable { showMenu = true },
             description = stringResource(R.string.memory_capsule_description, usage.usedPercent),
         )

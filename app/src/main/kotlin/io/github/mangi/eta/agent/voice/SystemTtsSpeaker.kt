@@ -47,14 +47,19 @@ internal object SystemTtsSpeaker {
                         if (continuation.isActive) continuation.resume(Unit)
                     }
 
-                    override fun onError(id: String?) = fail()
+                    override fun onError(id: String?) = fail("onError")
 
-                    override fun onError(id: String?, errorCode: Int) = fail()
+                    override fun onError(id: String?, errorCode: Int) = fail("onError code=$errorCode")
 
-                    private fun fail() {
+                    private fun fail(reason: String) {
                         if (continuation.isActive) {
                             continuation.resumeWithException(
-                                SpeechFailure(SpeechErrorCode.AUDIO, "系统语音播报失败"),
+                                SpeechFailure(
+                                    SpeechErrorCode.AUDIO,
+                                    "系统语音播报失败",
+                                    // 引擎自己超时/失败时只会给我们一个错误码，长度一起记下来便于对时间窗。
+                                    "$reason len=${text.length}",
+                                ),
                             )
                         }
                     }
@@ -63,7 +68,11 @@ internal object SystemTtsSpeaker {
                 val started = tts.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), utteranceId)
                 if (started == TextToSpeech.ERROR && continuation.isActive) {
                     continuation.resumeWithException(
-                        SpeechFailure(SpeechErrorCode.AUDIO, "系统语音播报失败"),
+                        SpeechFailure(
+                            SpeechErrorCode.AUDIO,
+                            "系统语音播报失败",
+                            "speak() 返回 ERROR len=${text.length}",
+                        ),
                     )
                 }
             }

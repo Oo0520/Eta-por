@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.model.LocalToolProfile
 import io.github.mangi.eta.ui.components.AdaptiveTopAppBar
 import io.github.mangi.eta.ui.components.CharacterAvatar
 import io.github.mangi.eta.ui.components.ConversationSidePaneScaffold
@@ -54,6 +55,7 @@ import io.github.mangi.eta.ui.components.openVirtualScreen
 import io.github.mangi.eta.ui.components.rememberVirtualScreenMenuEntries
 import io.github.mangi.eta.ui.components.TopBarBackdrop
 import io.github.mangi.eta.ui.components.captureForTopBar
+import io.github.mangi.eta.ui.components.profileLabel
 import io.github.mangi.eta.ui.components.rememberTopBarBackdrop
 import io.github.mangi.eta.ui.components.topBarContainerColor
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
@@ -118,6 +120,10 @@ internal fun AgentAppShell(
     onOpenTasks: () -> Unit,
     onOpenCategories: () -> Unit,
     conversationStatus: (@Composable () -> Unit)? = null,
+    /** 顶栏放不下的低频状态提示，改在 ⋯ 菜单里以文字列出。 */
+    conversationTrimmed: Pair<Int, Int>? = null,
+    conversationDowngradedProfileId: String? = null,
+    conversationCompaction: Pair<Int, Int>? = null,
     modifier: Modifier = Modifier,
     homeCharacter: RoleplayChatUi? = null,
     onOpenCharacter: () -> Unit = {},
@@ -153,6 +159,9 @@ internal fun AgentAppShell(
                             homeCharacter = homeCharacter,
                             onOpenCharacter = onOpenCharacter,
                             conversationStatus = conversationStatus,
+                            conversationTrimmed = conversationTrimmed,
+                            conversationDowngradedProfileId = conversationDowngradedProfileId,
+                            conversationCompaction = conversationCompaction,
                         )
                     }
                 }
@@ -224,6 +233,9 @@ private fun AgentTopBar(
     homeCharacter: RoleplayChatUi?,
     onOpenCharacter: () -> Unit,
     conversationStatus: (@Composable () -> Unit)?,
+    conversationTrimmed: Pair<Int, Int>?,
+    conversationDowngradedProfileId: String?,
+    conversationCompaction: Pair<Int, Int>?,
 ) {
     val isHome = route is AppRoute.Home
     val navigationIcon: @Composable () -> Unit = {
@@ -267,6 +279,9 @@ private fun AgentTopBar(
                 onStopKimiWeb = onStopKimiWeb,
                 onRefreshKimiWeb = onRefreshKimiWeb,
                 onOpenBrowser = onOpenBrowser,
+                conversationTrimmed = conversationTrimmed,
+                conversationDowngradedProfileId = conversationDowngradedProfileId,
+                conversationCompaction = conversationCompaction,
             )
         }
     }
@@ -313,6 +328,9 @@ private fun TopBarOverflowMenu(
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
     onOpenBrowser: () -> Unit,
+    conversationTrimmed: Pair<Int, Int>?,
+    conversationDowngradedProfileId: String?,
+    conversationCompaction: Pair<Int, Int>?,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     Box {
@@ -391,8 +409,9 @@ private fun TopBarOverflowMenu(
                             )
                         },
                     ),
-                ) + if (canStopKimiWeb) {
-                    listOf(
+                )
+                if (canStopKimiWeb) {
+                    add(
                         DropdownItem(
                             text = stopKimiWebText,
                             icon = { modifier ->
@@ -404,8 +423,17 @@ private fun TopBarOverflowMenu(
                             },
                         ),
                     )
-                } else {
-                    emptyList()
+                }
+                // 顶栏不再跟着对话变长：这三类低频提示统一落到这里，只展示，点了只关菜单。
+                conversationTrimmed?.let { (_, count) ->
+                    add(DropdownItem(text = stringResource(R.string.conversation_trimmed_capsule, count)))
+                }
+                conversationCompaction?.let { (rounds, max) ->
+                    add(DropdownItem(text = stringResource(R.string.conversation_compaction_round_capsule, rounds, max)))
+                }
+                conversationDowngradedProfileId?.let { id ->
+                    val label = stringResource(profileLabel(LocalToolProfile.fromId(id)))
+                    add(DropdownItem(text = stringResource(R.string.conversation_downgrade_capsule, label)))
                 }
             }
             ListPopupColumn {
@@ -423,7 +451,9 @@ private fun TopBarOverflowMenu(
                                 index == virtualEntries.size -> onOpenCategories()
                                 index == virtualEntries.size + 1 -> onOpenTerminal()
                                 index == virtualEntries.size + 2 -> onOpenBrowser()
-                                else -> onStopKimiWeb()
+                                // 末项只在真的存在「停止 Kimi」时才对应它；更靠后的状态信息行点了只关菜单。
+                                index == virtualEntries.size + 3 && canStopKimiWeb -> onStopKimiWeb()
+                                else -> Unit
                             }
                         },
                     )

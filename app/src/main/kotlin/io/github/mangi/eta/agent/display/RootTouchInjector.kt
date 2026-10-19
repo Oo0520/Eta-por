@@ -27,6 +27,8 @@ internal class RootTouchInjector {
         InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)
     }.getOrNull()
 
+    private val pendingDownTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
     private fun usable() = inputManager != null && injectMethod != null && setDisplayId != null
 
     /** true 表示手势已接管（DOWN 已注入，其余在后台线程）。 */
@@ -67,6 +69,30 @@ internal class RootTouchInjector {
             }
         }
         return true
+    }
+
+    /** 连续手势协议（触控预览）：DOWN 与后续 MOVE/UP/CANCEL 共用同一 downTime。 */
+    fun down(displayId: Int, x: Float, y: Float): Boolean {
+        if (!usable()) return false
+        val now = SystemClock.uptimeMillis()
+        if (!send(displayId, event(now, now, MotionEvent.ACTION_DOWN, x, y))) return false
+        pendingDownTimes[displayId] = now
+        return true
+    }
+
+    fun move(displayId: Int, x: Float, y: Float): Boolean {
+        if (!usable()) return false
+        val now = SystemClock.uptimeMillis()
+        val downTime = pendingDownTimes[displayId] ?: now
+        return send(displayId, event(downTime, now, MotionEvent.ACTION_MOVE, x, y))
+    }
+
+    fun up(displayId: Int, x: Float, y: Float, cancel: Boolean = false): Boolean {
+        if (!usable()) return false
+        val now = SystemClock.uptimeMillis()
+        val downTime = pendingDownTimes.remove(displayId) ?: now
+        val action = if (cancel) MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP
+        return send(displayId, event(downTime, now, action, x, y))
     }
 
     private fun background(block: () -> Unit) {

@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -102,6 +103,9 @@ private val SendIconSize = 16.dp
 private val StopIconSize = 10.dp
 private val ThinkingIconSize = 21.dp
 private val InputContainerShape = RoundedCornerShape(20.dp)
+
+/** 速度胶囊低于这个宽度就整枚收起，宁可没有，也不去挤右边的发送按钮。 */
+private val SpeedCapsuleMinWidth = 72.dp
 
 /**
  * Agent 输入器始终保持同一空间结构，聚焦、输入和执行过程只改变状态，不搬动操作入口。
@@ -331,6 +335,12 @@ internal fun AgentChatInputBar(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // 左侧组：附件、输出速度、思考档位。整组只吃「右侧组排完之后剩下的」宽度，
+                    // 于是右侧的上下文环 / 模型 / 暂停 / 停止 / 发送永远守得住自己的位置。
+                    Row(
+                        modifier = Modifier.weight(1f, fill = true),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         if (isEditingMessage) {
                             IconButton(
                                 onClick = onCancelMessageEdit,
@@ -355,19 +365,22 @@ internal fun AgentChatInputBar(
                             )
 
                             // 输出速度跟 ＋ 放在输入栏这一排；上下文用量由右侧圆环按钮负责。
+                            // 这一格是整排唯一的可收缩位：宽度先被右侧组扣掉，剩下多少用多少，
+                            // 不够就先省略文字，低于下限整枚消失，绝不会再压到发送按钮。
                             if (showContextUsage) {
                                 val speedText = contextUsage.averageTokensPerSecond?.let { speed ->
                                     java.text.NumberFormat.getNumberInstance()
                                         .apply { maximumFractionDigits = 1 }
                                         .format(speed)
                                 }
-                                if (speedText != null) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    StatusCapsule(
-                                        text = "$speedText tok/s",
-                                        modifier = Modifier,
-                                        description = stringResource(R.string.conversation_speed_description, speedText),
-                                    )
+                                BoxWithConstraints(modifier = Modifier.weight(1f, fill = false)) {
+                                    if (speedText != null && maxWidth >= SpeedCapsuleMinWidth) {
+                                        StatusCapsule(
+                                            text = "$speedText tok/s",
+                                            modifier = Modifier.padding(start = 6.dp),
+                                            description = stringResource(R.string.conversation_speed_description, speedText),
+                                        )
+                                    }
                                 }
                             }
 
@@ -384,8 +397,9 @@ internal fun AgentChatInputBar(
                                 )
                             }
                         }
+                    }
 
-                        Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.width(8.dp))
 
                         if (showContextUsage) {
                             AgentContextUsageButton(usage = contextUsage, onCompact = onCompactContext, canCompact = canCompactContext && !isStreaming)
@@ -481,24 +495,10 @@ internal fun AgentChatInputBar(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
-                                        imageVector = if (streaming) {
-                                            Icons.Rounded.Stop
-                                        } else {
-                                            Icons.Rounded.ArrowUpward
-                                        },
-                                        contentDescription = when {
-                                            streaming -> stringResource(R.string.chat_stop)
-                                            isEditingMessage && preserveFollowingMessages -> stringResource(R.string.chat_save_message)
-                                            else -> stringResource(R.string.chat_send)
-                                        },
-                                        modifier = Modifier.size(
-                                            if (streaming) StopIconSize else SendIconSize
-                                        ),
-                                        tint = when {
-                                            streaming -> MiuixTheme.colorScheme.surface
-                                            canSend -> MiuixTheme.colorScheme.onPrimary
-                                            else -> MiuixTheme.colorScheme.onSurfaceVariantActions
-                                        },
+                                        imageVector = Icons.Rounded.ArrowUpward,
+                                        contentDescription = stringResource(R.string.chat_send),
+                                        modifier = Modifier.size(SendIconSize),
+                                        tint = MiuixTheme.colorScheme.onPrimary,
                                     )
                                 }
                             }

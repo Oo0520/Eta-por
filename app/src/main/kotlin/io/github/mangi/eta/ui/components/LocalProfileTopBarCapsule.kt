@@ -37,14 +37,19 @@ import top.yukonga.miuix.kmp.window.WindowListPopup
  * 档位只决定发给模型的工具 schema 体量，不影响工具自身的执行能力。
  */
 @Composable
-internal fun LocalProfileTopBarCapsule(model: AgentModelOptionUi?) {
+internal fun LocalProfileTopBarCapsule(model: AgentModelOptionUi?, compact: Boolean = false) {
     val profileKey = model?.let { it.providerId to it.modelId }
     var profile by remember(profileKey) { mutableStateOf(LocalToolProfileStore.current(profileKey?.first, profileKey?.second)) }
     var showMenu by remember { mutableStateOf(false) }
     val name = stringResource(R.string.local_profile_capsule_name)
     Box {
         StatusCapsule(
-            text = name + "·" + stringResource(profileLabel(profile)),
+            // 顶栏窄的时候只留档位名（如「开发」），省下的宽度优先给上下文用量。
+            text = if (compact) {
+                stringResource(profileLabel(profile))
+            } else {
+                name + "·" + stringResource(profileLabel(profile))
+            },
             modifier = Modifier.clickable { showMenu = true },
             description = stringResource(R.string.local_profile_capsule_description, name),
         )

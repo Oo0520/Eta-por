@@ -107,8 +107,9 @@ private class BlockConverter(
      * WHITE_SPACE 节点，属于外层结构，拼接时跳过。
      */
     private fun codeFence(node: ASTNode): MarkdownBlock {
+        // 保留完整 info string：`markdown file=/path` 的文件卡片刻度要靠它；显示时再取首词。
         val language = node.child(MarkdownTokenTypes.FENCE_LANG)
-            ?.text()?.trim()?.substringBefore(' ')?.takeIf(String::isNotEmpty)
+            ?.text()?.trim()?.takeIf(String::isNotEmpty)
         val body = StringBuilder()
         var inBody = false
         for (child in node.children) {

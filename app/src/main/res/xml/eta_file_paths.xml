@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="diagnostics" path="diagnostics/" />
     <cache-path name="shared_images" path="images/" />
+    <cache-path name="shared_docs" path="shared_docs/" />
 </paths>

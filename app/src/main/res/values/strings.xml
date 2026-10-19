@@ -1683,6 +1683,7 @@
   <string name="data_backup_auto_skipped">本次没有需要执行的备份</string>
   <string name="top_bar_menu_back">返回</string>
   <string name="memory_capsule">内存 %1$d%%</string>
+  <string name="memory_capsule_compact">%1$d%%</string>
   <string name="memory_capsule_description">物理内存已用 %1$d%%，点一下看已用与可用</string>
   <string name="memory_capsule_used">已用 %1$s / 总 %2$s</string>
   <string name="memory_capsule_available">可用 %1$s</string>

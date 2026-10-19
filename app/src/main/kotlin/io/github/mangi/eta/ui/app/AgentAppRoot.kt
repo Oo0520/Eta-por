@@ -160,7 +160,6 @@ fun AgentAppRoot(
             onTerminalOpened()
         }
     }
-    val navigator = remember(backStack) { AgentNavigator(backStack) }
     var navigationResetKey by rememberSaveable { mutableIntStateOf(0) }
     val appViewModel = viewModel<AgentAppViewModel>()
     val agentState = appViewModel.state
@@ -324,17 +323,17 @@ fun AgentAppRoot(
             isConversationPaneOpen = conversationPaneOpen,
             conversationStatus = {
                 io.github.mangi.eta.ui.components.ConversationStatusCapsules(
-                    agentState.homeState.messages, agentState.modelPickerState.selectedModel,
-                    agentState.homeState.lastModelUsage, agentState.historyTrimNotice,
-                    agentState.overflowDowngradeNotice,
-                    compaction = agentState.homeState.history
-                        .let { io.github.mangi.eta.agent.model.AgentContextPolicy.rounds(it) }
-                        .takeIf { it > 0 }
-                        ?.let {
-                            it to io.github.mangi.eta.agent.model.AgentContextPolicy.MAX_COMPACTION_ROUNDS
-                        },
+                    agentState.modelPickerState.selectedModel,
                 )
             },
+            conversationTrimmed = agentState.historyTrimNotice,
+            conversationDowngradedProfileId = agentState.overflowDowngradeNotice,
+            conversationCompaction = agentState.homeState.history
+                .let { io.github.mangi.eta.agent.model.AgentContextPolicy.rounds(it) }
+                .takeIf { it > 0 }
+                ?.let {
+                    it to io.github.mangi.eta.agent.model.AgentContextPolicy.MAX_COMPACTION_ROUNDS
+                },
             onBack = { popRoute() },
             onOpenConversationPane = { conversationPaneOpen = true },
             onDismissConversationPane = { conversationPaneOpen = false },

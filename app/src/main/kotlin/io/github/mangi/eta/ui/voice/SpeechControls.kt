@@ -324,7 +324,11 @@ internal fun SpeechAutoReadAloud(messages: List<AgentChatMessageUi>, isStreaming
         val interrupted = list.drop(answerIndex + 1).any {
             it is SystemNoticeMessageUi && it.code in setOf(SystemNoticeCode.Stopped, SystemNoticeCode.RuntimeFailed)
         }
-        if (!interrupted && answer.content.isNotBlank()) controller.speak(answer.id, answer.content)
+        // resume = true：一次回答可能分几段收尾，这里会触发好几次；
+        // 接着上次读完的位置往下念，不从头重来（手动点朗读按钮仍然是完整重念）。
+        if (!interrupted && answer.content.isNotBlank()) {
+            controller.speak(answer.id, answer.content, resume = true)
+        }
     }
     // 关闭自动朗读视同“别再读了”，正在进行的朗读一并停止。
     var wasEnabled by remember { mutableStateOf(enabled) }
