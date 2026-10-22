@@ -29,6 +29,8 @@ internal fun StaticMarkdown(
     tone: MarkdownTone,
     modifier: Modifier = Modifier,
     parsed: MarkdownDocument? = null,
+    /** 任务列表勾选回写；null 表示只读。 */
+    onTaskToggle: ((Int) -> Unit)? = null,
 ) {
     val style = rememberMarkdownStyle(tone)
     val reusable = parsed?.takeIf { it.inlineStyle == style.inline }
@@ -44,7 +46,12 @@ internal fun StaticMarkdown(
         // 解析完成前以同字号原文占位，高度与最终排版接近，避免列表越界绘制。
         Text(text = content, style = style.body, modifier = modifier)
     } else {
-        MarkdownContent(document = document, style = style, modifier = modifier)
+        MarkdownContent(
+            document = document,
+            style = style,
+            modifier = modifier,
+            onTaskToggle = onTaskToggle,
+        )
     }
 }
 
