@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="diagnostics" path="diagnostics/" />
+    <cache-path name="shared_images" path="images/" />
+    <cache-path name="shared_docs" path="shared_docs/" />
+    <!-- 工作区文件直接由 FileProvider 供给，不再先复制进 cache：
+         避免 2 MB 预览上限和 UTF-8 解码把 APK / 图片 / 压缩包判成「读取失败」。 -->
+    <root-path name="workspace_root" path="/data/local/tmp/eta/" />
+    <!-- 共享存储里的 MD 也要能交给外部编辑器（MT 管理器）：content:// 才带得住写权限，
+         让编辑器保存后回到原文件，而不是一份 cache 副本。 -->
+    <external-path name="sdcard" path="." />
+</paths>

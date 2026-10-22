@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.markdown
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,6 +53,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,6 +61,7 @@ import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.components.StatusSuccess
@@ -83,8 +87,14 @@ internal fun MarkdownContent(
     style: MarkdownStyle,
     modifier: Modifier = Modifier,
     reveal: SmoothTextRevealCoordinator? = null,
+    /** 朗读高亮的源码偏移区间；与文本块相交的部分加底色，其余不变。 */
+    highlight: IntRange? = null,
+    /** 任务列表勾选回写（源码偏移）；null 表示只读。 */
+    onTaskToggle: ((Int) -> Unit)? = null,
 ) {
-    val scope = remember(style, reveal) { MarkdownRenderScope(style, reveal) }
+    val scope = remember(style, reveal, highlight, onTaskToggle) {
+        MarkdownRenderScope(style, reveal, highlight, onTaskToggle)
+    }
     MarkdownBlockColumn(blocks = document.blocks, scope = scope, compact = false, modifier = modifier)
 }
 
@@ -92,8 +102,10 @@ internal fun MarkdownContent(
 private class MarkdownRenderScope(
     val style: MarkdownStyle,
     val reveal: SmoothTextRevealCoordinator?,
+    val highlight: IntRange? = null,
+    val onTaskToggle: ((Int) -> Unit)? = null,
 ) {
-    fun muted() = MarkdownRenderScope(style.muted(), reveal)
+    fun muted() = MarkdownRenderScope(style.muted(), reveal, highlight, onTaskToggle)
 }
 
 /** 嵌套列表的层级只影响 marker 字形，用 CompositionLocal 传递，块组件不必逐层转发。 */
@@ -149,6 +161,20 @@ private fun MarkdownBlockView(block: MarkdownBlock, scope: MarkdownRenderScope) 
     }
 }
 
+/**
+ * 把朗读高亮的源码区间映射到块内文本：块起始偏移已知，行内标记会让块内偏移略有偏差，
+ * 这里只做收敛裁剪，算不出有效区间就不高亮，不猜位置。
+ */
+private fun MarkdownTextBlock.speechHighlighted(highlight: IntRange?, color: Color): AnnotatedString {
+    if (highlight == null || text.isEmpty()) return text
+    val start = (highlight.first - offset).coerceIn(0, text.length)
+    val end = (highlight.last + 1 - offset).coerceIn(start, text.length)
+    if (start >= end) return text
+    return AnnotatedString.Builder(text)
+        .apply { addStyle(SpanStyle(background = color), start, end) }
+        .toAnnotatedString()
+}
+
 @Composable
 private fun MarkdownText(
     block: MarkdownTextBlock,
@@ -158,20 +184,22 @@ private fun MarkdownText(
     softWrap: Boolean = true,
 ) {
     val reveal = scope.reveal
+    val highlighted = scope.highlight?.let { block.speechHighlighted(it, MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)) }
+    val text = highlighted ?: block.text
     // 空单元格没有可显现的文字，也不占用显现协调器的 key。
-    if (reveal == null || block.text.isEmpty()) {
-        Text(text = block.text, style = style, softWrap = softWrap, modifier = modifier)
+    if (reveal == null || text.isEmpty()) {
+        Text(text = text, style = style, softWrap = softWrap, modifier = modifier)
         return
     }
     val revealState = rememberSmoothTextRevealState(block.revealKey, reveal)
     // 显现裁剪按字素边界逐帧变化，关闭像素对齐可避免裁剪边缘抖动。
     val animatedStyle = remember(style) { style.copy(textMotion = TextMotion.Animated) }
     Text(
-        text = block.text,
+        text = text,
         style = animatedStyle,
         softWrap = softWrap,
         modifier = modifier.smoothTextReveal(revealState),
-        onTextLayout = { layout -> revealState.onTextLayout(block.text.text, layout) },
+        onTextLayout = { layout -> revealState.onTextLayout(text.text, layout) },
     )
 }
 
@@ -180,6 +208,19 @@ private fun MarkdownText(
 @Composable
 private fun MarkdownCodeBlock(block: MarkdownCode, scope: MarkdownRenderScope) {
     val style = scope.style
+    // 块级公式走 KaTeX 离线渲染（assets 内置，不联网）。
+    if (block.isMath) {
+        MathBlockView(tex = block.text.text, modifier = Modifier.padding(vertical = 4.dp))
+        return
+    }
+    // 带文件路径的块（```markdown file=/abs/path）走文件卡片：可预览、可编辑、保存覆盖原文件。
+    val fileSpec = remember(block.language, block.text.text) {
+        markdownFileSpec(block.language, block.text.text)
+    }
+    if (fileSpec != null) {
+        MarkdownFileCard(path = fileSpec.path, content = fileSpec.content)
+        return
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -192,7 +233,7 @@ private fun MarkdownCodeBlock(block: MarkdownCode, scope: MarkdownRenderScope) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = block.language ?: stringResource(R.string.markdown_code_block),
+                text = block.language?.substringBefore(' ') ?: stringResource(R.string.markdown_code_block),
                 style = MiuixTheme.textStyles.footnote2,
                 color = style.secondaryColor,
                 maxLines = 1,
@@ -348,16 +389,25 @@ private fun MarkdownListBlock(block: MarkdownList, scope: MarkdownRenderScope) {
         block.items.forEachIndexed { index, item ->
             key(item.offset) {
                 if (index > 0) Spacer(Modifier.height(itemGap))
-                Row(Modifier.fillMaxWidth()) {
+                // 任务项：整行垂直居中（勾选框与文字中线对齐）；普通项仍走基线对齐。
+                val task = item.checked != null
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = if (task) Alignment.CenterVertically else Alignment.Top,
+                ) {
                     ListMarker(item = item, ordered = block.ordered, depth = depth, width = markerWidth, scope = scope)
                     CompositionLocalProvider(LocalListDepth provides depth + 1) {
                         MarkdownBlockColumn(
                             blocks = item.blocks,
                             scope = scope,
                             compact = !block.loose,
-                            modifier = Modifier
-                                .weight(1f)
-                                .alignByBaseline(),
+                            modifier = if (task) {
+                                Modifier.weight(1f)
+                            } else {
+                                Modifier
+                                    .weight(1f)
+                                    .alignByBaseline()
+                            },
                         )
                     }
                 }
@@ -385,12 +435,17 @@ private fun RowScope.ListMarker(
         .widthIn(min = width)
     when {
         item.checked != null -> {
-            val lineHeight = with(LocalDensity.current) { style.body.lineHeight.toDp() }
-            Box(markerModifier.height(lineHeight), contentAlignment = Alignment.Center) {
+            val toggle = scope.onTaskToggle
+            Box(
+                markerModifier
+                    .height(26.dp)
+                    .then(if (toggle != null) Modifier.clickable { toggle(item.offset) } else Modifier),
+                contentAlignment = Alignment.Center,
+            ) {
                 Icon(
                     imageVector = if (item.checked) Icons.Rounded.CheckBox else Icons.Rounded.CheckBoxOutlineBlank,
                     contentDescription = null,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(22.dp),
                     tint = if (item.checked) MiuixTheme.colorScheme.primary else style.markerColor,
                 )
             }

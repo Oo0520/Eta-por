@@ -50,6 +50,12 @@ internal class MarkdownInlineBuilder(
         val builder = AnnotatedString.Builder()
         val state = LineState()
         builder.appendNodes(nodes, parent = null, state)
+        // 收尾时还挂着未闭合的 `$`：原样补回去，不吞字符。
+        state.math?.let { open ->
+            builder.append('$')
+            builder.append(open)
+            state.math = null
+        }
         return builder.toAnnotatedString().trimTrailingWhitespace()
     }
 
@@ -58,10 +64,60 @@ internal class MarkdownInlineBuilder(
         var atLineStart = true
         /** 硬换行（行尾两空格或反斜杠）后紧跟的 EOL 已经由硬换行输出过。 */
         var afterHardBreak = false
+        /** 正在收集的行内公式原文（两个 `$` 之间的内容）。 */
+        var math: StringBuilder? = null
     }
 
     private fun AnnotatedString.Builder.appendNode(node: ASTNode, parent: ASTNode?, state: LineState) {
         val type = node.type
+        // 行内公式的定界符在 AST 里是独立的 DOLLAR 记号（`$E = mc^2$` 会被拆成
+        // DOLLAR + TEXT + …），单个节点内配不上对，所以在兄弟遍历层面收拢：
+        // 第一个 DOLLAR 开缓冲，遇到配对的 DOLLAR 再整体转成可读文本。
+        val math = state.math
+        if (math != null) {
+            when {
+                type == GFMTokenTypes.DOLLAR && math.isEmpty() -> {
+                    // 紧挨着的 `$$` 不是行内公式，原样保留。
+                    append("$$")
+                    state.math = null
+                    return
+                }
+                type == GFMTokenTypes.DOLLAR -> {
+                    val body = math.toString()
+                    if (body.isEmpty() || body.first().isWhitespace() || body.last().isWhitespace()) {
+                        // 首尾带空白就不像公式（价格、排版用的定界符），原样吐回去。
+                        append('$')
+                        append(body)
+                        append('$')
+                    } else {
+                        append(LatexReadable.toReadable(body))
+                    }
+                    state.math = null
+                    state.atLineStart = false
+                    return
+                }
+                // 跨行或太长就不再当公式，回滚成原文，避免把整段吞进来。
+                type == MarkdownTokenTypes.EOL ||
+                    type == MarkdownTokenTypes.HARD_LINE_BREAK ||
+                    math.length > 200 -> {
+                    append('$')
+                    append(math)
+                    state.math = null
+                }
+                node.children.isEmpty() -> {
+                    math.append(node.text())
+                    return
+                }
+                else -> {
+                    append('$')
+                    append(math)
+                    state.math = null
+                }
+            }
+        } else if (type == GFMTokenTypes.DOLLAR) {
+            state.math = StringBuilder()
+            return
+        }
         if (state.atLineStart && (type == MarkdownTokenTypes.WHITE_SPACE || type == MarkdownTokenTypes.BLOCK_QUOTE)) {
             return
         }
@@ -86,7 +142,10 @@ internal class MarkdownInlineBuilder(
                 appendChildren(node, state)
             }
             MarkdownElementTypes.CODE_SPAN -> appendCode(codeSpanText(node))
-            GFMElementTypes.INLINE_MATH, GFMElementTypes.BLOCK_MATH -> appendCode(mathText(node))
+            // 行内公式换成人能读的 Unicode（E = mc²、∫₀¹ x² dx）；嵌在文字流里没法真排版，
+            // 但至少不该把 $…$ 的源码直接摊给用户看。块级仍交给 MathBlock 渲染。
+            GFMElementTypes.INLINE_MATH -> append(LatexReadable.toReadable(mathText(node)))
+            GFMElementTypes.BLOCK_MATH -> appendCode(mathText(node))
             MarkdownElementTypes.INLINE_LINK -> appendInlineLink(node, state)
             MarkdownElementTypes.FULL_REFERENCE_LINK -> appendReferenceLink(
                 node = node,
@@ -111,7 +170,7 @@ internal class MarkdownInlineBuilder(
             else -> when {
                 isDelimiterOf(type, parent) -> Unit
                 node.children.isNotEmpty() -> appendChildren(node, state)
-                else -> append(decodeMarkdownText(node.text()))
+                else -> append(LatexReadable.inline(decodeMarkdownText(node.text())))
             }
         }
         state.atLineStart = false
