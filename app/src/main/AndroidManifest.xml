@@ -63,6 +63,17 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round">
 
+        <!-- Markdown 预览把原文件交给外部编辑器（MT 管理器）时用：content:// 才能带写权限。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/eta_file_paths" />
+        </provider>
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
