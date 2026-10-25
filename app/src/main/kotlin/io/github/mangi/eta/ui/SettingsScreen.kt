@@ -147,6 +147,7 @@ private fun SettingsPageContent(
     var hasConnectedFramework by remember { mutableStateOf(enhancementHistory.hasConnected) }
     var hasUsedSystemizer by remember { mutableStateOf(enhancementHistory.hasUsedSystemizer) }
     var showSystemizerDialog by remember { mutableStateOf(false) }
+    var showTestConsent by remember { mutableStateOf(false) }
     var installingSystemizer by remember { mutableStateOf(false) }
 
     // 悬浮窗权限状态：授权后从系统设置返回时（ON_RESUME）刷新。
@@ -947,6 +948,21 @@ private fun SettingsPageContent(
                         onClick = { onNavigate(AppRoute.SelfCheck) },
                     )
 
+                    if (io.github.mangi.eta.BuildConfig.BETA_BUILD) {
+                    EtaPreferenceDivider()
+                    EtaArrowPreference(
+                        title = "测试与隐私",
+                        summary = "同意状态、训练用途开关、撤回同意、协议全文",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.VerifiedUser,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { showTestConsent = true },
+                    )
+                    }
+
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_about_feedback_title),
@@ -1009,6 +1025,25 @@ private fun SettingsPageContent(
                 }
             }
 
+            // ── 提示词与工具边界 ────────────────────────────────────────
+            item(key = "section_prompt") {
+                if (!sectionVisible("section_prompt")) return@item
+                EtaPreferenceGroupTitle(stringResource(R.string.prompt_studio_group_title))
+                EtaPreferenceGroup {
+                    EtaArrowPreference(
+                        title = stringResource(R.string.prompt_studio_title),
+                        summary = stringResource(R.string.prompt_studio_entry_summary),
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.Psychology,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { onNavigate(AppRoute.PromptStudio) },
+                    )
+                }
+            }
+
             // ── 极致自动排查（设置最下面，独立一组）────────────────────────
             item(key = "section_patrol") {
                 if (!sectionVisible("section_patrol")) return@item
@@ -1027,6 +1062,12 @@ private fun SettingsPageContent(
                     )
                 }
             }
+        }
+
+        if (showTestConsent) {
+            io.github.mangi.eta.ui.consent.TestConsentSettingsDialog(
+                onDismiss = { showTestConsent = false },
+            )
         }
 
         SystemizerConfirmDialog(
@@ -1332,6 +1373,7 @@ private data class SettingsSearchEntry(val sectionKey: String, val keywords: Str
 private val SETTINGS_SEARCH_INDEX = listOf(
     SettingsSearchEntry("section_agent", "llm 提供商 模型 服务商 api 密钥 深度思考"),
     SettingsSearchEntry("section_context_extensions", "上下文 扩展 自动压缩 记忆"),
+    SettingsSearchEntry("section_prompt", "提示词 人格 追加指令 系统提示 工具白名单 版本 冲突"),
     SettingsSearchEntry("section_tools", "工具 工具档 精简 五档 mcp"),
     SettingsSearchEntry("system_enhancements", "能力增强 语音 朗读 语速 音调 tts 虚拟屏 小窗 悬浮窗 折叠 胶囊 常驻"),
     SettingsSearchEntry("section_assistant_takeover", "系统助手接管 接管 助手"),

@@ -29,20 +29,33 @@ require(buildMetadata == null || buildMetadata.matches(Regex("[0-9A-Za-z.-]+")))
 }
 val buildMetadataSuffix = buildMetadata?.let { "+$it" }.orEmpty()
 
+// ── 测试版（可与正式版并存安装）─────────────────────────────────────────────
+// 同一 applicationId 在系统里只能存在一份，共存只能换安装身份；namespace 保持不变，
+// 所以源码包名、类名、Xposed 入口（META-INF/xposed/java_init.list）与 R 类都不受影响。
+// 用法：./gradlew :app:assembleRelease -Peta.beta=true
+// 版本号：测试线独立计号，今天首发 2026102501 / 3.4.0-beta.1。
+val isBetaBuild = providers.gradleProperty("eta.beta").orNull.toBoolean()
+val betaApplicationId = "io.github.mangi.eta.beta"
+
 android {
     namespace = "io.github.mangi.eta"
     compileSdk = 37
     ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
-        applicationId = "io.github.mangi.eta"
+        applicationId = if (isBetaBuild) betaApplicationId else "io.github.mangi.eta"
         minSdk = 33
         targetSdk = 37
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
         // 跨零点必须换成当天日期、序号归 01，不能接着前一天的号往下加——
         // 之前从 2026102020 起就一直在沿用 10-20 的日期，日期不再反映实际构建日。
-        versionCode = 2026102611
-        versionName = "3.3.4"
+        versionCode = if (isBetaBuild) 2026102613 else 2026102611
+        versionName = if (isBetaBuild) "3.4.0-beta.4" else "3.3.4"
+        // 桌面名与包名一起区分，避免志愿者装错包；正式版继续用 @string/app_name。
+        manifestPlaceholders["applicationLabel"] =
+            if (isBetaBuild) "Eta β" else "@string/app_name"
+        // 只对测试包生效的运行时标记：常驻测试版提示条、同意页强制展示等。
+        buildConfigField("boolean", "BETA_BUILD", isBetaBuild.toString())
         testInstrumentationRunner = "io.github.mangi.eta.validation.DeviceValidationRunner"
 
         ndk {

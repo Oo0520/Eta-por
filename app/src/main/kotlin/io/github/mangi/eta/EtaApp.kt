@@ -51,6 +51,10 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
     override fun onCreate() {
         super.onCreate()
         Prefs.initLocal(this)
+        // 测试版同意状态：任何进程启动都要能读到，且要在可能拉起服务/任务之前。
+        io.github.mangi.eta.data.repository.TestConsentRepository.init(this)
+        // 请求快照：只记 system 全文与工具描述，写盘在独立线程，失败不影响对话。
+        runCatching { io.github.mangi.eta.agent.model.AgentRequestSnapshot.init(this) }
         // 崩溃留证：任何进程一启动就装好，写入失败也不影响原有崩溃流程。
         runCatching { CrashRecorder.install(this) }
         // 自留日志：任何进程启动就落盘，诊断包不再依赖 logcat 的 2 分钟缓冲。
