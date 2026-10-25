@@ -69,13 +69,16 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
     var procs by remember { mutableStateOf<List<MemoryProcessProbe.Proc>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var cleaning by remember { mutableStateOf(false) }
+    var usageTick by remember { mutableStateOf(0) }
     var armedPackage by remember { mutableStateOf<String?>(null) }
-    val usage = remember(loaded) { readMemoryUsage(context) }
+    val usage = remember(loaded, usageTick) { readMemoryUsage(context) }
 
     suspend fun reload() {
         withContext(Dispatchers.IO) { MemoryProcessProbe.snapshot() }.let {
             procs = it
             loaded = true
+            usageTick += 1
         }
     }
 
@@ -84,6 +87,7 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
     val children = remember(procs, selfPid) {
         MemoryProcessProbe.descendants(procs, selfPid)
     }
+    val builds = remember(procs) { MemoryProcessProbe.buildProcesses(procs) }
     val apps = remember(procs, context, selfPackage) {
         resolveAppRows(context, MemoryProcessProbe.appUsage(procs, MemoryRankLimit), selfPackage)
     }
@@ -97,6 +101,30 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
             delay(400)
             reload()
             busy = false
+        }
+    }
+
+    fun quickClean() {
+        if (cleaning) return
+        cleaning = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { MemoryProcessProbe.quickClean() }
+            delay(300)
+            reload()
+            cleaning = false
+            Toast.makeText(
+                context,
+                if (result.rootOk) {
+                    context.getString(
+                        R.string.memory_sheet_quick_clean_done,
+                        formatMegabytes(result.freedKb * 1024L),
+                        result.killedDaemons,
+                    )
+                } else {
+                    context.getString(R.string.memory_sheet_quick_clean_failed)
+                },
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 
@@ -144,7 +172,7 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
             )
         }
         Spacer(Modifier.height(6.dp))
-        UsageSummary(usage)
+        UsageSummary(usage = usage, cleaning = cleaning, onClean = ::quickClean)
         Spacer(Modifier.height(10.dp))
         LazyColumn(
             modifier = Modifier
@@ -152,6 +180,21 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
                 .fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 8.dp),
         ) {
+            if (builds.isNotEmpty()) {
+                item(key = "build-title") {
+                    SectionTitle(
+                        stringResource(R.string.memory_sheet_build_title),
+                        trailing = stringResource(
+                            R.string.memory_sheet_build_count,
+                            builds.size,
+                            formatMegabytes(builds.sumOf { it.rssBytes }),
+                        ),
+                    )
+                }
+                items(items = builds, key = { "b-${it.pid}" }) { proc ->
+                    TaskRow(proc = proc, onKill = { terminate(listOf(proc.pid)) })
+                }
+            }
             item(key = "rank-title") {
                 SectionTitle(
                     stringResource(R.string.memory_sheet_rank_title),
@@ -193,6 +236,20 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
                 )
             }
         }
+        if (builds.isNotEmpty()) {
+            TextButton(
+                text = stringResource(R.string.memory_sheet_build_kill_all, builds.size),
+                onClick = { terminate(builds.map { it.pid }) },
+                enabled = !busy,
+                minWidth = 0.dp,
+                minHeight = 36.dp,
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                insideMargin = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+            )
+        }
         if (children.isNotEmpty()) {
             TextButton(
                 text = stringResource(R.string.memory_sheet_kill_all, children.size),
@@ -211,6 +268,9 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
 }
 
 private const val MemoryRankLimit = 8
+
+/** 超过这个使用率就把「立即清理」标出来，和胶囊/守护脚本的口径一致。 */
+private const val HIGH_PRESSURE_PERCENT = 85
 
 /** 排行里的一行：解析成应用名，并判断能不能释放。 */
 private data class AppUsageRow(
@@ -248,7 +308,7 @@ private fun resolveAppRows(
 }
 
 @Composable
-private fun UsageSummary(usage: MemoryUsage) {
+private fun UsageSummary(usage: MemoryUsage, cleaning: Boolean, onClean: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -285,6 +345,42 @@ private fun UsageSummary(usage: MemoryUsage) {
                     .fillMaxWidth(usage.usedPercent / 100f)
                     .height(6.dp)
                     .background(MiuixTheme.colorScheme.primary, RoundedCornerShape(3.dp)),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.memory_sheet_percent, usage.usedPercent),
+                style = MiuixTheme.textStyles.body2,
+                fontWeight = FontWeight.Medium,
+                color = MiuixTheme.colorScheme.onSurface,
+            )
+            if (usage.usedPercent >= HIGH_PRESSURE_PERCENT) {
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.memory_sheet_pressure_high),
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.error,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                text = stringResource(
+                    if (cleaning) R.string.memory_sheet_quick_cleaning else R.string.memory_sheet_quick_clean,
+                ),
+                onClick = onClean,
+                enabled = !cleaning,
+                minWidth = 0.dp,
+                minHeight = 30.dp,
+                insideMargin = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+            )
+        }
+        if (usage.usedPercent >= HIGH_PRESSURE_PERCENT) {
+            Text(
+                text = stringResource(R.string.memory_sheet_pressure_note),
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.8f),
             )
         }
         if (usage.swapTotalBytes > 0L) {

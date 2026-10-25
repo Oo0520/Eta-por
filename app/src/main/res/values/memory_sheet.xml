@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 内存面板：概览使用率、一键清理、构建/编译进程分组。独立成文件，避免与 strings.xml 的批量改动混在一起。 -->
+<resources>
+  <string name="memory_sheet_percent">%1$d%%</string>
+  <string name="memory_sheet_quick_clean">立即清理</string>
+  <string name="memory_sheet_quick_cleaning">清理中…</string>
+  <string name="memory_sheet_quick_clean_done">已回收 %1$s，结束 %2$d 个编译守护</string>
+  <string name="memory_sheet_quick_clean_failed">清理失败：需要 Root 授权</string>
+  <string name="memory_sheet_pressure_high">内存偏紧</string>
+  <string name="memory_sheet_pressure_note">清理只结束编译守护并回收页缓存，不动前台应用</string>
+  <string name="memory_sheet_build_title">构建与编译进程</string>
+  <string name="memory_sheet_build_count">%1$d 个 · 共 %2$s</string>
+  <string name="memory_sheet_build_kill_all">结束全部编译进程（%1$d 个）</string>
+</resources>
