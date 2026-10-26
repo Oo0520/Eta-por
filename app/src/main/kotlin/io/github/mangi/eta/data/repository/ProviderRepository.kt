@@ -7,6 +7,7 @@ import io.github.mangi.eta.data.db.ProviderWithModelsSeed
 import io.github.mangi.eta.data.db.toDomain
 import io.github.mangi.eta.data.db.toEntity
 import io.github.mangi.eta.data.db.toModelEntities
+import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.Model
@@ -149,10 +150,35 @@ internal object ProviderRepository {
         val kept = BuiltinProviders.SUBSCRIPTION_PROVIDER_IDS
         dao().promoteConfiguredBuiltInProviders()
         dao().deleteBuiltInProvidersExcept(kept)
-        val existing = allProviders().mapTo(mutableSetOf()) { it.id }
+        val current = allProviders()
+        val existing = current.mapTo(mutableSetOf()) { it.id }
         val missing = BuiltinProviders.PROVIDERS.filter { it.id in kept && it.id !in existing }
         if (missing.isNotEmpty()) insertProviders(missing)
-        SettingsDataStore.setOfficialModelCatalogRevision(OfficialModelCatalog.CURRENT_REVISION)
+        // 目录修订号增量补齐（取自上游 3.3.4）：只对保留下来的内置条目做增量，
+        // 不改变「不注入普通内置提供商」的定制口径。
+        val appliedRevision = SettingsDataStore.officialModelCatalogRevision()
+        if (appliedRevision < OfficialModelCatalog.CURRENT_REVISION) {
+            current.filter {
+                it.isBuiltIn && it.authMode == ProviderAuthModes.API_KEY && BuiltinProviders.providerById(it.id) != null
+            }.forEach { provider ->
+                val additions = if (ProviderSourceRegistry.resolve(provider) == ProviderSourceTypes.OPENAI) {
+                    emptyList()
+                } else OfficialModelCatalog.modelsAddedSince(provider, appliedRevision)
+                dao().appendModelsIfAbsent(
+                    providerId = provider.id,
+                    candidates = provider.withModels(additions).toModelEntities(),
+                )
+                if (appliedRevision < 1) {
+                    refreshLegacyCatalogReasoningCapabilities(provider)
+                }
+            }
+            if (appliedRevision < 3) {
+                current.filter { ProviderSourceRegistry.resolve(it) == ProviderSourceTypes.OPENAI }.forEach { provider ->
+                    providerById(provider.id)?.let { fillOpenAiContextWindows(it) }
+                }
+            }
+            SettingsDataStore.setOfficialModelCatalogRevision(OfficialModelCatalog.CURRENT_REVISION)
+        }
         repairSelection()
     }
 
@@ -298,6 +324,14 @@ internal object ProviderRepository {
         }
         return when (this) {
             is OpenAiCompatibleProviderSetting -> copy(
+                id = id,
+                name = name,
+                sortOrder = sortOrder,
+                isBuiltIn = builtIn,
+                models = copiedModels,
+            )
+
+            is GeminiProviderSetting -> copy(
                 id = id,
                 name = name,
                 sortOrder = sortOrder,

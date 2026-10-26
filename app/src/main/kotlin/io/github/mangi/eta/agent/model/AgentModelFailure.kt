@@ -21,6 +21,7 @@ internal class AgentModelFailure(
         private val transientCodes = setOf(
             "rate_limit_exceeded", "rate_limit_error", "overloaded_error", "server_error",
             "api_error", "internal_error", "provider_unavailable", "service_unavailable",
+            "RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED",
         )
 
         /** 上下文超限错误码：上层据此自动降档重试。 */
@@ -30,16 +31,24 @@ internal class AgentModelFailure(
         private const val CONTEXT_OVERFLOW_HINT =
             "模型上下文超过容量限制。可把顶栏「工具档」调低（标准或极简），或新开会话继续。"
 
-        fun http(status: Int, body: String): AgentModelFailure {
+        private val invalidApiKeyReasons = setOf("API_KEY_INVALID", "API_KEY_EXPIRED")
+
+        fun http(status: Int, body: String, includeParameterDetails: Boolean = false): AgentModelFailure {
             val error = try {
                 JSONObject(body).optJSONObject("error")
             } catch (_: org.json.JSONException) {
                 null
             }
+            authenticationFailure(error)?.let { return it }
             if (isContextOverflow(error)) return AgentModelFailure(
                 CONTEXT_OVERFLOW, false, CONTEXT_OVERFLOW_HINT,
             )
             val permanent = isPermanent(error, body)
+            if (status == 400 && includeParameterDetails && !permanent) {
+                ProviderParameterDiagnostics.describe(error)?.let { details ->
+                    return AgentModelFailure("HTTP_400", false, "模型请求参数无效（HTTP 400；$details），请检查模型配置。")
+                }
+            }
             return AgentModelFailure(
                 code = "HTTP_$status",
                 retryable = status in transientStatus && !permanent,
@@ -56,12 +65,14 @@ internal class AgentModelFailure(
         }
 
         fun stream(error: JSONObject, message: String): AgentModelFailure {
+            authenticationFailure(error)?.let { return it }
             if (isContextOverflow(error)) return AgentModelFailure(
                 CONTEXT_OVERFLOW, false, CONTEXT_OVERFLOW_HINT,
             )
             val codes = listOf(
                 error.optString("code"),
                 error.optString("type"),
+                error.optString("status"),
                 error.optJSONObject("metadata")?.optString("error_type").orEmpty(),
             )
             return AgentModelFailure(
@@ -95,7 +106,19 @@ internal class AgentModelFailure(
             }) return true
             val message = error.optString("message").lowercase()
             return message.contains("maximum context length") || message.contains("prompt is too long") ||
-                message.contains("exceeds the context window") || message.contains("input token count exceeds")
+                message.contains("exceeds the context window") || message.contains("input token count exceeds") ||
+                message.contains("input token count") && message.contains("exceeds the maximum")
+        }
+
+        private fun authenticationFailure(error: JSONObject?): AgentModelFailure? {
+            if (error == null) return null
+            val details = error.optJSONArray("details")
+            val invalidKey = (0 until (details?.length() ?: 0)).any { index ->
+                details?.optJSONObject(index)?.optString("reason") in invalidApiKeyReasons
+            }
+            return if (invalidKey || error.optString("status") == "UNAUTHENTICATED") {
+                AgentModelFailure("PROVIDER_AUTH_FAILED", false, "模型接口认证失败，请检查 API Key。")
+            } else null
         }
 
         private fun isPermanent(error: JSONObject?, body: String): Boolean =
