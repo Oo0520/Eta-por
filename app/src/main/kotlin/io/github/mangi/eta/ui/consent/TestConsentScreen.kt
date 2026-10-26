@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.BuildConfig
 import io.github.mangi.eta.data.repository.TestConsentRepository
@@ -76,7 +77,10 @@ internal fun TestConsentScreen(
     onAccepted: () -> Unit,
 ) {
     val introAndSections = remember {
-        parseAgreement(TestConsentRepository.readAgreement(TestConsentRepository.ASSET_TERMS))
+        parseAgreement(
+            TestConsentRepository.readAgreement(TestConsentRepository.ASSET_TERMS)
+                .replace("{{version}}", BuildConfig.VERSION_NAME)
+        )
     }
     val title = introAndSections.first
     val sections = introAndSections.second
@@ -108,13 +112,13 @@ internal fun TestConsentScreen(
             Text(
                 text = "${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）· ${BuildConfig.APPLICATION_ID}",
                 style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                color = MiuixTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 text = "测试包 · 非正式发布 · 与正式版数据不互通",
                 style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.error,
+                color = MiuixTheme.colorScheme.primary,
             )
             Spacer(Modifier.height(12.dp))
 
@@ -150,7 +154,7 @@ internal fun TestConsentScreen(
                         Text(
                             text = section.body,
                             style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            color = MiuixTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(bottom = 10.dp),
                         )
                     }
@@ -192,6 +196,8 @@ internal fun TestConsentScreen(
                     enabled = canAccept,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.textButtonColorsPrimary(),
+                    // 主题主色在暗色下会变深，文字沿用 onPrimary 会变成深灰；这里固定白字保证可读。
+                    textStyle = MiuixTheme.textStyles.button.copy(color = Color.White),
                     onClick = {
                         TestConsentRepository.accept(
                             ackTerms = ackTerms,
@@ -212,7 +218,7 @@ internal fun TestConsentScreen(
                 Text(
                     text = "数据只用于本次测试与故障排查，不会用于模型微调或训练；可随时在「设置 → 测试与隐私」撤回。",
                     style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    color = MiuixTheme.colorScheme.onSurface,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(10.dp))
@@ -276,6 +282,7 @@ private fun ConsentCheckRow(
         Text(
             text = text,
             style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
     }
@@ -288,7 +295,10 @@ internal fun AgreementTextDialog(
     assetName: String,
     onDismiss: () -> Unit,
 ) {
-    val body = remember(assetName) { TestConsentRepository.readAgreement(assetName) }
+    val body = remember(assetName) {
+        TestConsentRepository.readAgreement(assetName)
+            .replace("{{version}}", BuildConfig.VERSION_NAME)
+    }
     EtaWindowDialog(
         show = true,
         title = title,
@@ -303,7 +313,7 @@ internal fun AgreementTextDialog(
             Text(
                 text = body,
                 style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                color = MiuixTheme.colorScheme.onSurface,
             )
         }
         Spacer(Modifier.height(8.dp))
