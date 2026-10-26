@@ -18,7 +18,6 @@ import io.github.mangi.eta.data.model.enabledModel
 import io.github.mangi.eta.data.model.runtimeProviderType
 import io.github.mangi.eta.data.model.selectedOrFirstModel
 import io.github.mangi.eta.data.provider.GeminiModelCapabilities
-import io.github.mangi.eta.data.provider.BuiltinProviders
 import io.github.mangi.eta.data.provider.ProviderSourceRegistry
 import io.github.mangi.eta.data.provider.ProviderConnectionProfile
 import io.github.mangi.eta.data.provider.ReasoningCapabilityResolver
@@ -116,10 +115,9 @@ internal object RuntimeConfigRepository {
         json.encodeToString(if (config.authMode == ProviderAuthModes.API_KEY) config else config.copy(apiKey = ""))
 
     fun buildRuntimeConfig(provider: ProviderSetting, model: Model): AgentModelClient.ModelConfig {
-        val systemPrompt = provider.systemPrompt
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: BuiltinProviders.DEFAULT_SYSTEM_PROMPT
+        // 尊重用户清空提示词的选择：留空就是留空，不再回填默认提示词。
+        // 角色卡会话由角色卡提示词接管；运行规则与工具边界在 AgentPromptBuilder 里另行拼接。
+        val systemPrompt = provider.systemPrompt.orEmpty().trim()
         val sourceType = ProviderSourceRegistry.resolve(provider)
         val profile = ProviderConnectionProfile.forAuthMode(provider.authMode)
         val endpointMode = profile?.endpointMode ?: provider.endpointMode()
