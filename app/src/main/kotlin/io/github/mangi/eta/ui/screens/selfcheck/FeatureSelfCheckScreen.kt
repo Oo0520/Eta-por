@@ -342,8 +342,8 @@ private suspend fun runSelfCheck(context: Context): SelfCheckReport {
             // 把这两轮新做的备份能力并进同一条：最近一个全量包多大、数据库到底进没进包。
             val packInfo = runCatching {
                 io.github.mangi.eta.data.repository.AutoBackupRunner
-                    .backups(settings.autoBackupDirectory)
-                    .firstOrNull { io.github.mangi.eta.data.repository.EtaFullBackup.isFullBackup(it.name) }
+                    .fullBackups(settings.autoBackupDirectory)
+                    .firstOrNull()
                     ?.let { file ->
                         val mb = String.format(java.util.Locale.US, "%.1f", file.length() / 1048576.0)
                         val hasDb = java.util.zip.ZipFile(file).use { zip ->

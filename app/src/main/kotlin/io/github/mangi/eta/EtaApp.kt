@@ -50,6 +50,13 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onCreate() {
         super.onCreate()
+        // 全量包还原：必须在 Room / DataStore 打开之前把暂存内容覆盖回 dataDir，
+        // 否则进程会先读到旧库，还原就等于白做。只在主进程执行，hook 进程不碰数据。
+        if (Application.getProcessName() == packageName) {
+            runCatching {
+                io.github.mangi.eta.data.repository.EtaFullBackupArchive.applyPendingRestore(this)
+            }
+        }
         Prefs.initLocal(this)
         // 崩溃留证：任何进程一启动就装好，写入失败也不影响原有崩溃流程。
         runCatching { CrashRecorder.install(this) }

@@ -32,8 +32,14 @@ data class Settings(
     val autoBackupLastAt: Long = 0L,
     val autoBackupFingerprint: String = "",
     val autoBackupLastFileName: String = "",
+    /** 上一次自动备份的失败原因；成功后清空。 */
+    val autoBackupLastError: String = "",
+    /** 上一次自动备份失败的时间（毫秒）。 */
+    val autoBackupLastErrorAt: Long = 0L,
     /** 自定义自动备份目录；空串表示默认的「外部存储/Eta备份」。 */
     val autoBackupDirectory: String = "",
+    /** 自动备份格式：json（轻量 JSON）/ full（全量压缩包，含私有目录）。 */
+    val autoBackupFormat: String = AutoBackupFormat.JSON,
     /** 极致自动排查：本地定时巡检，只报异常，异常即留档。 */
     val diagPatrolEnabled: Boolean = false,
 
@@ -108,6 +114,19 @@ internal object AutoBackupInterval {
 
     /** 生效周期的毫秒数，供闹钟与到点判断使用。 */
     fun millis(storedMinutes: Int, legacyHours: Int): Long = effectiveMinutes(storedMinutes, legacyHours) * 60_000L
+}
+
+/** 自动备份产物格式：轻量 JSON，或「JSON + 私有目录」的全量压缩包。 */
+internal object AutoBackupFormat {
+
+    const val JSON = "json"
+    const val FULL = "full"
+
+    val presets = listOf(JSON, FULL)
+
+    fun normalize(value: String): String = if (value.trim().equals(FULL, ignoreCase = true)) FULL else JSON
+
+    fun isFull(value: String): Boolean = normalize(value) == FULL
 }
 
 /** 自动备份保留份数，超出的删最旧；上限 60 份，够放 20~30 份这种短周期。 */
