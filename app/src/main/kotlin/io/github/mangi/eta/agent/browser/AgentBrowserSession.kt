@@ -694,6 +694,8 @@ internal object AgentBrowserSession {
     }
 
     private fun attachWebViewOnMain(view: WebView, container: ViewGroup) {
+        // 前台跟随窗口的硬件加速，不能继承离屏绘制遗留的软件图层。
+        view.setLayerType(View.LAYER_TYPE_NONE, null)
         (view.parent as? ViewGroup)?.takeIf { it !== container }?.removeView(view)
         if (view.parent == null) {
             container.removeAllViews()
@@ -825,7 +827,7 @@ internal object AgentBrowserSession {
             ) else 1f
             val width = (sourceWidth * scale).roundToInt().coerceAtLeast(1)
             val height = (sourceHeight * scale).roundToInt().coerceAtLeast(1)
-            if (view.windowToken == null) view.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+            // Bitmap Canvas 已决定截图采用软件绘制，不能修改共享 WebView 的持久图层类型。
             val captured = createBitmap(width, height)
             try {
                 Canvas(captured).also { canvas ->
@@ -1068,7 +1070,7 @@ internal object AgentBrowserSession {
 
         override fun onProgressChanged(view: WebView, newProgress: Int) {
             currentProgress = newProgress.coerceIn(0, 100)
-            currentLoading = newProgress < 100
+            // 进度回调可能在主页面结束后继续到达，不能反复切换导航的加载状态。
             publishSnapshotOnMain()
         }
     }
