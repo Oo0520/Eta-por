@@ -59,6 +59,9 @@ object TestConsentRepository {
     private const val KEY_ACK_AI_OUTPUT = "ack_ai_output"
     private const val KEY_REVOKED_AT = "revoked_at"
 
+    /** 提示条关闭记录：按版本号记，装了新测试版会再提示一次。 */
+    private const val KEY_BANNER_DISMISSED_VERSION = "banner_dismissed_version"
+
     @Volatile
     private var appContext: Context? = null
 
@@ -110,6 +113,14 @@ object TestConsentRepository {
         val hash = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
         cachedAgreementHash = hash
         return hash
+    }
+
+    /** 已关闭提示条的版本号；小于当前版本号（含 0）表示这次仍要显示。 */
+    fun bannerDismissedVersion(): Int =
+        prefs?.getInt(KEY_BANNER_DISMISSED_VERSION, 0) ?: 0
+
+    fun dismissBanner(versionCode: Int) {
+        prefs?.edit()?.putInt(KEY_BANNER_DISMISSED_VERSION, versionCode)?.apply()
     }
 
     fun readAgreement(assetName: String): String {

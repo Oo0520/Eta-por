@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -60,37 +61,49 @@ internal fun TestConsentGate(content: @Composable () -> Unit) {
     }
 }
 
-/** 测试版常驻提示条：只在本会话内可关，下次启动还会出现，避免「忘了自己在用测试包」。 */
+/**
+ * 测试版常驻提示条。
+ *
+ * 关闭状态写入本地（按 versionCode 记）：本版本内关掉后不再出现；升级到新的测试版会再提示一次，
+ * 既不会每次启动都打扰，也不会让人彻底忘了自己在用测试包。
+ */
 @Composable
 private fun BetaBuildBanner() {
-    var dismissed by remember { mutableStateOf(false) }
+    val versionCode = BuildConfig.VERSION_CODE
+    var dismissed by remember {
+        mutableStateOf(TestConsentRepository.bannerDismissedVersion() >= versionCode)
+    }
     var showDetail by remember { mutableStateOf(false) }
     if (dismissed) return
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             // 背景铺到状态栏下面，文字让开状态栏/刘海，避免和信号电量叠在一起。
-            .background(MiuixTheme.colorScheme.surfaceContainerHigh)
-            .statusBarsPadding()
+            .background(MiuixTheme.colorScheme.secondaryContainer)
+            .statusBarsPadding(),
+    ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "测试版 ${BuildConfig.VERSION_NAME}",
             style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.primary,
+            color = MiuixTheme.colorScheme.onSecondaryContainer,
         )
         Text(
             text = "｜仅用于测试，AI 输出需自行验证",
             style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            color = MiuixTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
             modifier = Modifier.weight(1f),
         )
         Text(
             text = "说明",
             style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.primary,
+            color = MiuixTheme.colorScheme.onSecondaryContainer,
             modifier = Modifier
                 .clickable { showDetail = true }
                 .padding(horizontal = 8.dp, vertical = 2.dp),
@@ -98,10 +111,21 @@ private fun BetaBuildBanner() {
         Text(
             text = "×",
             style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            color = MiuixTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
             modifier = Modifier
-                .clickable { dismissed = true }
+                .clickable {
+                    TestConsentRepository.dismissBanner(versionCode)
+                    dismissed = true
+                }
                 .padding(start = 4.dp, end = 2.dp),
+        )
+    }
+        // 暗色下 secondaryContainer 与正文背景接近，用一条淡分隔线交代边界。
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MiuixTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.12f)),
         )
     }
 
