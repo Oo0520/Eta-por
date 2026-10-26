@@ -28,9 +28,15 @@ internal class AgentModelRetry(
         var retries = 0
         var overflowRetries = 0
         var request = initialRequest
+        // 一次 complete 只抓一份快照：重试与降档复用同一次调用的进程内证据。
+        var snapshotTaken = false
         while (true) {
             controller.throwIfCancelled()
             onEvent(AgentEvent.RoundStarted(round, request.messages.length()))
+            if (!snapshotTaken) {
+                snapshotTaken = true
+                AgentRequestSnapshot.capture(request)
+            }
             var hostedToolStarted = false
             var callbackFailed = false
             var startedAt = nanoTime()

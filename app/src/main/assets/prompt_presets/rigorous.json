@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "name": "严谨 · 标注证据",
+  "description": "每条结论都标出依据来源，不确定的部分明确说明。",
+  "mode": "APPEND",
+  "base_system_prompt": "",
+  "persona_name": "",
+  "persona_style": "",
+  "append_instructions": "给出结论时同时标注依据来源（工具结果、文件、网页）。没有证据的部分明确写“未取得证据”，不要用推测填充。",
+  "tool_mode": "ALLOW_ALL",
+  "allowed_tools": []
+}

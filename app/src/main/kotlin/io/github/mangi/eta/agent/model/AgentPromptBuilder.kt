@@ -1,6 +1,8 @@
 package io.github.mangi.eta.agent.model
 
 import io.github.mangi.eta.agent.memory.AgentMemoryContext
+import io.github.mangi.eta.agent.prompt.PromptCustomization
+import io.github.mangi.eta.agent.prompt.PromptCustomizationMode
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
@@ -21,8 +23,9 @@ internal object AgentPromptBuilder {
         executionContext: TerminalExecutionContext? = null,
         virtualScreenEnabled: Boolean = false,
         virtualScreenFallbackEnabled: Boolean = false,
+        customization: PromptCustomization = PromptCustomization(),
     ): JSONArray {
-        val messages = buildSystemMessages(config, skillContext, memoryContext, rootAvailable, roleplayContext, executionContext, virtualScreenEnabled, virtualScreenFallbackEnabled)
+        val messages = buildSystemMessages(config, skillContext, memoryContext, rootAvailable, roleplayContext, executionContext, virtualScreenEnabled, virtualScreenFallbackEnabled, customization)
         val chatOnly = LocalToolProfileStore.current(config.providerId, config.model) == LocalToolProfile.CHAT
         history.forEach { item ->
             val json = runCatching { AgentConversationCodec.toJsonObject(item) }.getOrNull() ?: return@forEach
@@ -48,11 +51,15 @@ internal object AgentPromptBuilder {
         executionContext: TerminalExecutionContext? = null,
         virtualScreenEnabled: Boolean = false,
         virtualScreenFallbackEnabled: Boolean = false,
+        customization: PromptCustomization = PromptCustomization(),
     ): JSONArray {
         val messages = JSONArray()
+        val custom = customization.takeIf { it.active }
+        val basePrompt = custom?.baseSystemPrompt?.takeIf { it.isNotBlank() } ?: config.systemPrompt
         if (LocalToolProfileStore.current(config.providerId, config.model) == LocalToolProfile.CHAT) {
             // 纯聊天档：不声明工具、不注入记忆与技能索引，避免模型去调用不存在的工具。
-            if (config.systemPrompt.isNotBlank()) messages.put(systemMessage(config.systemPrompt))
+            if (basePrompt.isNotBlank()) messages.put(systemMessage(basePrompt))
+            custom?.let { value -> customPersonaMessage(value) }?.let(messages::put)
             messages.put(
                 systemMessage(
                     "当前配置的模型：${JSONObject.quote(config.model)}。询问所用模型时按当前配置的模型回答。\n" +
@@ -63,10 +70,12 @@ internal object AgentPromptBuilder {
                         "直接说明当前模式下无法获取，不要编造结果，也不要假装已经查到。"
                 )
             )
+            custom?.let { value -> customInstructionsMessage(value) }?.let(messages::put)
             return messages
         }
-        if (roleplayContext == null && config.systemPrompt.isNotBlank()) {
-            messages.put(systemMessage(config.systemPrompt))
+        if (roleplayContext == null && basePrompt.isNotBlank()) {
+            val identity = custom?.let { value -> customIdentityMessage(value, basePrompt) }
+            messages.put(identity ?: systemMessage(basePrompt))
         }
         messages.put(
             systemMessage(
@@ -151,6 +160,9 @@ internal object AgentPromptBuilder {
                     "不要改用坐标或 Shell 重放 GUI 动作。"
             )
         )
+        if (roleplayContext == null) {
+            custom?.let { value -> customPersonaMessage(value) }?.let(messages::put)
+        }
         if (config.terminalTools) {
             messages.put(systemMessage(
                 "Eta 内置文件与终端工具。文件和命令共用本次运行的默认身份与工作区；已知路径可直接读取或写入，不必先查目录。" +
@@ -197,7 +209,47 @@ internal object AgentPromptBuilder {
         if (activeProfile == LocalToolProfile.FULL || activeProfile == LocalToolProfile.LIGHT) {
             buildSkillSystemMessage(skillContext)?.let(messages::put)
         }
+        custom?.let { value -> customInstructionsMessage(value) }?.let(messages::put)
         return messages
+    }
+
+    private fun customIdentityMessage(customization: PromptCustomization, base: String): JSONObject =
+        if (customization.mode == PromptCustomizationMode.APPEND) {
+            systemMessage(base)
+        } else {
+            systemMessage(
+                buildString {
+                    appendLine("<custom_identity version=\"${customization.version}\" revision=\"${customization.revision}\">")
+                    appendLine(base)
+                    appendLine("</custom_identity>")
+                    append("以上是用户自定义的身份设定，优先级高于后文的内置身份描述；工具、设备与屏幕规则仍然有效，按其执行。")
+                }
+            )
+        }
+
+    private fun customPersonaMessage(customization: PromptCustomization): JSONObject? {
+        val name = customization.personaName.trim()
+        val style = customization.personaStyle.trim()
+        if (name.isEmpty() && style.isEmpty()) return null
+        return systemMessage(
+            buildString {
+                appendLine("<custom_persona version=\"${customization.version}\">")
+                if (name.isNotEmpty()) appendLine("名称：$name")
+                if (style.isNotEmpty()) appendLine(style)
+                appendLine("</custom_persona>")
+                append("用户已设定人格：按上面的名称与风格交流；事实、证据与工具结果的表述不因人格改写。")
+            }
+        )
+    }
+
+    private fun customInstructionsMessage(customization: PromptCustomization): JSONObject? {
+        val instruction = customization.appendInstructions.trim()
+        if (instruction.isEmpty()) return null
+        return systemMessage(
+            "<custom_instructions version=\"${customization.version}\" revision=\"${customization.revision}\">\n" +
+                instruction +
+                "\n</custom_instructions>"
+        )
     }
 
     private fun rootInstructions(available: Boolean): String =

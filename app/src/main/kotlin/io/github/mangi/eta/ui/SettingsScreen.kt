@@ -885,6 +885,25 @@ private fun SettingsPageContent(
                 }
             }
 
+            // ── 提示词与工具 ──────────────────────────────────────────
+            item(key = "section_prompt_studio") {
+                if (!sectionVisible("section_prompt_studio")) return@item
+                EtaPreferenceGroupTitle(stringResource(R.string.prompt_studio_section))
+                EtaPreferenceGroup {
+                    EtaArrowPreference(
+                        title = stringResource(R.string.prompt_studio_title),
+                        summary = stringResource(R.string.prompt_studio_section_summary),
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.Psychology,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { onNavigate(AppRoute.PromptStudio) },
+                    )
+                }
+            }
+
             // ── 关于 ────────────────────────────────────────────────────
             item(key = "section_about") {
                 if (!sectionVisible("section_about")) return@item

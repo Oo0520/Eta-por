@@ -24,6 +24,9 @@ internal object MemoryProcessProbe {
     }
 
     private val lineSplit = Regex("\\s+")
+    private val DONE_MARKER = Regex(
+        "ETA_CLEAN_DONE killed=(\\d+) failed=(\\d+) cache=(ok|no) free_delta=(-?\\d+) sample=([0-9 ]*)",
+    )
 
     /** 进面板的最小 RSS：8 MB（2048 页）。低于它的进程对清理没意义，但会让遍历变慢。 */
     private const val MIN_RSS_PAGES = 2048
@@ -148,11 +151,23 @@ internal object MemoryProcessProbe {
         }
     }.getOrDefault(0L)
 
+    enum class CleanFailure { NO_ROOT, DENIED, TIMEOUT, SCRIPT }
+
     data class QuickCleanResult(
-        val rootOk: Boolean,
+        /** 脚本跑到最后一行并拿到了结果标记。 */
+        val cleaned: Boolean,
         val killedDaemons: Int,
+        /** 匹配到但 kill 失败的进程数（权限或 SELinux 限制）。 */
+        val killFailed: Int,
+        /** 页缓存是否真的回收成功：部分内核把 /proc/sys/vm/drop_caches 设成只读。 */
+        val cacheFlushed: Boolean,
+        /** 丢弃页缓存腾出的 MemFree（MB）。注意它不改变「已用」——已用按 MemAvailable 算。 */
+        val cacheFreedMb: Long,
+        /** 命中的前几个 pid，出问题时可判断是"没匹配"还是"杀不掉"。 */
+        val samplePids: String,
         val availBeforeKb: Long,
         val availAfterKb: Long,
+        val failure: CleanFailure?,
     ) {
         val freedKb: Long get() = (availAfterKb - availBeforeKb).coerceAtLeast(0L)
     }
@@ -166,32 +181,85 @@ internal object MemoryProcessProbe {
      */
     fun quickClean(): QuickCleanResult {
         val before = memAvailableKb()
+        // 先给明确原因：没授权、被拒、超时、脚本失败不再共用一句提示。
+        if (!RootAccess.isGranted) {
+            return QuickCleanResult(
+                cleaned = false,
+                killedDaemons = 0,
+                killFailed = 0,
+                cacheFreedMb = 0,
+                samplePids = "",
+                cacheFlushed = false,
+                availBeforeKb = before,
+                availAfterKb = before,
+                failure = CleanFailure.NO_ROOT,
+            )
+        }
         val script = listOf(
             "n=0",
+            "f=0",
+            // 记下前三个候选，便于区分"没匹配到"和"匹配到但杀不掉"。
+            "sample=",
             "for p in /proc/[0-9]*; do",
             "  pid=\${p#/proc/}",
             "  case \"\$pid\" in ''|*[!0-9]*) continue;; esac",
+            // procfs 上 /proc/<pid>/cmdline 的 st_size 恒为 0，`-s` 永远为假，
+            // 会让循环一次都不匹配（这正是"清理永远 killed=0"的根因）。用 -r 判断可读。
             "  [ -r \"\$p/cmdline\" ] || continue",
-            "  c=\$(tr '\\0' ' ' < \"\$p/cmdline\" 2>/dev/null)",
+            // 脚本自身的命令行里含有 GradleDaemon 等特征串，必须跳过自己与父进程。
+            "  [ \"\$pid\" = \"\$\$\" ] && continue",
+            "  [ \"\$pid\" = \"\$PPID\" ] && continue",
+            "  c=\$(cat \"\$p/cmdline\" 2>/dev/null)",
             "  [ -z \"\$c\" ] && continue",
             "  case \"\$c\" in",
             "    *GradleDaemon*|*KotlinCompileDaemon*|*kotlin-daemon*|*K2JVMCompiler*|*aapt2*)",
-            "      kill \"\$pid\" 2>/dev/null && n=\$((n + 1));;",
+            "      [ \${#sample} -lt 60 ] && sample=\"\$sample \$pid\"",
+            "      if kill \"\$pid\" 2>/dev/null; then n=\$((n + 1));",
+            "      elif kill -9 \"\$pid\" 2>/dev/null; then n=\$((n + 1));",
+            "      else f=\$((f + 1)); fi;;",
             "  esac",
             "done",
+            "free0=\$(awk '/MemFree/ {print \$2}' /proc/meminfo)",
+            "am kill-all --user 0 >/dev/null 2>&1 || am kill-all >/dev/null 2>&1",
             "sync",
-            "echo 3 > /proc/sys/vm/drop_caches 2>/dev/null",
-            "echo \"killed=\$n\"",
+            "cache=no",
+            "if echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; then cache=ok; fi",
+            "free1=\$(awk '/MemFree/ {print \$2}' /proc/meminfo)",
+            "echo \"ETA_CLEAN_DONE killed=\$n failed=\$f cache=\$cache free_delta=\$(( (free1 - free0) / 1024 )) sample=\$sample\"",
             "exit 0",
         ).joinToString("\n")
-        val result = executor.execute(script, timeoutMillis = 30_000L, maxOutputBytes = 64 * 1024)
-        val killed = Regex("killed=(\\d+)").find(result.stdout)?.groupValues?.get(1)?.toIntOrNull()
-        runCatching { Thread.sleep(400L) }
+        val result = executor.execute(script, timeoutMillis = 90_000L, maxOutputBytes = 64 * 1024)
+        val match = DONE_MARKER.find(result.stdout)
+        runCatching { Thread.sleep(600L) }
+        val after = memAvailableKb()
+        if (match == null) {
+            val failure = when {
+                !result.ok -> CleanFailure.DENIED
+                result.timedOut -> CleanFailure.TIMEOUT
+                else -> CleanFailure.SCRIPT
+            }
+            return QuickCleanResult(
+                cleaned = false,
+                killedDaemons = 0,
+                killFailed = 0,
+                cacheFreedMb = 0,
+                samplePids = "",
+                cacheFlushed = false,
+                availBeforeKb = before,
+                availAfterKb = after,
+                failure = failure,
+            )
+        }
         return QuickCleanResult(
-            rootOk = killed != null,
-            killedDaemons = killed ?: 0,
+            cleaned = true,
+            killedDaemons = match.groupValues[1].toIntOrNull() ?: 0,
+            killFailed = match.groupValues[2].toIntOrNull() ?: 0,
+            cacheFreedMb = match.groupValues[4].toLongOrNull() ?: 0L,
+            samplePids = match.groupValues[5].trim(),
+            cacheFlushed = match.groupValues[3] == "ok",
             availBeforeKb = before,
-            availAfterKb = memAvailableKb(),
+            availAfterKb = after,
+            failure = null,
         )
     }
 

@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.device.MemoryProcessProbe
+import io.github.mangi.eta.agent.device.RootAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -67,6 +68,7 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
     val selfPid = remember { Process.myPid() }
     val selfPackage = remember { context.packageName }
     var procs by remember { mutableStateOf<List<MemoryProcessProbe.Proc>>(emptyList()) }
+    var appRows by remember { mutableStateOf<List<AppUsageRow>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var cleaning by remember { mutableStateOf(false) }
@@ -75,11 +77,17 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
     val usage = remember(loaded, usageTick) { readMemoryUsage(context) }
 
     suspend fun reload() {
-        withContext(Dispatchers.IO) { MemoryProcessProbe.snapshot() }.let {
-            procs = it
-            loaded = true
-            usageTick += 1
+        // 包名与应用名解析以前放在 composition 里同步跑：每一行两次 PackageManager 调用，
+        // 30 行就是 60 次主线程查询，面板打开会明显卡。现在整段搬到 IO。
+        val (nextProcs, nextRows) = withContext(Dispatchers.IO) {
+            val snapshot = MemoryProcessProbe.snapshot()
+            val usage = MemoryProcessProbe.appUsage(snapshot, MemoryRankLimit)
+            snapshot to resolveAppRows(context, usage, selfPackage)
         }
+        procs = nextProcs
+        appRows = nextRows
+        loaded = true
+        usageTick += 1
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -88,9 +96,7 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
         MemoryProcessProbe.descendants(procs, selfPid)
     }
     val builds = remember(procs) { MemoryProcessProbe.buildProcesses(procs) }
-    val apps = remember(procs, context, selfPackage) {
-        resolveAppRows(context, MemoryProcessProbe.appUsage(procs, MemoryRankLimit), selfPackage)
-    }
+    val apps = appRows
 
     fun terminate(pids: List<Int>) {
         if (pids.isEmpty() || busy) return
@@ -108,23 +114,38 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
         if (cleaning) return
         cleaning = true
         scope.launch {
-            val result = withContext(Dispatchers.IO) { MemoryProcessProbe.quickClean() }
+            var result = withContext(Dispatchers.IO) { MemoryProcessProbe.quickClean() }
+            if (result.failure == MemoryProcessProbe.CleanFailure.NO_ROOT) {
+                // 之前这里只弹一句"需要 Root"，用户没法在这个界面里恢复；
+                // 现在主动申请一次授权后自动重试。
+                withContext(Dispatchers.IO) { RootAccess.request(context).join() }
+                result = withContext(Dispatchers.IO) { MemoryProcessProbe.quickClean() }
+            }
             delay(300)
             reload()
             cleaning = false
-            Toast.makeText(
-                context,
-                if (result.rootOk) {
-                    context.getString(
-                        R.string.memory_sheet_quick_clean_done,
-                        formatMegabytes(result.freedKb * 1024L),
-                        result.killedDaemons,
-                    )
-                } else {
-                    context.getString(R.string.memory_sheet_quick_clean_failed)
-                },
-                Toast.LENGTH_SHORT,
-            ).show()
+            // 失败原因分开提示：以前"没授权"和"脚本没跑完"共用一句话，误报过很多次。
+            val message = when {
+                result.failure == MemoryProcessProbe.CleanFailure.NO_ROOT ->
+                    context.getString(R.string.memory_sheet_clean_no_root)
+                result.failure == MemoryProcessProbe.CleanFailure.DENIED ->
+                    context.getString(R.string.memory_sheet_clean_denied)
+                result.failure == MemoryProcessProbe.CleanFailure.TIMEOUT ->
+                    context.getString(R.string.memory_sheet_clean_timeout)
+                result.failure != null ->
+                    context.getString(R.string.memory_sheet_clean_script)
+                result.killedDaemons > 0 && result.killFailed > 0 ->
+                    context.getString(R.string.memory_sheet_clean_partial, result.killedDaemons, result.killFailed)
+                result.killedDaemons == 0 && result.killFailed > 0 ->
+                    context.getString(R.string.memory_sheet_clean_partial, 0, result.killFailed)
+                result.killedDaemons == 0 ->
+                    context.getString(R.string.memory_sheet_clean_none)
+                result.cacheFlushed ->
+                    context.getString(R.string.memory_sheet_clean_ok, result.killedDaemons, result.cacheFreedMb)
+                else ->
+                    context.getString(R.string.memory_sheet_clean_ok_no_cache, result.killedDaemons)
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -287,17 +308,22 @@ private fun resolveAppRows(
 ): List<AppUsageRow> {
     val pm = context.packageManager
     return usage.map { item ->
-        val info = runCatching {
-            pm.getPackageInfo(item.packageName, 0).applicationInfo
-        }.getOrNull()
-        val label = info
-            ?.let { app -> runCatching { pm.getApplicationLabel(app).toString() }.getOrNull() }
-            ?.takeIf { it.isNotBlank() }
-            ?: item.packageName
-        // 系统应用（含系统应用更新后的版本）不给释放入口；查不到包信息的进程同样只读。
-        val systemApp = info == null ||
-            (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
-            (info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        // 包名 -> (显示名, 是否系统应用) 缓存：同一包在多次刷新间不再重复查询。
+        val cached = appInfoCache[item.packageName] ?: run {
+            val info = runCatching {
+                pm.getPackageInfo(item.packageName, 0).applicationInfo
+            }.getOrNull()
+            val label = info
+                ?.let { app -> runCatching { pm.getApplicationLabel(app).toString() }.getOrNull() }
+                ?.takeIf { it.isNotBlank() }
+                ?: item.packageName
+            val systemApp = info == null ||
+                (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
+                (info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+            (label to systemApp).also { appInfoCache[item.packageName] = it }
+        }
+        val label = cached.first
+        val systemApp = cached.second
         AppUsageRow(
             packageName = item.packageName,
             label = label,
@@ -534,3 +560,6 @@ private fun TaskRow(proc: MemoryProcessProbe.Proc, onKill: () -> Unit) {
         )
     }
 }
+
+/** 包名解析缓存：面板每次刷新都重新查 PackageManager 会拖慢打开速度。 */
+private val appInfoCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Boolean>>()

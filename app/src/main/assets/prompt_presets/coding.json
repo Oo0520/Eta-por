@@ -1,0 +1,28 @@
+{
+  "schema": 2,
+  "name": "编码 · 文件与终端",
+  "description": "只开文件、终端与联网查资料，砍掉设备操作与通知，专做代码与工程任务",
+  "mode": "APPEND",
+  "base_system_prompt": "",
+  "persona_name": "",
+  "persona_style": "",
+  "append_instructions": "这是编码场景：优先用文件与终端工具直接改代码，改完给出改动点与验证结果；不要用 GUI 工具模拟点击。",
+  "author": "Eta 内置",
+  "tool_mode": "ALLOW_LIST",
+  "allowed_tools": [
+    "edit_file",
+    "fetch_url",
+    "get_current_context",
+    "glob_files",
+    "grep_files",
+    "list_directory",
+    "read_file",
+    "read_image",
+    "stat_file",
+    "terminal",
+    "terminal_daemon",
+    "terminal_job",
+    "web_search",
+    "write_file"
+  ]
+}

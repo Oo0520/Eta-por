@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "name": "简洁 · 先给结论",
+  "description": "正文先给结论再给依据，去掉开场白和客套话。",
+  "mode": "APPEND",
+  "base_system_prompt": "",
+  "persona_name": "",
+  "persona_style": "",
+  "append_instructions": "回答先给结论，再给依据；不写开场白与客套话，不复述我的问题。",
+  "tool_mode": "ALLOW_ALL",
+  "allowed_tools": []
+}

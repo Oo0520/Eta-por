@@ -11,4 +11,13 @@
   <string name="memory_sheet_build_title">构建与编译进程</string>
   <string name="memory_sheet_build_count">%1$d 个 · 共 %2$s</string>
   <string name="memory_sheet_build_kill_all">结束全部编译进程（%1$d 个）</string>
+  <string name="memory_sheet_clean_no_root">清理失败：Eta 没有 Root 授权，请在 KernelSU / Magisk 里给 Eta 放行</string>
+  <string name="memory_sheet_clean_denied">清理失败：su 调用被拒绝（授权可能已被撤销），重新授予后再试</string>
+  <string name="memory_sheet_clean_timeout">清理超时（超过 90 秒已中止），过一会儿再试</string>
+  <string name="memory_sheet_clean_script">清理脚本没有跑完，可能是系统限制了 /proc 访问</string>
+  <string name="memory_sheet_clean_ok_no_cache">已结束 %1$d 个编译守护；系统拒绝回收页缓存（drop_caches 只读）</string>
+  <string name="memory_sheet_clean_ok">已结束 %1$d 个编译守护，丢弃页缓存 %2$d MB</string>
+  <string name="memory_sheet_clean_none">没找到可结束的编译守护（当前没有 Gradle / Kotlin 守护在跑）</string>
+  <string name="memory_sheet_clean_partial">已结束 %1$d 个，另有 %2$d 个杀不掉（权限或 SELinux 限制）</string>
+  <string name="memory_sheet_clean_metric_hint">「已用」按可回收内存算，丢弃页缓存不会让它变小；要降请用行内「释放」结束具体应用</string>
 </resources>
