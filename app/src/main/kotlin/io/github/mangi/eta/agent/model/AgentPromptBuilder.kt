@@ -201,6 +201,21 @@ internal object AgentPromptBuilder {
                 )
             )
         }
+        if (config.subagentTools) {
+            messages.put(
+                systemMessage(
+                    "当任务包含互不依赖的多源取证、深度代码/文件/日志检索或耗时的终端操作，且将中间原始输出隔离在子上下文能显著节省主上下文窗口时，" +
+                        "可调用 subagent 派发子智能体。" +
+                        "在对话中你可以根据任务需要随时创建任意数量、不同职责的临时 Subagent 去完成工作：" +
+                        "既可使用内置预设（explore、coder、plan）或用户已保存的预设，也可直接传入任意自定义英文标识作为 subagent_type（并可按需指定 role 与 tools），" +
+                        "当场拉起临时专职 Subagent 执行，无需也不要每次都保存为持久化模板；" +
+                        "只有当用户明确要求‘保存/添加一个以后可复用的自定义 Subagent 模板’时，才调用 subagent_profile(action=\"save\", ...)。" +
+                        "多个独立的子任务应在同一轮一并发出多个 subagent 调用，由 Runtime 自动并行执行；" +
+                        "简单直接的单步查询优先直接调用对应工具，不必绕经 subagent。" +
+                        "子智能体没有当前会话上下文，也不执行屏幕 GUI 手势；派发时提供完整目标与已知线索，收到汇总结果后由你向用户统一作答。"
+                )
+            )
+        }
         roleplayContext?.personaMessage()?.let(messages::put)
         buildMemorySystemMessage(memoryContext, writable = roleplayContext == null)?.let(messages::put)
         // 技能索引只在真正带 skills_list / skills_read 的「正常」档注入：否则模型看得到目录却读不到正文，

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.Hearing
+import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.ImportContacts
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Inventory
@@ -339,6 +340,18 @@ private fun SettingsPageContent(
                         startAction = { EtaPreferenceIcon(icon = Icons.Rounded.Smartphone, tint = EtaPreferenceColors.Blue) },
                         onClick = { onNavigate(AppRoute.VirtualScreen) },
                     )
+                    EtaPreferenceDivider()
+                    EtaArrowPreference(
+                        title = "Subagent",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.Hub,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { onNavigate(AppRoute.Subagents) },
+                    )
+
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.route_skills),
