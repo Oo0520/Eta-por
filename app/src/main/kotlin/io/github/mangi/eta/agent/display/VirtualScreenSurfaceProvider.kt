@@ -20,9 +20,11 @@ class VirtualScreenSurfaceProvider : ContentProvider() {
         if (method != METHOD_SURFACE) return null
         val token = extras?.getString(EXTRA_TOKEN) ?: return null
         if (token != VirtualScreenHostSurfaces.token) return null
-        val surface = VirtualScreenHostSurfaces.currentSurface() ?: return null
+        val owner = extras?.getString(VirtualScreenHostSurfaces.EXTRA_OWNER).orEmpty()
+        val surface = VirtualScreenHostSurfaces.surfaceFor(owner) ?: return null
         return Bundle().apply {
-            putString(EXTRA_HOST, VirtualScreenHostSurfaces.currentHost().orEmpty())
+            putString(EXTRA_HOST, VirtualScreenHostSurfaces.currentHost(owner).orEmpty())
+            putString(VirtualScreenHostSurfaces.EXTRA_OWNER, owner)
             putParcelable(EXTRA_SURFACE, surface)
         }
     }

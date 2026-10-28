@@ -16,7 +16,6 @@ import androidx.core.graphics.drawable.toBitmap
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.display.VirtualScreenProfile
 import io.github.mangi.eta.agent.display.VirtualScreenSession
-import io.github.mangi.eta.agent.display.VirtualScreenViewerActivity
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,13 +40,9 @@ internal fun rememberVirtualScreenMenuEntries(): List<VirtualScreenMenuEntry> {
     val context = LocalContext.current
     val favoritePackages by SettingsDataStore.favoriteAppsFlow().collectAsState(initial = emptySet())
     return remember(favoritePackages, context) {
-        val entries = mutableListOf(
-            VirtualScreenMenuEntry(
-                label = context.getString(R.string.virtual_screen_open_menu),
-                component = null,
-                icon = null,
-            ),
-        )
+        // 顶部菜单不再提供「打开灵屏」入口：灵屏统一从设置页进入，
+        // 对话页菜单里只保留收藏应用直达。
+        val entries = mutableListOf<VirtualScreenMenuEntry>()
         favoritePackages.sorted().take(MAX_VIRTUAL_SCREEN_FAVORITES).forEach { packageName ->
             appShortcut(context, packageName)?.let { shortcut ->
                 entries += VirtualScreenMenuEntry(shortcut.label, shortcut.component, shortcut.icon)
@@ -63,7 +58,6 @@ internal fun openVirtualScreen(
     scope: CoroutineScope,
     component: String?,
 ) {
-    runCatching { context.startActivity(Intent(context, VirtualScreenViewerActivity::class.java)) }
     scope.launch {
         val opened = withContext(Dispatchers.IO) {
             runCatching {

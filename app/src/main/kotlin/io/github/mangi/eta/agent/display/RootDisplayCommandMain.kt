@@ -30,6 +30,18 @@ import org.json.JSONArray
 internal object RootDisplayCommandMain {
     private const val MARKER = "ETA_DISPLAY_RESULT:"
 
+    /**
+     * 虚拟屏所在 DisplayGroup 的唤醒锁参数。
+     *
+     * `PowerManager.newWakeLock(int, String, int)` 是 @hide 三参重载，按 displayId 把锁绑到该显示
+     * 所属的 DisplayGroup（虚拟屏带 OWN_DISPLAY_GROUP，独占一组，不会点亮手机屏）。
+     * 实测（ColorOS / Android 16）：只给 FULL_WAKE_LOCK 时对已经睡下的组无效——
+     * display state 仍 OFF、窗口 focused=false、节点树为空；必须并上 ACQUIRE_CAUSES_WAKEUP
+     * 才能真正把组唤醒。锁带超时，靠后台线程每 20s 续期一次。
+     */
+    private const val DISPLAY_WAKE_HOLD_MS = 60_000L
+    private const val DISPLAY_WAKE_RENEW_MS = 20_000L
+
     /** 当前 display id 与 Eta 自身包名：finally 清理里面的任务时要用。 */
     private var activeDisplayId = 0
     private var selfPackage = ""
@@ -45,8 +57,14 @@ internal object RootDisplayCommandMain {
         }
     }
 
-    private const val HOST_AUTHORITY = "io.github.mangi.xiaoaiwindow.hostsurface"
-    private const val APP_PACKAGE = "io.github.mangi.xiaoaiwindow"
+    /**
+     * 宿主包名与取面 provider 的 authority。
+     * 不能写死：正式版是 io.github.mangi.eta，测试版是 io.github.mangi.eta.beta，
+     * 硬编码会让其中一边永远拉不到 Surface（日志表现为 pull NPE → create direct=false）。
+     * 由 create 请求里的 selfPackage 推导。
+     */
+    private var hostPackage = "io.github.mangi.eta"
+    private fun hostAuthority(): String = hostPackage + ".hostsurface"
     /** helper 是裸 app_process，没有 AMS 里的 app 记录；必须走 external provider 通道。 */
     private var extProvider: Any? = null
 
@@ -56,7 +74,7 @@ internal object RootDisplayCommandMain {
         runCatching { cls.getMethod("myAttributionSource").invoke(null) }.getOrElse {
             cls.getDeclaredConstructor(
                 Int::class.javaPrimitiveType, String::class.java, String::class.java
-            ).also { it.isAccessible = true }.newInstance(0, APP_PACKAGE, null)
+            ).also { it.isAccessible = true }.newInstance(0, hostPackage, null)
         }
     }.getOrNull()
 
@@ -66,7 +84,13 @@ internal object RootDisplayCommandMain {
             val holder = am.javaClass.getMethod(
                 "getContentProviderExternal", String::class.java, Int::class.javaPrimitiveType,
                 android.os.IBinder::class.java, String::class.java
-            ).invoke(am, HOST_AUTHORITY, 0, null, "eta-vscr")
+            ).invoke(am, hostAuthority(), 0, null, "eta-vscr")
+            // holder 为 null = 宿主 App 没发布该 provider（未注册 / 进程未起 / 版本不匹配）。
+            // 以前这里直接 holder.javaClass 会抛 NPE，日志只剩 "pull: fail ... getClass() on null"，
+            // 看不出真正原因；现在给明确结论并回落到 ImageReader 出帧。
+            if (holder == null) {
+                error("PROVIDER_NOT_PUBLISHED:" + hostAuthority())
+            }
             holder.javaClass.getField("provider").get(holder).also { extProvider = it }
         }
         // A15+ 的 IContentProvider.call 首参是 AttributionSource（5 参），更早是 callingPackage+attributionTag（6 参）。
@@ -79,18 +103,21 @@ internal object RootDisplayCommandMain {
         } ?: calls.firstOrNull { it.parameterTypes.size == 6 }
         ?: throw NoSuchMethodException("IContentProvider.call")
         val args = if (call.parameterTypes.size == 6) {
-            arrayOf<Any?>(APP_PACKAGE, null, HOST_AUTHORITY, method, null, extras)
+            arrayOf<Any?>(hostPackage, null, hostAuthority(), method, null, extras)
         } else {
-            arrayOf<Any?>(attrSource(), HOST_AUTHORITY, method, null, extras)
+            arrayOf<Any?>(attrSource(), hostAuthority(), method, null, extras)
         }
         return call.invoke(provider, *args) as android.os.Bundle?
     }
 
     @Suppress("UNUSED_PARAMETER")
-    private fun pullHostSurface(context: Context, token: String?): android.view.Surface? {
+    private fun pullHostSurface(context: Context, token: String?, owner: String = ""): android.view.Surface? {
         if (token.isNullOrEmpty()) { hlog("pull: no token"); return null }
         return runCatching {
-            val extras = android.os.Bundle().apply { putString("token", token) }
+            val extras = android.os.Bundle().apply {
+                putString("token", token)
+                putString(VirtualScreenHostSurfaces.EXTRA_OWNER, owner)
+            }
             val result = try {
                 callProvider("surface", extras)
             } catch (first: Throwable) {
@@ -117,6 +144,8 @@ internal object RootDisplayCommandMain {
         val readerRef = java.util.concurrent.atomic.AtomicReference<ImageReader?>(null)
         var frames: HandlerThread? = null
         var wakeLock: PowerManager.WakeLock? = null
+        /** 虚拟屏所在显示组的唤醒锁；拿不到时为 null（退回仅探活，不影响其它逻辑）。 */
+        var displayWakeLock: PowerManager.WakeLock? = null
         try {
             require(Process.myUid() == 0) { "ROOT_REQUIRED" }
             if (Looper.myLooper() == null) Looper.prepareMainLooper()
@@ -126,6 +155,9 @@ internal object RootDisplayCommandMain {
                 activityThread.getDeclaredMethod("getSystemContext").invoke(thread) as Context
             val input = System.`in`.bufferedReader()
             val setup = JSONObject(input.readLine() ?: return)
+            // 宿主包名要先拿到：下面 pullHostSurface 用的 authority 由它推导。
+            selfPackage = setup.optString("selfPackage").ifBlank { "io.github.mangi.eta" }
+            hostPackage = selfPackage
             require(setup.optString("action") == "create")
             var width = integer(setup, "width", 320, VirtualScreenProfile.MAX_WIDTH)
             var height = integer(setup, "height", 480, VirtualScreenProfile.MAX_HEIGHT)
@@ -136,7 +168,7 @@ internal object RootDisplayCommandMain {
             val idleTimer = VirtualScreenIdleTimer(setup.optInt("idleTimeoutMinutes", 20),
                 SystemClock::elapsedRealtime, setup.optBoolean("activeRun"))
             var frameIntervalMs = setup.optInt("frameIntervalMs", 16).coerceIn(8, 66)
-            var jpegQuality = setup.optInt("jpegQuality", 72).coerceIn(40, 95)
+            var jpegQuality = setup.optInt("jpegQuality", 100).coerceIn(40, 100)
             Thread {
                 while (true) {
                     Thread.sleep(1000)
@@ -157,14 +189,16 @@ internal object RootDisplayCommandMain {
                     val now = SystemClock.elapsedRealtime()
                     // 没有客户端在取帧时不编码：只保持画面队列流动，省电、少发热。
                     if (now - frameStore.lastDemandAt > 1500L) return@use
-                    if (now - frameStore.lastEncoded < frameIntervalMs) return@use
                     val plane = runCatching { image.planes.firstOrNull() }.getOrNull() ?: return@use
                     if (plane.pixelStride != 4) return@use
                     val paddedWidth = plane.rowStride / plane.pixelStride
-                    // 画面采样指纹：没变化就跳过拷贝/压缩/传输，最多每 1.5s 兜底强制出一帧。
+                    // 自适应 1–3fps：画面有变化 333ms 出一帧（3fps），静止时 1000ms（1fps）。
+                    // 不再用固定 refreshRate 卡节奏，也不再靠 1.5s 兜底才出帧。
                     val buffer = runCatching { plane.buffer }.getOrNull() ?: return@use
                     val signature = runCatching { sampleSignature(buffer) }.getOrDefault(0L)
-                    if (!frameStore.differs(signature) && now - frameStore.lastEncoded < 1500L) return@use
+                    val changed = frameStore.differs(signature)
+                    val minInterval = if (changed) 333L else 1000L
+                    if (now - frameStore.lastEncoded < minInterval) return@use
                     // 尺寸对不上的帧直接丢：切换期间在途的旧尺寸帧，其缓冲可能已被释放。
                     val frameWidth = renderWidth
                     val frameHeight = renderHeight
@@ -192,7 +226,8 @@ internal object RootDisplayCommandMain {
                     val encoded = ByteArrayOutputStream()
                     try {
                         cropped.compress(Bitmap.CompressFormat.JPEG, jpegQuality, encoded)
-                        encoded.toByteArray().takeIf { it.size <= 2_000_000 }?.let {
+                        // q100 不压缩后单帧明显变大（1080x2376 常到 3~6MB），上限跟着放宽，否则整帧会被丢掉。
+                        encoded.toByteArray().takeIf { it.size <= 12_000_000 }?.let {
                             frameStore.lastSignature = signature
                             frameStore.frame = EncodedFrame(it, SystemClock.elapsedRealtime())
                         }
@@ -205,7 +240,9 @@ internal object RootDisplayCommandMain {
                 }
             }
             val surfaceToken = setup.optString("surfaceToken")
-            var hostSurface = pullHostSurface(context, surfaceToken)
+            // 多开：每块屏只取自己会话的宿主面，取不到就回落整帧管线。
+            val surfaceOwner = setup.optString("owner")
+            var hostSurface = pullHostSurface(context, surfaceToken, surfaceOwner)
             hlog("create direct=" + (hostSurface != null) + " size=" + width + "x" + height)
             val initialReader = if (hostSurface == null) {
                 ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
@@ -311,6 +348,40 @@ internal object RootDisplayCommandMain {
             if (allowOff) wakeLock =
                 power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Eta:virtual-task")
                     .apply { acquire() }
+            // 虚拟屏整组的唤醒锁：三参 newWakeLock 按 displayId 绑定该显示所属 DisplayGroup。
+            // 只给 FULL_WAKE_LOCK 对已经睡下的组无效，必须并上 ACQUIRE_CAUSES_WAKEUP。
+            displayWakeLock = runCatching {
+                val method = PowerManager::class.java.getMethod(
+                    "newWakeLock",
+                    Int::class.javaPrimitiveType,
+                    String::class.java,
+                    Int::class.javaPrimitiveType,
+                )
+                (method.invoke(
+                    power,
+                    PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                    "Eta:virtual-display-$id",
+                    id,
+                ) as PowerManager.WakeLock).apply {
+                    setReferenceCounted(false)
+                    acquire(DISPLAY_WAKE_HOLD_MS)
+                }
+            }.onFailure { hlog("display wakelock unavailable: " + it) }.getOrNull()
+            hlog("display wakelock=" + (displayWakeLock != null) + " id=" + id)
+            Thread {
+                // 续期 + 探活：锁带超时，且 display 被系统重建后旧 id 会失效。
+                while (true) {
+                    Thread.sleep(DISPLAY_WAKE_RENEW_MS)
+                    val lock = displayWakeLock ?: break
+                    if (displayManager.getDisplay(id) == null) {
+                        hlog("display gone id=" + id + "，停止续期")
+                        break
+                    }
+                    // allowScreenOff=false 时跟随手机屏：手机熄屏或锁屏就让虚拟屏睡回去。
+                    if (!allowOff && (!power.isInteractive || keyguard.isDeviceLocked)) continue
+                    runCatching { lock.acquire(DISPLAY_WAKE_HOLD_MS) }
+                }
+            }.apply { name = "eta-display-wakelock"; isDaemon = true; start() }
             reply(
                 JSONObject().put("ok", true).put("displayId", id).put("width", width)
                     .put("height", height).put("density", dpi).put("refreshRate", display.display.refreshRate)
@@ -337,7 +408,7 @@ internal object RootDisplayCommandMain {
                     val result = when (request.getString("action")) {
                         "host_surface" -> {
                             // 查看页/小窗换了宿主面：重新取一次并直接换面，失败保持原面不动。
-                            val next = pullHostSurface(context, surfaceToken)
+                            val next = pullHostSurface(context, surfaceToken, surfaceOwner)
                             if (next != null) {
                                 hostSurface = next
                                 runCatching { display?.setSurface(next) }
@@ -347,7 +418,7 @@ internal object RootDisplayCommandMain {
                         "lifecycle" -> {
                             idleTimer.update(request.optInt("idleTimeoutMinutes", 20), request.optBoolean("activeRun"))
                             if (request.has("frameIntervalMs")) frameIntervalMs = request.optInt("frameIntervalMs", frameIntervalMs).coerceIn(4, 66)
-                            if (request.has("jpegQuality")) jpegQuality = request.optInt("jpegQuality", jpegQuality).coerceIn(40, 95)
+                            if (request.has("jpegQuality")) jpegQuality = request.optInt("jpegQuality", jpegQuality).coerceIn(40, 100)
                             JSONObject().put("ok", true).put("displayId", id)
                         }
                         "probe" -> JSONObject().put("ok", true).put("displayId", id)
@@ -355,6 +426,17 @@ internal object RootDisplayCommandMain {
                             .put("width", width).put("height", height)
                             .put("refreshRate", display.display.refreshRate)
                             .put("packageName", runningTasks().firstOrNull { taskDisplayId(it) == id }?.topActivity?.packageName.orEmpty())
+                            .apply {
+                                // 顶层 Activity 的真实方向诉求（页面级，比包级准确）。
+                                // dumpsys 较慢，3 秒内复用上一次结果。
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - lastOrientationAtMs > 3_000L) {
+                                    lastOrientation = requestedLandscape(id)
+                                    lastOrientationAtMs = now
+                                }
+                                val known = lastOrientation
+                                if (known != null) put("landscape", known) else put("landscapeKnown", false)
+                            }
 
                         // 真机键盘状态：虚拟屏里的编辑框有没有申请输入法、系统到底弹没弹。
                         "ime" -> {
@@ -428,7 +510,7 @@ internal object RootDisplayCommandMain {
                             }
                             if (runningElsewhere) {
                                 require(request.optBoolean("restartApp")) { "APP_ALREADY_RUNNING" }
-                                require(packageName != "io.github.mangi.xiaoaiwindow" && info.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM == 0) { "APP_RESTART_UNSUPPORTED" }
+                                require(packageName != selfPackage && info.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM == 0) { "APP_RESTART_UNSUPPORTED" }
                                 command(listOf("/system/bin/am", "force-stop", packageName))
                                 require(runningTasks().none {
                                     it.baseActivity?.packageName == packageName || it.topActivity?.packageName == packageName
@@ -562,6 +644,7 @@ internal object RootDisplayCommandMain {
             runCatching { reader?.close() }
             frames?.quitSafely()
             if (wakeLock?.isHeld == true) runCatching { wakeLock?.release() }
+            if (displayWakeLock?.isHeld == true) runCatching { displayWakeLock?.release() }
         }
     }
 
@@ -766,6 +849,11 @@ internal object RootDisplayCommandMain {
         ) { "INVALID_ARGUMENT" }
         return number.toInt()
     }
+
+    @Volatile
+    private var lastOrientation: Boolean? = null
+    @Volatile
+    private var lastOrientationAtMs = 0L
 
     private val touchInjector = RootTouchInjector()
 

@@ -26,6 +26,14 @@ internal object VirtualScreenInputPump {
 
     fun submit(context: Context, sessionId: String, args: JSONObject, onResult: ((Boolean) -> Unit)? = null) {
         VirtualScreenFrameGate.markInput()
+        // 注入可追溯：坐标落区问题是灵屏最难查的一类 bug（如滑进了系统手势区）。
+        VscrDiag.line(
+            "注入 " + args.optString("action") +
+                " x=" + args.optInt("x") + " y=" + args.optInt("y") +
+                " x1=" + args.optInt("x1") + " y1=" + args.optInt("y1") +
+                " x2=" + args.optInt("x2") + " y2=" + args.optInt("y2") +
+                " dur=" + args.optInt("durationMs")
+        )
         val item = Item(context.applicationContext, sessionId, args, onResult)
         synchronized(lock) {
             if (args.optString("action") == "swipe") {
