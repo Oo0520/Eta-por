@@ -1157,6 +1157,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         // 完成后保留会话列表：胶囊展开后仍能点回刚跑完的会话。
         return finalState.copy(
             thought = if (failed) "任务失败，点开查看" else "已完成，点开查看结果",
+
         )
     }
 
