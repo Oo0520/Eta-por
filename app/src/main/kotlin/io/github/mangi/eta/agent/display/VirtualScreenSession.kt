@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.display
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.util.Base64
 import android.os.SystemClock
@@ -35,6 +36,17 @@ import org.json.JSONObject
  */
 internal object VirtualScreenSession {
     private val lock = Any()
+
+    /**
+     * 手机是否处于锁屏（亮屏锁屏也算）。
+     *
+     * helper 是裸 app_process，Android 17 上它自己问不到 KeyguardManager（构造会碰
+     * WindowManagerGlobal → ApplicationSharedMemory），所以由主进程算好随 create / lifecycle 下发。
+     */
+    internal fun mainScreenLocked(context: Context): Boolean =
+        runCatching { context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true }
+            .getOrDefault(false)
+
     private val deadlines = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "eta-display-deadline").apply { isDaemon = true }
     }
@@ -205,6 +217,7 @@ internal object VirtualScreenSession {
                 JSONObject().put("action", "lifecycle")
                     .put("idleTimeoutMinutes", settings.virtualScreenIdleTimeoutMinutes)
                     .put("activeRun", current.viewer.value.activeRunId != null)
+                    .put("mainScreenLocked", mainScreenLocked(current.context))
                     .put("frameIntervalMs", io.github.mangi.eta.data.model.VirtualScreenFrameRate.intervalMs(fps))
                     .put("jpegQuality", io.github.mangi.eta.data.model.VirtualScreenFrameRate.jpegQuality(fps)),
             )
@@ -343,7 +356,8 @@ internal object VirtualScreenSession {
                             .put("frameIntervalMs", io.github.mangi.eta.data.model.VirtualScreenFrameRate.intervalMs(settings.virtualScreenFrameRate))
                             .put("jpegQuality", io.github.mangi.eta.data.model.VirtualScreenFrameRate.jpegQuality(settings.virtualScreenFrameRate))
                             .put("activeRun", runId != null)
-                            .put("allowScreenOff", allowOff).toString()
+                            .put("allowScreenOff", allowOff)
+                            .put("mainScreenLocked", mainScreenLocked(context)).toString()
                     ); input.newLine(); input.flush()
                     VscrDiag.line("create 已发送，等待 helper 响应")
                     readResponse(output)
