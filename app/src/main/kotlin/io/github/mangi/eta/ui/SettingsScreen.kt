@@ -147,6 +147,7 @@ private fun SettingsPageContent(
     var hasConnectedFramework by remember { mutableStateOf(enhancementHistory.hasConnected) }
     var hasUsedSystemizer by remember { mutableStateOf(enhancementHistory.hasUsedSystemizer) }
     var showSystemizerDialog by remember { mutableStateOf(false) }
+    var showTestConsent by remember { mutableStateOf(false) }
     var installingSystemizer by remember { mutableStateOf(false) }
 
     // 悬浮窗权限状态：授权后从系统设置返回时（ON_RESUME）刷新。
@@ -799,6 +800,21 @@ private fun SettingsPageContent(
                         onClick = { onNavigate(AppRoute.SelfCheck) },
                     )
 
+                    if (io.github.mangi.eta.BuildConfig.BETA_BUILD) {
+                    EtaPreferenceDivider()
+                    EtaArrowPreference(
+                        title = "测试与隐私",
+                        summary = "同意状态、训练用途开关、撤回同意、协议全文",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.VerifiedUser,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { showTestConsent = true },
+                    )
+                    }
+
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_about_feedback_title),
@@ -861,6 +877,12 @@ private fun SettingsPageContent(
                     )
                 }
             }
+        }
+
+        if (showTestConsent) {
+            io.github.mangi.eta.ui.consent.TestConsentSettingsDialog(
+                onDismiss = { showTestConsent = false },
+            )
         }
 
         SystemizerConfirmDialog(

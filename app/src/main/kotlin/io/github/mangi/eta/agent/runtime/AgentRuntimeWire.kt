@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.runtime
 
+import io.github.mangi.eta.BuildConfig
 import io.github.mangi.eta.agent.model.AgentContextSnapshot
 import io.github.mangi.eta.agent.model.AssistantScreenContextProjection
 
@@ -88,7 +89,11 @@ internal object AgentRuntimeWire {
     const val MSG_RESUME = 17
     const val MSG_STEER = 18
 
-    private const val MODULE_PACKAGE = "io.github.mangi.eta"
+    // 组件所在包 = applicationId（正式版 io.github.mangi.eta / 测试版 .beta），随安装身份变。
+    private val MODULE_PACKAGE = BuildConfig.APPLICATION_ID
+    // 类名由 namespace 决定，**不随 applicationId 变**。测试版曾把它一起拼成
+    // "$applicationId.agent.runtime.AgentRuntimeService"，指向了不存在的类，
+    // 表现为「Agent Runtime 服务绑定失败」。这里保持字面量，不要再参数化。
     private const val SERVICE_CLASS = "io.github.mangi.eta.agent.runtime.AgentRuntimeService"
 
     private const val KEY_TYPE = "type"
