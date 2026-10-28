@@ -23,12 +23,14 @@ internal fun EtaSwitchPreference(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     summary: String? = null,
+    summaryMaxLines: Int = Int.MAX_VALUE,
     startAction: (@Composable () -> Unit)? = null,
     bottomAction: (@Composable () -> Unit)? = null,
     enabled: Boolean = true,
 ) {
     EtaPreferenceRow(
         title = title, summary = summary, modifier = modifier,
+        summaryMaxLines = summaryMaxLines,
         startAction = startAction, bottomAction = bottomAction, enabled = enabled,
         interaction = Modifier.toggleable(
             value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange,
