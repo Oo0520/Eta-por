@@ -11,10 +11,10 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(application = EtaApp::class, sdk = [36])
 class AppearanceSettingsRepositoryTest {
     @Test

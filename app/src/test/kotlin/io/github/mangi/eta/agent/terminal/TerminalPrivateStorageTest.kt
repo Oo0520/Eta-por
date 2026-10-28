@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.terminal
 
+import io.github.mangi.eta.testsupport.assertNotOwnerWritable
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,7 +20,7 @@ class TerminalPrivateStorageTest {
         val marker = File(oldRootfs, LinuxEnvironmentPaths.READY_MARKER).apply { writeText("existing-root-environment") }
         assertTrue(legacy.setWritable(false, false))
         try {
-            assertFalse(legacy.canWrite())
+            assertNotOwnerWritable(legacy)
             val workspace = TerminalPrivateStorage.workspace(files)
             val environment = TerminalPrivateStorage.prootEnvironment(files, LinuxDistribution.DEBIAN)
 
@@ -28,7 +29,7 @@ class TerminalPrivateStorageTest {
             File(workspace, "ordinary.txt").writeText("app-data")
             assertEquals("app-data", File(workspace, "ordinary.txt").readText())
             assertEquals("existing-root-environment", marker.readText())
-            assertFalse(legacy.canWrite())
+            assertNotOwnerWritable(legacy)
             assertFalse(File(legacy, "proot").exists())
             assertFalse(File(legacy, "workspace").exists())
         } finally {

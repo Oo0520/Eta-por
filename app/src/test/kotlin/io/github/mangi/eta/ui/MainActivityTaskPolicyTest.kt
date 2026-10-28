@@ -5,10 +5,10 @@ import android.content.pm.ActivityInfo
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 class MainActivityTaskPolicyTest {
     @Suppress("DEPRECATION")
     @Test

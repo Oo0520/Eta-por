@@ -1,5 +1,6 @@
 package io.github.mangi.eta.core
 
+import io.github.mangi.eta.testsupport.assertNotOwnerWritable
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -24,7 +25,7 @@ class DexKitNativeLibraryFileTest {
         val library = DexKitNativeLibraryFile.extract(apk.path, cache, listOf("x86_64", "arm64-v8a"))
 
         assertEquals("library64", library.readText())
-        assertFalse(library.canWrite())
+        assertNotOwnerWritable(library)
         assertEquals(library, DexKitNativeLibraryFile.extract(apk.path, cache, listOf("arm64-v8a")))
     }
 
@@ -64,7 +65,7 @@ class DexKitNativeLibraryFileTest {
         val repaired = DexKitNativeLibraryFile.extract(apk.path, cache, listOf("arm64-v8a"))
 
         assertArrayEquals("library-one".toByteArray(), repaired.readBytes())
-        assertFalse(repaired.canWrite())
+        assertNotOwnerWritable(repaired)
         assertEquals(listOf("libdexkit.so"), repaired.parentFile!!.list()!!.toList())
     }
 
