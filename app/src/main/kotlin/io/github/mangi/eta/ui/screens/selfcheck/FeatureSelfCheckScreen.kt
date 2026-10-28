@@ -34,7 +34,20 @@ import kotlinx.coroutines.withContext
 
 private const val STATE_OK = "✔ 正常"
 private const val STATE_MISSING = "✘ 待处理"
-private const val STATE_BUILTIN = "● 已内置"
+private const val STATE_UNKNOWN = "● 未实测"
+private const val STATE_PLATFORM = "● 系统不提供"
+
+/** 文本库体量单独一路加载，用这个名字在列表里替换占位项。 */
+private const val TEXT_STORE_NAME = "文本库体量"
+
+/** su 常见落点：只用来在「未实测」时显示位置，不再当授权依据。 */
+private val SU_PATHS = listOf(
+    "/system/bin/su",
+    "/system/xbin/su",
+    "/sbin/su",
+    "/debug_ramdisk/su",
+    "/data/adb/ksu/bin/su",
+)
 
 /** 单项自检结果：权限类项目带一个可跳转的 uri，方便直接去修。 */
 private data class SelfCheckItem(
@@ -44,28 +57,40 @@ private data class SelfCheckItem(
     val actionUri: String? = null,
 )
 
+/** 未实测项的名字，摘要里直接点名；不点名用户会以为是 Root（它其实只在首次进入时未实测）。 */
+private fun SelfCheckReport.unknownSummary(): String =
+    (permissions + storage).filter { it.state == STATE_UNKNOWN }.joinToString("、") { it.name }
+
 private data class SelfCheckReport(
     val permissions: List<SelfCheckItem>,
     val storage: List<SelfCheckItem>,
-    val builtin: List<SelfCheckItem>,
 ) {
-    val total: Int get() = permissions.size + storage.size + builtin.size
+    val total: Int get() = permissions.size + storage.size
     val okCount: Int get() = (permissions + storage).count { it.state == STATE_OK }
-    val problemCount: Int get() = (permissions + storage).count { it.state != STATE_OK }
+    /** 「未实测」不算故障，但要单独计数，避免摘要说「全部就绪」。 */
+    val unknownCount: Int get() = (permissions + storage).count { it.state == STATE_UNKNOWN }
+    /** 平台不提供读数的项：测过了，但系统接口拿不到结果，点多少次都不会变。 */
+    val platformCount: Int get() = (permissions + storage).count { it.state == STATE_PLATFORM }
+    val problemCount: Int get() = (permissions + storage).count { it.state == STATE_MISSING }
 }
 
-/** 设置 → 关于 → 功能自检：一键把已开发功能的运行条件与内置状态过一遍。 */
+/** 设置 → 关于 → 功能自检：只查两类会静默失效的东西——跑起来要的授权、会悄悄坏掉的本机数据能力。 */
 @Composable
 internal fun FeatureSelfCheckScreen(onBack: () -> Unit) {
     val context = LocalContext.current.applicationContext
     var report by remember { mutableStateOf<SelfCheckReport?>(null) }
+    var textStoreItem by remember { mutableStateOf<SelfCheckItem?>(null) }
     var round by remember { mutableStateOf(0) }
-    // 63 项一屏铺开太长：三组各自可折叠，③ 内置功能默认收起。
+    // 两组各自可折叠；进页面就展开，避免看起来像「什么都没检测」。
     var showPermissions by remember { mutableStateOf(true) }
     var showStorage by remember { mutableStateOf(true) }
-    var showBuiltin by remember { mutableStateOf(false) }
+    // 首次进页面不跑 su（会弹授权框）；只有用户点「重新检测」才实测。
     LaunchedEffect(round) {
-        report = withContext(Dispatchers.IO) { runSelfCheck(context) }
+        report = withContext(Dispatchers.IO) { runSelfCheck(context, probeRoot = round > 0) }
+    }
+    // 文本库体量是 agent_text_chunks 全表 GROUP BY，慢，单独一路补，别拖住权限组。
+    LaunchedEffect(round) {
+        textStoreItem = withContext(Dispatchers.IO) { probeTextStore(context) }
     }
 
     MiuixScaffoldPage(title = "功能自检", onBack = onBack) {
@@ -76,8 +101,16 @@ internal fun FeatureSelfCheckScreen(onBack: () -> Unit) {
                     title = "重新检测",
                     summary = when {
                         current == null -> "正在检测…"
-                        current.problemCount == 0 -> "共 ${current.total} 项，运行条件全部就绪"
-                        else -> "共 ${current.total} 项，有 ${current.problemCount} 项待处理（点条目可跳转处理）"
+                        current.problemCount == 0 && current.unknownCount == 0 && current.platformCount == 0 ->
+                            "共 ${current.total} 项，运行条件全部就绪"
+                        current.problemCount == 0 && current.unknownCount == 0 ->
+                            "共 ${current.total} 项，运行条件就绪（${current.platformCount} 项系统不提供读数）"
+                        current.problemCount == 0 ->
+                            "共 ${current.total} 项，" + current.unknownSummary() + " 未实测（点「重新检测」重试）"
+                        else ->
+                            "共 ${current.total} 项，有 ${current.problemCount} 项待处理" +
+                                (current.unknownSummary().takeIf { it.isNotEmpty() }?.let { "、" + it + " 未实测" } ?: "") +
+                                "（点条目可跳转处理）"
                     },
                     onClick = { round += 1 },
                 )
@@ -128,7 +161,9 @@ internal fun FeatureSelfCheckScreen(onBack: () -> Unit) {
 
         if (showStorage) item(key = "selfcheck-storage") {
             EtaPreferenceGroup {
-                val items = report?.storage.orEmpty()
+                val items = report?.storage.orEmpty().map { item ->
+                    if (item.name == TEXT_STORE_NAME) textStoreItem ?: item else item
+                }
                 if (items.isEmpty()) {
                     EtaPreference(title = "读取中", summary = "…")
                 } else {
@@ -168,52 +203,94 @@ internal fun FeatureSelfCheckScreen(onBack: () -> Unit) {
             }
         }
 
-        item(key = "selfcheck-builtin-head") {
-            EtaPreferenceGroup {
-                EtaArrowPreference(
-                    title = "③ 已内置功能（本包确认存在）",
-                    summary = if (showBuiltin) "点一下收起" else "已收起，点一下展开（${report?.builtin?.size ?: 0} 项）",
-                    onClick = { showBuiltin = !showBuiltin },
-                )
-            }
-        }
-
-        if (showBuiltin) item(key = "selfcheck-builtin") {
-            EtaPreferenceGroup {
-                val items = report?.builtin.orEmpty()
-                if (items.isEmpty()) {
-                    EtaPreference(title = "读取中", summary = "…")
-                } else {
-                    items.forEachIndexed { index, item ->
-                        if (index > 0) EtaPreferenceDivider()
-                        EtaPreference(title = "${item.state}  ${item.name}", summary = item.detail)
-                    }
-                }
-            }
-        }
     }
 }
 
+/** 跳去修权限。package: 必须走 ACTION_APPLICATION_DETAILS_SETTINGS——实测 AOSP 没有 Activity 接 ACTION_VIEW package:。 */
 private fun openUri(context: Context, uri: String) {
-    runCatching {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+    val intent = when {
+        uri.startsWith("package:") ->
+            Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse(uri))
+        uri == "accessibility:" -> Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS)
+        uri == "battery:" -> Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        uri == "alarm:" ->
+            Intent(
+                AndroidSettings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:${context.packageName}"),
+            )
+        uri == "listener:" -> Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        else -> Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+    }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }.onFailure {
+        android.widget.Toast.makeText(
+            context,
+            "打不开设置页：${it.message}",
+            android.widget.Toast.LENGTH_SHORT,
+        ).show()
     }
 }
 
-private suspend fun runSelfCheck(context: Context): SelfCheckReport {
+/** 文本库体量：agent_text_chunks 全表 GROUP BY + 排序，单独跑，不让权限组陪着等。 */
+private suspend fun probeTextStore(context: Context): SelfCheckItem {
+    val textStore = runCatching {
+        val database = EtaDatabase.get(context)
+        TextStoreMaintenance.inspect(database)
+    }.getOrNull()
+    val state = if (textStore == null || textStore.oversizedFields == 0) STATE_OK else STATE_MISSING
+    val detail = if (textStore == null) {
+        "读不到分块表"
+    } else {
+        val cap = ChunkedTextDao.MAX_FIELD_CHARS / 10000
+        val window = ChunkedTextDao.MAX_RESTORE_CHARS / 10000
+        val top = textStore.topFields.firstOrNull()
+            ?.let { " · 最大 ${it.field} ${it.charCount / 10000} 万字符" }
+            .orEmpty()
+        "分块 ${textStore.scannedChars / 10000} 万字符 / ${textStore.scannedFields} 个字段 · " +
+            "单字段上限 ${cap} 万 · 单次读入窗口 ${window} 万 · 越线 ${textStore.oversizedFields} 个$top"
+    }
+    return SelfCheckItem(name = TEXT_STORE_NAME, state = state, detail = detail)
+}
+
+/** 实测 Root：su 路径存在只是必要条件，真正判据是 su -c id -u 能不能返回 0。 */
+private fun probeRootState(): Pair<String, String> {
+    val path = SU_PATHS.firstOrNull { File(it).exists() }
+        ?: return STATE_MISSING to "未发现 su：虚拟屏、终端与特权功能会受限"
+    return runCatching {
+        val process = ProcessBuilder("su", "-c", "id -u").redirectErrorStream(true).start()
+        val finished = process.waitFor(4, java.util.concurrent.TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            return@runCatching STATE_MISSING to "su 存在（$path），但 su -c id -u 4 秒内没返回：可能弹了授权框没点，或已被拒绝"
+        }
+        val text = process.inputStream.bufferedReader().use { it.readText() }.trim()
+        if (text == "0") {
+            STATE_OK to "su -c id -u 返回 0（$path），虚拟屏、终端与特权功能可用"
+        } else {
+            STATE_MISSING to "su 存在（$path）但没拿到 uid 0（输出「${text.ifBlank { "空" }}」），多半是被拒绝授权"
+        }
+    }.getOrElse { STATE_UNKNOWN to "su 探测失败：${it.message}" }
+}
+
+private fun bootSummary(stats: io.github.mangi.eta.core.BootReceipt.Stats): String =
+    io.github.mangi.eta.core.BootReceipt.describe(stats) +
+        if (stats.receivers > 0) "（${stats.receivers} 个开机接收器响应）" else ""
+
+private suspend fun runSelfCheck(context: Context, probeRoot: Boolean): SelfCheckReport {
     val pkg = context.packageName
     val resolver = context.contentResolver
     val overlayOk = AndroidSettings.canDrawOverlays(context)
     val notifyOk = context.checkSelfPermission("android.permission.POST_NOTIFICATIONS") ==
         PackageManager.PERMISSION_GRANTED
+    // 共存包 io.github.mangi.eta.beta 的包名含主包名，字符串 contains 会互相误报，改组件级比对。
+    fun grantedIn(raw: String): Boolean = raw.split(':').any {
+        android.content.ComponentName.unflattenFromString(it.trim())?.packageName == pkg
+    }
     val listeners = AndroidSettings.Secure.getString(
         resolver,
         "enabled_notification_listeners",
     ).orEmpty()
     // 优先问系统官方接口：部分 ROM 不刷新 enabled_notification_listeners，只看字符串会误报"没给权限"。
-    val listenerOk = listeners.contains(pkg) || runCatching {
+    val listenerOk = grantedIn(listeners) || runCatching {
         context.getSystemService(android.app.NotificationManager::class.java)
             ?.isNotificationListenerAccessGranted(
                 android.content.ComponentName(pkg, "$pkg.agent.device.AgentNotificationHistoryService"),
@@ -223,23 +300,71 @@ private suspend fun runSelfCheck(context: Context): SelfCheckReport {
         resolver,
         "enabled_accessibility_services",
     ).orEmpty()
-    val a11yOk = a11y.contains(pkg)
-    val suPath = listOf(
-        "/system/bin/su",
-        "/system/xbin/su",
-        "/sbin/su",
-        "/debug_ramdisk/su",
-        "/data/adb/ksu/bin/su",
-    ).firstOrNull { File(it).exists() }
+    val a11yOk = grantedIn(a11y)
+    // Root 只在「重新检测」时实测（会走 su，可能弹系统授权框）；首次进页面只报未实测。
+    val rootState: Pair<String, String> = if (probeRoot) probeRootState() else {
+        val path = SU_PATHS.firstOrNull { File(it).exists() }
+        STATE_UNKNOWN to "未实测 su${if (path != null) "（存在 $path）" else "（没找到 su 文件）"}：点「重新检测」会执行 su -c id -u，可能弹授权框"
+    }
+    // 自动任务/巡检依赖的四项系统授权。
+    val powerManager = context.getSystemService(android.os.PowerManager::class.java)
+    val batteryOk = runCatching {
+        powerManager?.isIgnoringBatteryOptimizations(pkg) == true
+    }.getOrDefault(false)
+    // 自启动能不能真跑，看的是三件事：接收器没被禁用、BOOT_COMPLETED 真的收到了、重启后闹钟排回来了。
+    // ColorOS 的「自启动」白名单 App 读不到属已知盲区，只能靠后两条实证。
+    val bootReceivers = listOf(
+        "$pkg.agent.automation.AutoBackupReceiver",
+        "$pkg.core.DiagnosticsPatrolReceiver",
+        "$pkg.core.DiagnosticsAutoExportReceiver",
+    )
+    val disabledReceivers = bootReceivers.filter { name ->
+        runCatching {
+            context.packageManager.getComponentEnabledSetting(
+                android.content.ComponentName(pkg, name),
+            ) == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        }.getOrDefault(false)
+    }
+    val bootStats = runCatching { io.github.mangi.eta.core.BootReceipt.load(context) }.getOrNull()
+    val bootVerified = bootStats != null &&
+        bootStats.lastAt > 0L &&
+        bootStats.lastAt >= bootStats.installAt &&
+        bootStats.alarmRescheduled
+    val appOps = context.getSystemService(android.app.AppOpsManager::class.java)
+    fun opMode(vararg names: String): Int {
+        val manager = appOps ?: return android.app.AppOpsManager.MODE_DEFAULT
+        for (name in names) {
+            val mode = runCatching {
+                @Suppress("DEPRECATION")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    manager.unsafeCheckOpNoThrow(name, android.os.Process.myUid(), pkg)
+                } else {
+                    manager.checkOpNoThrow(name, android.os.Process.myUid(), pkg)
+                }
+            }.getOrNull() ?: continue
+            if (mode != android.app.AppOpsManager.MODE_DEFAULT) return mode
+        }
+        return android.app.AppOpsManager.MODE_DEFAULT
+    }
+    // 实测：ColorOS 上这个 op 名是 android:background_start_activity；
+    // android:start_activity_from_background 会报 Unknown operation，所以只留实测可用的那个。
+    val popupMode = opMode("android:background_start_activity")
+    val exactAlarmOk = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        runCatching {
+            context.getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() == true
+        }.getOrDefault(false)
+    } else {
+        true
+    }
 
     val permissions = listOf(
         SelfCheckItem(
             name = "悬浮窗权限",
             state = if (overlayOk) STATE_OK else STATE_MISSING,
             detail = if (overlayOk) {
-                "悬浮胶囊、虚拟屏小窗都能显示"
+                "虚拟屏小窗能正常显示"
             } else {
-                "缺这个：悬浮胶囊/小窗不会出现。去 应用详情 → 显示在其他应用上层"
+                "缺这个：虚拟屏小窗不会出现。去 应用详情 → 显示在其他应用上层"
             },
             actionUri = if (overlayOk) null else "package:$pkg",
         ),
@@ -257,7 +382,7 @@ private suspend fun runSelfCheck(context: Context): SelfCheckReport {
             } else {
                 "未开：通知触发类任务与通知历史会缺失"
             },
-            actionUri = if (listenerOk) null else "package:$pkg",
+            actionUri = if (listenerOk) null else "listener:",
         ),
         SelfCheckItem(
             name = "无障碍服务",
@@ -267,12 +392,68 @@ private suspend fun runSelfCheck(context: Context): SelfCheckReport {
             } else {
                 "未开：所有界面自动化都会失败（不是 Eta 的 bug，是系统没授权）"
             },
-            actionUri = if (a11yOk) null else "package:$pkg",
+            actionUri = if (a11yOk) null else "accessibility:",
         ),
         SelfCheckItem(
             name = "Root 权限",
-            state = if (suPath != null) STATE_OK else STATE_MISSING,
-            detail = if (suPath != null) "su 存在：$suPath（虚拟屏、文件与终端特权可用）" else "未发现 su，虚拟屏与特权功能会受限",
+            state = rootState.first,
+            detail = rootState.second,
+        ),
+        SelfCheckItem(
+            name = "电池优化白名单",
+            state = if (batteryOk) STATE_OK else STATE_MISSING,
+            detail = if (batteryOk) {
+                "已不受电池优化限制：后台定时与巡检不会被推迟"
+            } else {
+                "未加入白名单：锁屏久了自动备份、巡检与自动任务会被推迟"
+            },
+            actionUri = if (batteryOk) null else "battery:",
+        ),
+        SelfCheckItem(
+            name = "自启动",
+            state = when {
+                disabledReceivers.isNotEmpty() -> STATE_MISSING
+                bootVerified -> STATE_OK
+                else -> STATE_UNKNOWN
+            },
+            detail = when {
+                disabledReceivers.isNotEmpty() ->
+                    "这几个接收器被禁用：${disabledReceivers.joinToString("、") { it.substringAfterLast('.') }}；重启后自动任务、备份、巡检都不会续排"
+                bootVerified -> "启动接收器已实证：" + bootSummary(bootStats)
+                bootStats == null ->
+                    "接收器已声明，但还没有开机实证：重启一次 Eta 收到 BOOT_COMPLETED、并把闹钟排回来后这里才会变绿"
+                else -> "接收器已声明，还没有开机实证：" + bootSummary(bootStats) +
+                    "；ColorOS 的「自启动」白名单 App 读不到，需要到应用详情 → 耗电管理里确认允许自启动"
+            },
+            actionUri = "package:$pkg",
+        ),
+        SelfCheckItem(
+            name = "后台弹出界面",
+            state = when (popupMode) {
+                android.app.AppOpsManager.MODE_ALLOWED -> STATE_OK
+                android.app.AppOpsManager.MODE_IGNORED,
+                android.app.AppOpsManager.MODE_ERRORED -> STATE_MISSING
+                else -> STATE_PLATFORM
+            },
+            detail = when {
+                popupMode == android.app.AppOpsManager.MODE_ALLOWED ->
+                    "允许从后台拉起界面：虚拟屏小窗能自己出来"
+                popupMode == android.app.AppOpsManager.MODE_IGNORED ||
+                    popupMode == android.app.AppOpsManager.MODE_ERRORED ->
+                    "被禁止从后台拉起界面：虚拟屏小窗可能不出现（ColorOS 叫「后台弹出界面」）"
+                else -> "系统没给这个权限项的可读状态（ColorOS 私有项）；到应用详情 → 权限管理里确认「后台弹出界面」"
+            },
+            actionUri = "package:$pkg",
+        ),
+        SelfCheckItem(
+            name = "精确闹钟",
+            state = if (exactAlarmOk) STATE_OK else STATE_MISSING,
+            detail = if (exactAlarmOk) {
+                "可以排精确闹钟：短周期自动备份与巡检能准点到点"
+            } else {
+                "没有精确闹钟授权：定时会退化成「大约到点」，短周期（10~60 分钟档）明显偏晚"
+            },
+            actionUri = if (exactAlarmOk) null else "alarm:",
         ),
     )
 
@@ -294,7 +475,9 @@ private suspend fun runSelfCheck(context: Context): SelfCheckReport {
         name = "数据库",
         state = if (dbVersion != null) STATE_OK else STATE_MISSING,
         detail = if (dbVersion != null) {
-            "结构版本 v$dbVersion（本包预期 28）· 会话 ${conversations ?: 0} · 消息 ${messages ?: 0} · 用量 ${usageRecords ?: 0} 条"
+            val expect = io.github.mangi.eta.data.db.ETA_DB_SCHEMA_VERSION
+            ("结构版本 v$dbVersion" + if (dbVersion != expect) "（期望 v$expect，需迁移）" else "") +
+                " · 会话 ${conversations ?: 0} · 消息 ${messages ?: 0} · 用量 ${usageRecords ?: 0} 条"
         } else {
             "打不开本地数据库"
         },
@@ -305,19 +488,8 @@ private suspend fun runSelfCheck(context: Context): SelfCheckReport {
         state = STATE_OK,
         detail = if (crashCount == 0) "暂无崩溃记录（正常）" else "已留 ${crashCount} 份，设置 → 关于可查看导出",
     )
-    val textStore = runCatching { database?.let { TextStoreMaintenance.inspect(it) } }.getOrNull()
-    storage += SelfCheckItem(
-        name = "文本库体量",
-        state = if (textStore == null || textStore.oversizedFields == 0) STATE_OK else STATE_MISSING,
-        detail = if (textStore == null) {
-            "读不到分块表"
-        } else {
-            val cap = ChunkedTextDao.MAX_FIELD_CHARS / 10000
-            val window = ChunkedTextDao.MAX_RESTORE_CHARS / 10000
-            val top = textStore.topFields.firstOrNull()?.let { " · 最大 ${it.field} ${it.charCount / 10000} 万字符" }.orEmpty()
-            "分块 ${textStore.scannedChars / 10000} 万字符 / ${textStore.scannedFields} 个字段 · 单字段上限 ${cap} 万 · 单次读入窗口 ${window} 万 · 越线 ${textStore.oversizedFields} 个$top"
-        },
-    )
+    // 文本库体量是全表 GROUP BY（这库 129 MB），单独一路加载，这里只挂占位。
+    storage += SelfCheckItem(name = TEXT_STORE_NAME, state = STATE_UNKNOWN, detail = "读取中…")
     val settings = runCatching { SettingsDataStore.settings() }.getOrNull()
     val backupDetail = if (settings == null) {
         "读不到设置"
@@ -386,200 +558,5 @@ private suspend fun runSelfCheck(context: Context): SelfCheckReport {
         },
     )
 
-    val builtin = listOf(
-        SelfCheckItem(
-            "通知使用权判定加固",
-            STATE_BUILTIN,
-            "自检先问系统官方接口（isNotificationListenerAccessGranted）再回退读设置值：部分 ROM 不刷新 enabled_notification_listeners，只读字符串会把「已经给了权限」误报成「没给」",
-        ),
-        SelfCheckItem(
-            "只留自定义模型",
-            STATE_BUILTIN,
-            "定制版不收预置模型提供商：启动时清掉没填 Key 的预置项；填过 Key 的（例如你手填过 Key 的 DeepSeek）自动转成自定义项保留，不会连凭据一起删",
-        ),
-        SelfCheckItem(
-            "输入草稿按会话落盘",
-            STATE_BUILTIN,
-            "输入框每敲一个字就落盘（eta_chat_drafts）；所有进会话的入口统一贴回草稿（角色扮演开局、删除后接手、切会话都算），进会话以盘上内容为准；消息发出去即清草稿",
-        ),
-        SelfCheckItem("多会话并发", STATE_BUILTIN, "最多 3 个会话同时跑任务；悬浮胶囊列出运行中会话，点一条跳回"),
-        SelfCheckItem("工具串行锁", STATE_BUILTIN, "点按/输入/终端等独占工具全局排队，只读工具仍并行"),
-        SelfCheckItem("界面重连文本重复修复", STATE_BUILTIN, "切出去再回来，同一段回复不再重复 2~3 遍"),
-        SelfCheckItem("虚拟屏与顶层浮动", STATE_BUILTIN, "独立 display 执行 GUI 任务；小窗可拖拽/贴边折叠/两档缩放"),
-        SelfCheckItem("内存占用胶囊", STATE_BUILTIN, "顶栏显示内存占用，点开看明细"),
-        SelfCheckItem("插话按会话投递", STATE_BUILTIN, "运行中插话只投给同会话正在跑的 run，别的会话在跑长任务时不会再被吸进去"),
-        SelfCheckItem("顶栏状态行右靠紧凑", STATE_BUILTIN, "顶栏状态胶囊、新建对话、更多一起贴右，行尾留白收紧"),
-        SelfCheckItem("文本库容量上限", STATE_BUILTIN, "单字段超 1200 万字符时保留尾部（尽量落在 JSON 元素边界），读入峰值约 50 MB，512 MB 堆内安全；超大堆由 largeHeap 提供"),
-        SelfCheckItem("文本库瘦身体检", STATE_BUILTIN, "自检页「文本库体量」报出分块总量、最大字段、单次读入窗口与越线数，可一键瘦身；升级后首次起动自动跑一次"),
-        SelfCheckItem("瘦身写回引用头", STATE_BUILTIN, "瘦身只保留尾部、按 JSON 元素边界切齐，删旧分块后把新引用头写回原列，读取不会 length mismatch"),
-        SelfCheckItem("journal 与 history 去重", STATE_BUILTIN, "两个字段逐字相同时只存一份，读取回落到 history；同一段历史不再占两份体积"),
-        SelfCheckItem("单次读入窗口", STATE_BUILTIN, "上下文读取按 200 万字符窗口取尾部，超长存档不再整串进堆；存储上限仍是单字段 1200 万字符"),
-        SelfCheckItem("图片预览浮层", STATE_BUILTIN, "会话内点图放大预览（JPEG 92、最长边 1920、上限 3.69M 像素）"),
-        SelfCheckItem("Linux 能力探测", STATE_BUILTIN, "终端环境页按实际能力显示可用项"),
-        SelfCheckItem("离线朗读", STATE_BUILTIN, "系统 TTS 离线档位，设置 → 语音朗读 可试听"),
-        SelfCheckItem("会话分类与自动任务", STATE_BUILTIN, "抽屉一级「自动任务」「会话分类」都在"),
-        SelfCheckItem("用量统计 / 诊断包 / 环境包快照", STATE_BUILTIN, "统计 30 天用量、导出诊断包、整机快照一键还原"),
-        SelfCheckItem(
-            "无障碍断连提醒",
-            STATE_BUILTIN,
-            "服务被解绑或中断时，8 秒确认后发通知说明原因，点通知直达无障碍设置；重连自动撤销，5 分钟内不重复提醒",
-        ),
-        SelfCheckItem(
-            "运行进度通知",
-            STATE_BUILTIN,
-            "跑任务时通知栏显示经过时间与当前动作；并发归 0 立刻撤销，不留残条",
-        ),
-        SelfCheckItem(
-            "自动任务重试与立刻重试",
-            STATE_BUILTIN,
-            "失败先自动重试（通知写明第几次、约多久后再试、原因），可点「立刻重试」提前；只有不再重试才发失败通知",
-        ),
-        SelfCheckItem(
-            "内存闸门与降档说明",
-            STATE_BUILTIN,
-            "内存紧张时新会话排队或冻结；并发上限被压低时进度通知里写明「内存紧张，并发上限 N/6」",
-        ),
-        SelfCheckItem(
-            "行为核查与账目",
-            STATE_BUILTIN,
-            "行为核查含十多项探针，并给出账目：开始/结束、失败率、平均会话时长、重试与收场次数",
-        ),
-        SelfCheckItem(
-            "诊断包按天与分享",
-            STATE_BUILTIN,
-            "诊断包含 7 天按天日志；设置 → 关于 可导出到「诊断包备份」或直接分享",
-        ),
-        SelfCheckItem(
-            "中断续跑横幅",
-            STATE_BUILTIN,
-            "被中断的对话回合给出「继续 / 忽略」，并写明上次停在哪一步、有没有动过手机（当时做了什么动作）",
-        ),
-        SelfCheckItem(
-            "上下文超限自动降档",
-            STATE_BUILTIN,
-            "请求超出上下文时自动降到更低档位重试，不直接失败",
-        ),
-        SelfCheckItem(
-            "请求侧裁历史",
-            STATE_BUILTIN,
-            "超长会话在请求侧裁剪，顶栏显示已裁掉的提示；本机历史不受影响",
-        ),
-        SelfCheckItem(
-            "对话内三轮压缩",
-            STATE_BUILTIN,
-            "同一对话最多压缩 3 轮，顶栏胶囊显示「已压 x/3 轮」；用量到窗口 75% 即提前压；轮次只增不减（编辑/重生成不会让数字回退）；到上限提示新开对话继续",
-        ),
-        SelfCheckItem(
-            "工具档「开发」档与分组",
-            STATE_BUILTIN,
-            "工具档分「能干活／省 token」两组，并新增「开发」档：只发开发链工具（终端／文件／GUI／日志／记忆），手机个人数据类工具不发送；降档顺序 正常 → 轻度 → 标准 → 极简",
-        ),
-        SelfCheckItem(
-            "记忆自动精简",
-            STATE_BUILTIN,
-            "记忆超过 60 KB 时自动把最旧段落的正文移入冷区 MEMORY-ARCHIVE.md；环境包、硬边界、偏好、进行中项目永不搬动，可在记忆界面开关",
-        ),
-        SelfCheckItem(
-            "返回栈去重（分享与回首页不再崩）",
-            STATE_BUILTIN,
-            "同一 key 不再重复入返回栈；分享后回首页、二级页互跳都不会再崩（Duplicate contentKey）",
-        ),
-        SelfCheckItem(
-            "工具档",
-            STATE_BUILTIN,
-            "设置 → 工具档 六档可选（正常／轻度／标准／纯聊天／极简／开发），每档带说明文案；档位跟随所选模型",
-        ),
-        SelfCheckItem(
-            "设置项搜索",
-            STATE_BUILTIN,
-            "设置页顶部可搜索设置项，直接跳到目标项",
-        ),
-        SelfCheckItem(
-            "小窗动作条与两档缩放",
-            STATE_BUILTIN,
-            "小窗动作条含应用直通车；点按在最小/放大两档之间切，长按关闭并连应用一起关",
-        ),
-        SelfCheckItem(
-            "虚拟屏与横竖屏稳定性",
-            STATE_BUILTIN,
-            "打开虚拟屏不再闪退；横竖屏切换的 native 越界与竞态已修",
-        ),
-        SelfCheckItem(
-            "开机续跑提示",
-            STATE_BUILTIN,
-            "设备重启后如有被打断的自动任务，开机提示一次是否续跑（不自动重跑）",
-        ),
-        SelfCheckItem(
-            "崩溃留证与导出",
-            STATE_BUILTIN,
-            "崩在启动／界面／后台都留证：调用栈 + 设备信息 + 本进程日志尾部写进 files/crash/，只留最近 10 份；设置 → 关于 可看条数并直接分享",
-        ),
-        SelfCheckItem(
-            "定时自动备份",
-            STATE_BUILTIN,
-            "设置 → 数据备份 可选周期与保留份数（本机当前：每 6 小时／保留 10 份）；到点先比指纹，没变化不写文件；全量包内含数据库（eta.db），单包约 40 MB；每次打包前也会自动备一次；产物在共享目录，无常驻进程",
-        ),
-        SelfCheckItem(
-            "数据占用与清理",
-            STATE_BUILTIN,
-            "数据占用页显示库大小／会话／消息／用量条数／运行归档数；三个清理项只动用量表与运行归档，不碰会话与分类",
-        ),
-        SelfCheckItem(
-            "搜索跳转高亮",
-            STATE_BUILTIN,
-            "会话内搜索结果可跳转，并把命中的那一条高亮出来",
-        ),
-        SelfCheckItem(
-            "消息选择复制",
-            STATE_BUILTIN,
-            "消息正文可整段复制，也能在段内拖选一段复制",
-        ),
-        SelfCheckItem(
-            "会话批量删除与分类折叠",
-            STATE_BUILTIN,
-            "会话列表一键批量模式；分类分组标题可点折叠（跨重启记忆）；按分类删除会二次确认并保留置顶",
-        ),
-        SelfCheckItem(
-            "胶囊常驻与最近会话",
-            STATE_BUILTIN,
-            "悬浮胶囊可设常驻；面板可放大、会话条目可点回；保留最近 3 条；跑完的「已完成」提示不自动消失",
-        ),
-        SelfCheckItem(
-            "任务完成通知",
-            STATE_BUILTIN,
-            "跑完发通知（高优先级通道，归入流体云），点一下回到那次会话",
-        ),
-        SelfCheckItem(
-            "重任务互斥闸门",
-            STATE_BUILTIN,
-            "重活（终端命令、构建等）同一时刻只跑一个，第二个明确排队，不互相拖垮",
-        ),
-        SelfCheckItem(
-            "分享入口加固",
-            STATE_BUILTIN,
-            "分享纯文字／单图／多图到 Eta 都能进输入框；多图会去重并按来源补齐",
-        ),
-        SelfCheckItem(
-            "朗读档位与熄屏续读",
-            STATE_BUILTIN,
-            "系统语音下可调语速／音调；熄屏继续朗读不被打断；正文逐段高亮跟随",
-        ),
-        SelfCheckItem(
-            "中文单语与提示中文化",
-            STATE_BUILTIN,
-            "默认简体中文（语言列表只留 zh-Hans）；并发排队、失败重试等提示统一中文",
-        ),
-        SelfCheckItem(
-            "工具档长按说明气泡",
-            STATE_BUILTIN,
-            "长按档位弹出说明气泡，悬浮展示，不占菜单空间",
-        ),
-        SelfCheckItem(
-            "记忆界面与段落仓库",
-            STATE_BUILTIN,
-            "记忆界面显示热区／冷区与体积，可编辑并写回；段落化拆分与去重由仓库统一处理",
-        ),
-    )
-
-    return SelfCheckReport(permissions = permissions, storage = storage, builtin = builtin)
+    return SelfCheckReport(permissions = permissions, storage = storage)
 }

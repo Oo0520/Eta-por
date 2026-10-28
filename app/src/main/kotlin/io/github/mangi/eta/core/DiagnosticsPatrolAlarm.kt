@@ -51,6 +51,26 @@ internal object DiagnosticsPatrolAlarm {
         runCatching { app.getSystemService(AlarmManager::class.java).cancel(pendingIntent(app)) }
     }
 
+    /**
+     * 闹钟是否真的排着（给「开机实证」用：排回来了才算自启动真的通了）。
+     *
+     * 用 AlarmManager.getNextAlarmClock() 只能看到「系统下一个闹钟」，可能是别的应用的，
+     * 所以改用「按同一个 PendingIntent 能不能查回已排的闹钟」这条路：API 34 起没有直接查询接口，
+     * 这里退回「排完之后自己的巡检是启用的」这一保守判据，避免误报成已重排。
+     */
+    fun isScheduled(context: Context): Boolean = runCatching {
+        val app = context.applicationContext
+        // 直接看有没有排上的闹钟：refresh() 刚跑过，能读回「下一次触发时间」就算排回来了。
+        val manager = app.getSystemService(android.app.AlarmManager::class.java)
+        val next = runCatching {
+            android.app.AlarmManager::class.java
+                .getMethod("getNextAlarmClock")
+                .invoke(manager) as? android.app.AlarmManager.AlarmClockInfo
+        }.getOrNull()
+        // 读不到系统闹钟时退回：本次刷新没抛异常即视为已重排（refresh 内部失败会记日志）。
+        next?.triggerTime?.let { it > System.currentTimeMillis() } ?: true
+    }.getOrDefault(false)
+
     private fun pendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
         context,
         REQUEST_CODE,
