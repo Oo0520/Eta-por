@@ -15,11 +15,38 @@ internal class AgentConversationPersistence(initial: AgentConversationStore.Snap
     private val mutex = Mutex()
     // 未对齐的会话不进入基线，首次保存按新会话整段写入，重排 sort_index。
     private var saved = initial?.let { snapshot -> project(snapshot) - snapshot.unalignedConversationIds }.orEmpty()
+    /** 只加载了元数据的会话：保存时只落元数据，绝不碰 messages / checkpoint（#006）。 */
+    private var partiallyLoaded: Set<String> = initial?.partiallyLoadedConversationIds.orEmpty()
 
-    suspend fun save(context: Context, snapshot: AgentConversationStore.Snapshot) = mutex.withLock {
+    suspend fun save(
+        context: Context,
+        snapshot: AgentConversationStore.Snapshot,
+        /** 见 [AgentConversationStore.saveChanges]：null 表示本次不改归属。 */
+        categoryIds: Map<String, String>? = null,
+    ) = mutex.withLock {
         val current = project(snapshot)
-        AgentConversationStore.saveChanges(context, snapshot.selectedConversationId, current, saved)
+        partiallyLoaded = snapshot.partiallyLoadedConversationIds
+        AgentConversationStore.saveChanges(
+            context = context,
+            selectedConversationId = snapshot.selectedConversationId,
+            current = current,
+            previous = saved,
+            partiallyLoadedConversationIds = partiallyLoaded,
+            categoryIds = categoryIds,
+        )
         saved = current
+    }
+
+    /** 会话历史已按需补齐：并入保存基线，避免下次保存把它当新会话整段重写。 */
+    fun markLoaded(conversationId: String, state: AgentChatHomeUiState, title: String, updatedAt: Long) {
+        partiallyLoaded = partiallyLoaded - conversationId
+        saved = saved + (conversationId to Content(state, title, updatedAt))
+    }
+
+    /** 会话被删除：解除占位保护，让保存路径真正删掉这一行。 */
+    fun markDropped(conversationId: String) {
+        partiallyLoaded = partiallyLoaded - conversationId
+        saved = saved - conversationId
     }
 
     private fun project(snapshot: AgentConversationStore.Snapshot): Map<String, Content> =

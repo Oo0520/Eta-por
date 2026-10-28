@@ -16,6 +16,16 @@ internal interface ConversationDao : ChunkedTextDao {
     @Query("SELECT COUNT(*) FROM conversation_messages")
     suspend fun messageCount(): Int
 
+    /**
+     * sort_index 与行下标不一致的会话（流式占位留下的空洞）。
+     * 这类会话必须整段读、整段重写，否则空洞会一直留着（#006 懒加载后仍要保住这条修复路径）。
+     */
+    @Query(
+        "SELECT conversation_id FROM conversation_messages GROUP BY conversation_id " +
+            "HAVING MIN(sort_index) != 0 OR MAX(sort_index) != COUNT(*) - 1"
+    )
+    suspend fun misalignedConversationIds(): List<String>
+
     @Query(
         "SELECT c.id, c.title, c.reasoning_effort, c.created_at, c.updated_at, c.model_id, " +
             "(c.roleplay_json != '') AS has_roleplay, " +
@@ -324,6 +334,10 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query("DELETE FROM conversation_categories WHERE id = :categoryId")
     suspend fun deleteCategory(categoryId: String)
+
+    /** 仅在恢复带分类的备份时使用：先用备份里的分类整体替换本机分类表。 */
+    @Query("DELETE FROM conversation_categories")
+    suspend fun deleteAllCategories()
 
     @Query("UPDATE conversations SET category_id = NULL WHERE category_id = :categoryId")
     suspend fun clearCategoryAssignments(categoryId: String)

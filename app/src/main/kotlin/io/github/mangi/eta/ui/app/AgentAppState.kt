@@ -17,6 +17,8 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.device.AgentFileReferenceGateway
 import io.github.mangi.eta.agent.device.RootAccess
 import io.github.mangi.eta.agent.media.AgentImageCodec
+import io.github.mangi.eta.agent.model.AgentSkillCommandPromptCodec
+import io.github.mangi.eta.agent.skill.SkillRuntime
 import io.github.mangi.eta.agent.model.AgentFileReference
 import io.github.mangi.eta.agent.model.AgentFileReferenceKind
 import io.github.mangi.eta.agent.model.AgentFileReferencePolicy
@@ -38,6 +40,7 @@ import io.github.mangi.eta.agent.runtime.AgentRunCheckpointStore
 import io.github.mangi.eta.agent.runtime.AgentRuntimeClient
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 import io.github.mangi.eta.agent.runtime.AgentUiHandoffPayload
+import io.github.mangi.eta.agent.runtime.RunControl
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.safeLogType
@@ -59,6 +62,12 @@ import io.github.mangi.eta.ui.model.AgentModelPickerProjector
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.AgentCommand
 import io.github.mangi.eta.ui.model.AgentCommandInput
+import io.github.mangi.eta.ui.model.AgentCommandKind
+import io.github.mangi.eta.ui.model.AgentPaletteEntry
+import io.github.mangi.eta.ui.model.AgentPalettePayload
+import io.github.mangi.eta.ui.model.CommandPaletteUi
+import io.github.mangi.eta.ui.model.CommandResultUi
+import io.github.mangi.eta.ui.model.commandPaletteEntries
 import io.github.mangi.eta.ui.model.CommandConfirmUi
 import io.github.mangi.eta.ui.model.ConversationModeUi
 import io.github.mangi.eta.ui.model.ConversationNavEntry
@@ -75,6 +84,7 @@ import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.UserMessageUi
 import io.github.mangi.eta.ui.model.contentMatches
 import io.github.mangi.eta.ui.model.SearchJumpUiState
+import io.github.mangi.eta.ui.model.SkillItemUi
 import io.github.mangi.eta.ui.model.ResumableRunUiState
 import io.github.mangi.eta.ui.model.firstMatchMessageId
 import io.github.mangi.eta.ui.model.navEntries
@@ -124,8 +134,21 @@ internal class AgentAppState(
     /** 最近一次请求被裁掉的轮次/条数：只用于顶栏提示，界面与数据库都不删。 */
     var historyTrimNotice by mutableStateOf<Pair<Int, Int>?>(null)
         private set
-    /** 最近一次因上下文超限自动降低工具档：只用于顶栏提示。 */
-    var overflowDowngradeNotice by mutableStateOf<String?>(null)
+
+    /**
+     * 斜杠命令表：内置命令 + 已启用技能展开出的技能命令。
+     *
+     * 界面层在技能开关变化时回填，保证「面板里看到的命令」与「能被解析执行的命令」是同一份。
+     */
+    var agentCommands by mutableStateOf(AgentCommands.builtIns)
+        private set
+
+    fun updateSkillCatalog(skills: List<SkillItemUi>) {
+        agentCommands = AgentCommands.withSkills(skills)
+    }
+
+    /** 命令面板的主动展开（/help、/skills、/model）；null 表示只按输入前缀显示。 */
+    var commandPalette by mutableStateOf<CommandPaletteUi?>(null)
         private set
     private val persistenceLock = Any()
     private var persistenceJob: Job? = null
@@ -148,6 +171,19 @@ internal class AgentAppState(
 
     private var selectedConversationId: String? = initialConversations.selectedConversationId
     private var conversationsById: Map<String, AgentChatHomeUiState> = initialConversations.conversationsById
+
+    /**
+     * 只加载了元数据的会话（#006 内存修复）：启动不再把全库历史读进堆，
+     * 用户切过去时由 [ensureConversationLoaded] 按需补载。
+     */
+    private var partiallyLoadedConversationIds: MutableSet<String> =
+        initialConversations.partiallyLoadedConversationIds.toMutableSet()
+
+    /** 会话列表预览：占位会话没有 messages，用它兜住摘要。 */
+    private var conversationPreviews: Map<String, String> = initialConversations.previews
+
+    /** 每个会话各自的补载任务；发送前要等目标会话落地，避免用空 history 请求模型。 */
+    private val conversationLoadJobs = mutableMapOf<String, Job>()
 
     /** 最近打开过的会话 id（最新在前）：侧栏顶部那一栏用，存进设置，重启后还在。 */
     /** 内部最多记 8 条，侧栏只显示 3 条，多的折叠。 */
@@ -210,11 +246,21 @@ internal class AgentAppState(
     )
         private set
 
-    /** 当前运行是否被用户暂停（仅驱动输入栏按钮在 暂停/恢复 之间切换）。 */
-    var runPaused by mutableStateOf(false)
-        private set
+    /**
+     * 执行侧真源的镜像。按「当前会话的 run 是否暂停」派生：
+     * 并发时别的会话暂停不会让这个会话的按钮变成播放图标。
+     */
+    private var runControlState by mutableStateOf(RunControl.state.value)
+
+    val runPaused: Boolean
+        get() = runControlState.pausedForConversation(selectedConversationId)
+
+    /** 当前会话对应的 runId；输入框的暂停／恢复／停止都按它定位。 */
+    private fun runIdForSelectedConversation(): String? =
+        runConversationIds.entries.firstOrNull { it.value == selectedConversationId }?.key
 
     init {
+        RunControl.observe { state -> runControlState = state }
         refreshConversationSummaries()
         observeRuntimeSelection()
         runtimeRecoveryInProgress.set(true)
@@ -365,6 +411,8 @@ internal class AgentAppState(
         withContext(Dispatchers.Main.immediate) {
             selectedConversationId = snapshot.selectedConversationId
             conversationsById = snapshot.conversationsById
+            partiallyLoadedConversationIds = snapshot.partiallyLoadedConversationIds.toMutableSet()
+            conversationPreviews = snapshot.previews
             conversationTitles = snapshot.titles
             conversationUpdatedAt = snapshot.updatedAt
             conversationPinned = snapshot.pinned
@@ -452,6 +500,13 @@ internal class AgentAppState(
         ) {
             return
         }
+
+        // 轨迹要落到具体会话上：先把这些会话的历史补齐，别往占位状态里写（#006）。
+        buildSet {
+            plan.completed.forEach { add(AgentUiHandoffPayload.from(it.result.handoff.payload).conversationId) }
+            plan.interrupted.forEach { add(AgentUiHandoffPayload.from(it.handoff.payload).conversationId) }
+            orphanRewrites.forEach { add(it.first) }
+        }.filter(String::isNotBlank).forEach { awaitConversationLoaded(it) }
 
         val acknowledgeAfterSave = mutableListOf<String>()
         val removeAfterSave = mutableListOf<String>()
@@ -866,27 +921,285 @@ internal class AgentAppState(
                 val name = args.trim()
                 val target = selectedConversationId
                 if (name.isBlank()) {
-                    toastText(appContext.getString(R.string.agent_command_rename_usage))
+                    showCommandResult(
+                        CommandResultUi(
+                            title = appContext.getString(R.string.agent_command_rename_usage),
+                            isError = true,
+                        ),
+                    )
                 } else if (target != null) {
                     renameConversation(target, name)
+                    showCommandResult(
+                        CommandResultUi(appContext.getString(R.string.agent_command_rename_done, name)),
+                    )
                 }
                 true
             }
 
             AgentCommands.STATUS -> {
-                toastText(statusSummary())
+                showCommandResult(statusResult())
+                true
+            }
+
+            AgentCommands.SKILLS -> {
+                openSkillsPalette()
                 true
             }
 
             AgentCommands.HELP -> {
-                // 输入框文本在本地持有，这里只给一句提示；真正展开面板靠用户输入斜杠。
-                toastText(appContext.getString(R.string.agent_command_help_hint))
+                // /help 不再弹一句话：直接把面板展开成全量清单，可滚动、可点选。
+                openHelpPalette()
                 true
             }
 
-            else -> false
+            else -> if (command.kind == AgentCommandKind.Skill) runSkillCommand(command, args) else false
         }
     }
+
+    /** 命令结果卡：多行、停留到用户手动关掉，不再用一闪而过的 toast。 */
+    fun showCommandResult(result: CommandResultUi) {
+        updateCurrentConversation(homeState.copy(commandResult = result), updateTimestamp = false)
+    }
+
+    fun dismissCommandResult() {
+        if (homeState.commandResult == null) return
+        updateCurrentConversation(homeState.copy(commandResult = null), updateTimestamp = false)
+    }
+
+    /** 面板主动展开时点选条目：模型直接切，命令按既有规则执行或补全。 */
+    fun runPaletteEntry(entryKey: String) {
+        // 前缀面板的条目没有进 commandPalette，按 key 现查一次。
+        val entry = commandPalette?.entries?.firstOrNull { it.key == entryKey }
+            ?: entryFromKey(entryKey)
+            ?: return
+        when (val payload = entry.payload) {
+            is AgentPalettePayload.SwitchModel -> {
+                commandPalette = null
+                val target = modelPickerState.providerGroups
+                    .flatMap { it.models }
+                    .firstOrNull { it.id == payload.modelId }
+                if (homeState.isStreaming || modelPickerState.isChanging) {
+                    showCommandResult(
+                        CommandResultUi(
+                            appContext.getString(R.string.agent_command_model_busy),
+                            isError = true,
+                        ),
+                    )
+                } else {
+                    selectModel(payload.modelId)
+                    showCommandResult(
+                        CommandResultUi(
+                            appContext.getString(
+                                R.string.agent_command_model_switched,
+                                target?.displayName ?: payload.modelId,
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            is AgentPalettePayload.Run -> {
+                commandPalette = null
+                val command = payload.command
+                if (command.kind == AgentCommandKind.Skill || command.argHint != null) {
+                    // 需要补参数：把 `/名字 ` 写回输入框并聚焦，用户接着补一句就能发。
+                    updateCurrentConversation(
+                        homeState.copy(
+                            input = "/" + command.name + " ",
+                            inputSyncVersion = homeState.inputSyncVersion + 1,
+                        ),
+                        updateTimestamp = false,
+                    )
+                } else {
+                    val consumed = runAgentCommand(command, "", confirmed = true)
+                    if (consumed) {
+                        updateCurrentConversation(
+                            homeState.copy(input = "", inputResetToken = homeState.inputResetToken + 1),
+                            updateTimestamp = false,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun closeCommandPalette() {
+        commandPalette = null
+    }
+
+    /** 长按面板条目：列表里只显示两行描述，完整说明摊到结果卡里看。 */
+    fun showPaletteEntryDetail(entryKey: String) {
+        val entry = commandPalette?.entries?.firstOrNull { it.key == entryKey }
+            ?: entryFromKey(entryKey)
+            ?: return
+        showCommandResult(
+            CommandResultUi(
+                title = entry.title,
+                lines = entry.subtitle.split("\n").filter { it.isNotBlank() },
+            ),
+        )
+    }
+
+    /** 按条目 key 现查：`cmd:名字` 查命令表，`model:id` 查模型清单。 */
+    private fun entryFromKey(key: String): AgentPaletteEntry? = when {
+        key.startsWith("cmd:") -> agentCommands
+            .firstOrNull { it.name == key.removePrefix("cmd:") }
+            ?.let { command -> commandPaletteEntries(listOf(command)).firstOrNull() }
+        key.startsWith("model:") -> modelPalette()?.entries?.firstOrNull { it.key == key }
+        else -> null
+    }
+
+    private fun openHelpPalette() {
+        val builtInSection = appContext.getString(R.string.agent_palette_section_builtin)
+        val skillSection = appContext.getString(R.string.agent_palette_section_skills)
+        val builtIns = agentCommands.filter { it.kind == AgentCommandKind.BuiltIn }
+        val skills = agentCommands.filter { it.kind != AgentCommandKind.BuiltIn }
+        val entries = commandPaletteEntries(builtIns).map { it.copy(section = builtInSection) } +
+            commandPaletteEntries(skills).map { it.copy(section = skillSection) }
+        commandPalette = CommandPaletteUi(
+            title = appContext.getString(R.string.agent_palette_help_title),
+            entries = entries,
+        )
+    }
+
+    private fun openSkillsPalette() {
+        val skills = agentCommands.filter { it.kind == AgentCommandKind.Skill }
+        if (skills.isEmpty()) {
+            showCommandResult(
+                CommandResultUi(appContext.getString(R.string.agent_command_skills_empty), isError = true),
+            )
+            commandPalette = null
+            return
+        }
+        commandPalette = CommandPaletteUi(
+            title = appContext.getString(R.string.agent_palette_skills_title),
+            entries = commandPaletteEntries(skills),
+        )
+    }
+
+    /** 模型清单；没有可用模型时返回 null，由调用方给结果卡。 */
+    private fun modelPalette(): CommandPaletteUi? {
+        val selectedId = modelPickerState.selectedModel?.id
+        val entries = modelPickerState.providerGroups.flatMap { group ->
+            group.models.map { model ->
+                AgentPaletteEntry(
+                    key = "model:" + model.id,
+                    title = model.displayName,
+                    subtitle = model.modelId,
+                    payload = AgentPalettePayload.SwitchModel(model.id),
+                    section = group.providerName,
+                    current = model.id == selectedId,
+                )
+            }
+        }
+        if (entries.isEmpty()) return null
+        return CommandPaletteUi(
+            title = appContext.getString(R.string.agent_palette_models_title),
+            entries = entries,
+        )
+    }
+
+    /** 技能调用留痕：消息流里的居中胶囊，不参与模型上下文。 */
+    private fun appendCommandNote(text: String) {
+        val notice = SystemNoticeMessageUi(
+            id = "command-note-" + UUID.randomUUID(),
+            code = SystemNoticeCode.CommandNote,
+            detail = text,
+        )
+        updateCurrentConversation(
+            homeState.copy(messages = homeState.messages + notice),
+            updateTimestamp = false,
+        )
+    }
+
+    /**
+     * 技能命令：把 SKILL.md 正文内联成技能块，带着任务描述发出去。
+     *
+     * 正文在 IO 线程读取，回到主线程发送；返回 true 表示这条输入已被命令消费。
+     * 没带任务描述时只提示一句、不发送，草稿由调用方保留。
+     */
+    private fun runSkillCommand(command: AgentCommand, args: String): Boolean {
+        val skillId = command.skillId ?: return false
+        val task = args.trim()
+        if (task.isEmpty()) {
+            showCommandResult(
+                CommandResultUi(
+                    title = appContext.getString(R.string.agent_command_skill_need_task, command.name),
+                    isError = true,
+                ),
+            )
+            return true
+        }
+        scope.launch {
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching {
+                    // 显式调用不看开关：技能关了也能用，只是不会自动出现在提示词索引里。
+                    val entry = SkillRuntime.createIndexService(appContext)
+                        .listSkillsForManagement()
+                        .firstOrNull { it.id == skillId && it.installed }
+                        ?: error("未找到技能：$skillId")
+                    val resolved = SkillRuntime.createLoader(appContext)
+                        .load(entry, "用户通过斜杠命令调用")
+                        ?: error("读取 SKILL.md 失败：${entry.skillFilePath}")
+                    val body = resolved.bodyMarkdown.trim()
+                    val truncated = body.length > AgentSkillCommandPromptCodec.BodyLimit
+                    LoadedSkillCommand(
+                        prompt = AgentSkillCommandPromptCodec.format(
+                            skillId = entry.id,
+                            skillName = entry.name,
+                            skillPath = entry.skillFilePath,
+                            body = if (truncated) body.take(AgentSkillCommandPromptCodec.BodyLimit) else body,
+                            truncated = truncated,
+                            request = task,
+                        ),
+                        skillName = entry.name,
+                        enabled = entry.enabled,
+                        truncated = truncated,
+                    )
+                }
+            }
+            loaded.onSuccess { result ->
+                withContext(Dispatchers.Main.immediate) {
+                    if (!result.enabled) {
+                        appendCommandNote(
+                            appContext.getString(R.string.agent_command_skill_disabled_note, result.skillName),
+                        )
+                    }
+                    if (result.truncated) {
+                        appendCommandNote(
+                            appContext.getString(
+                                R.string.agent_command_skill_truncated_note,
+                                result.skillName,
+                                AgentSkillCommandPromptCodec.BodyLimit,
+                            ),
+                        )
+                    }
+                    sendCurrentMessage(result.prompt)
+                }
+            }.onFailure { throwable ->
+                withContext(Dispatchers.Main.immediate) {
+                    showCommandResult(
+                        CommandResultUi(
+                            title = appContext.getString(
+                                R.string.agent_command_skill_load_failed,
+                                throwable.message ?: skillId,
+                            ),
+                            isError = true,
+                        ),
+                    )
+                }
+            }
+        }
+        return true
+    }
+
+    /** 技能正文加载结果：正文块 + 需要留痕的状态（关着的技能、正文被截断）。 */
+    private data class LoadedSkillCommand(
+        val prompt: String,
+        val skillName: String,
+        val enabled: Boolean,
+        val truncated: Boolean,
+    )
 
     /** 确认卡上的两个按钮：确认则真正执行，取消只收起卡片。 */
     fun resolveCommandConfirm(accept: Boolean) {
@@ -894,10 +1207,10 @@ internal class AgentAppState(
         homeState = homeState.copy(commandConfirm = null)
         if (!accept) return
         val command = confirm.commandName?.let { name ->
-            AgentCommands.builtIns.firstOrNull { it.name == name }
+            agentCommands.firstOrNull { it.name == name }
         }
         if (command != null) {
-            val args = (parseAgentCommand(confirm.payload, AgentCommands.builtIns) as? AgentCommandInput.Run)?.args.orEmpty()
+            val args = (parseAgentCommand(confirm.payload, agentCommands) as? AgentCommandInput.Run)?.args.orEmpty()
             runAgentCommand(command, args, confirmed = true)
         } else {
             // 未知命令按原文发送：// 转义后重新走一遍，避免再次被当成命令。
@@ -962,54 +1275,73 @@ internal class AgentAppState(
         val query = args.trim()
         val models = modelPickerState.providerGroups.flatMap { it.models }
         if (query.isBlank()) {
-            // 没有参数就列出可选模型，省得为了看一眼名字去开选择器。
-            val names = models.map { it.displayName }.take(6)
-            toastText(
-                if (names.isEmpty()) {
-                    appContext.getString(R.string.agent_command_model_empty)
-                } else {
-                    appContext.getString(R.string.agent_command_model_list, names.joinToString("、"))
-                },
-            )
+            // 不带参数：面板列模型，点一条直接切；不再是两秒就消失的名字列表。
+            val palette = modelPalette()
+            if (palette == null) {
+                showCommandResult(
+                    CommandResultUi(appContext.getString(R.string.agent_command_model_empty), isError = true),
+                )
+            } else {
+                commandPalette = palette
+            }
             return
         }
         val hit = models.firstOrNull { it.id == query }
             ?: models.firstOrNull { it.modelId.equals(query, ignoreCase = true) }
             ?: models.firstOrNull { it.displayName.contains(query, ignoreCase = true) }
         if (hit == null) {
-            toastText(appContext.getString(R.string.agent_command_model_missing, query))
+            showCommandResult(
+                CommandResultUi(appContext.getString(R.string.agent_command_model_missing, query), isError = true),
+            )
         } else {
+            commandPalette = null
             selectModel(hit.id)
+            showCommandResult(
+                CommandResultUi(appContext.getString(R.string.agent_command_model_switched, hit.displayName)),
+            )
         }
     }
 
     private fun resolveEffortCommand(args: String) {
         val value = args.trim().lowercase()
+        val current = homeState.reasoningEffort
         if (value.isBlank()) {
-            val levels = ReasoningEffort.entries.joinToString(" / ") { it.wireValue }
-            toastText(appContext.getString(R.string.agent_command_effort_list, levels))
+            showCommandResult(
+                CommandResultUi(
+                    title = appContext.getString(R.string.agent_command_effort_title),
+                    lines = ReasoningEffort.entries.map { effort ->
+                        (if (effort == current) "· " else "  ") + effort.wireValue
+                    },
+                ),
+            )
             return
         }
         val effort = ReasoningEffort.entries.firstOrNull {
             it.wireValue.equals(value, ignoreCase = true) || it.displayName.equals(value, ignoreCase = true)
         }
         if (effort == null) {
-            toastText(appContext.getString(R.string.agent_command_effort_missing, value))
+            showCommandResult(
+                CommandResultUi(appContext.getString(R.string.agent_command_effort_missing, value), isError = true),
+            )
         } else {
             updateReasoningEffort(effort)
+            showCommandResult(
+                CommandResultUi(appContext.getString(R.string.agent_command_effort_set, effort.wireValue)),
+            )
         }
     }
 
-    private fun statusSummary(): String {
+    private fun statusResult(): CommandResultUi {
         val model = modelPickerState.selectedModel?.displayName
             ?: appContext.getString(R.string.agent_command_status_no_model)
         val turnCount = homeState.messages.count { it is UserMessageUi }
-        return appContext.getString(
-            R.string.agent_command_status_body,
-            model,
-            homeState.reasoningEffort.wireValue,
-            turnCount,
-            homeState.messages.size,
+        return CommandResultUi(
+            title = appContext.getString(R.string.agent_command_status_title),
+            lines = listOf(
+                appContext.getString(R.string.agent_command_status_line_model, model),
+                appContext.getString(R.string.agent_command_status_line_effort, homeState.reasoningEffort.wireValue),
+                appContext.getString(R.string.agent_command_status_line_messages, turnCount, homeState.messages.size),
+            ),
         )
     }
 
@@ -1077,6 +1409,8 @@ internal class AgentAppState(
         // enterConversation 已把盘上草稿贴回，取更新后的那份当当前状态。
         val state = conversationsById.getValue(conversationId)
         homeState = state
+        // 占位会话只带了元数据：切过来时把消息与上下文补进内存。
+        ensureConversationLoaded(conversationId)
         // 从搜索结果里点开：定位该会话第一条命中消息；只有标题/预览命中时不做跳转。
         state.firstMatchMessageId(conversationPaneState.searchQuery.trim()) { code -> noticeText(code) }
             ?.let { target ->
@@ -1108,7 +1442,9 @@ internal class AgentAppState(
      * 所以这里先记下来，分配新会话 id 时一并落库。
      */
     fun createConversationInCategory(categoryId: String?) {
-        pendingConversationCategory = categoryId?.takeIf { candidate -> conversationCategories.any { it.id == candidate } }
+        // 分类表可能还没加载完（升级后首启、快照重载途中），此时按「分类不存在」丢掉意图，
+        // 用户看到的就是「在分类下新建，结果跑到未分类」。这里只做非空校验，存在性在渲染与写库时再判。
+        pendingConversationCategory = categoryId?.takeIf { candidate -> candidate.isNotBlank() }
         if (homeState.messageEdit != null) cancelMessageEdit()
         // 新建会话前同样把草稿写回，别把没发出去的字丢了。
         selectedConversationId
@@ -1173,6 +1509,7 @@ internal class AgentAppState(
 
     fun deleteConversation(conversationId: String) {
         val wasSelected = selectedConversationId == conversationId
+        forgetLoadedConversation(conversationId)
         conversationsById = conversationsById - conversationId
         conversationTitles = conversationTitles - conversationId
         conversationUpdatedAt = conversationUpdatedAt - conversationId
@@ -1306,7 +1643,12 @@ internal class AgentAppState(
     /** 分配新会话 id；若此前指定了分类，就在这里把归属写进库。 */
     private fun allocateConversationId(): String {
         val id = newConversationId()
-        pendingConversationCategory?.let { categoryId -> setConversationCategory(id, categoryId) }
+        // #002：此刻库里还没有这一行，直写 `UPDATE conversations SET category_id` 会打在 0 行上，
+        // 随后持久化又把 null 写进去，新会话就掉进未分类。这里只更新内存映射，
+        // 归属由 persistConversations 里的保存路径随会话行一起插入。
+        pendingConversationCategory?.let { categoryId ->
+            conversationCategoryIds = conversationCategoryIds + (id to categoryId)
+        }
         pendingConversationCategory = null
         return id
     }
@@ -1349,6 +1691,7 @@ internal class AgentAppState(
             SystemNoticeCode.ModelRetry -> R.string.system_notice_model_retry
             SystemNoticeCode.RuntimeFailed -> R.string.system_notice_runtime_failed
             SystemNoticeCode.Interrupted -> R.string.system_notice_interrupted
+            SystemNoticeCode.CommandNote -> R.string.system_notice_command_note
         },
     )
 
@@ -1403,22 +1746,38 @@ internal class AgentAppState(
         immediateInterrupt: Boolean,
         queueOnly: Boolean = false,
     ) {
-        if (homeState.isCompacting) return
-        if (io.github.mangi.eta.agent.model.AgentContextPolicy.isLocked(homeState.history)) {
-            Toast.makeText(
-                appContext,
-                appContext.getString(R.string.context_compaction_limit_reached),
-                Toast.LENGTH_SHORT,
-            ).show()
+        // 会话历史还在补载：等它落地再发，避免用空 history 请求模型。
+        val pendingConversationId = selectedConversationId
+        if (pendingConversationId != null && pendingConversationId in partiallyLoadedConversationIds) {
+            ensureConversationLoaded(pendingConversationId)
+            val deferredText = submittedText
+            scope.launch {
+                conversationLoadJobs[pendingConversationId]?.join()
+                withContext(Dispatchers.Main.immediate) {
+                    if (selectedConversationId == pendingConversationId) {
+                        submitOrQueueCurrentMessage(deferredText, immediateInterrupt, queueOnly)
+                    }
+                }
+            }
             return
+        }
+        if (homeState.isCompacting) return
+        // 用户开始新的输入：命令结果卡让位。
+        if (homeState.commandResult != null) {
+            updateCurrentConversation(homeState.copy(commandResult = null), updateTimestamp = false)
         }
         // 斜杠命令：本地解析，命中就直接执行，不产生模型请求。
         val rawInput = submittedText ?: homeState.input
-        val parsedCommand = parseAgentCommand(rawInput.trim(), AgentCommands.builtIns)
+        val parsedCommand = parseAgentCommand(rawInput.trim(), agentCommands)
         if (parsedCommand is AgentCommandInput.Run && runAgentCommand(parsedCommand.command, parsedCommand.args)) {
-            updateCurrentConversation(
-                homeState.copy(input = "", inputResetToken = homeState.inputResetToken + 1),
-            )
+            // 技能命令没带任务描述时保留草稿，用户接着补一句就能直接发。
+            val keepDraft = parsedCommand.command.kind == AgentCommandKind.Skill &&
+                parsedCommand.args.isBlank()
+            if (!keepDraft) {
+                updateCurrentConversation(
+                    homeState.copy(input = "", inputResetToken = homeState.inputResetToken + 1),
+                )
+            }
             return
         }
         if (parsedCommand is AgentCommandInput.Unknown) {
@@ -1444,7 +1803,6 @@ internal class AgentAppState(
         if (prompt.isBlank() && pendingImages.isEmpty() && pendingFileReferences.isEmpty()) {
             return
         }
-        runPaused = false
         homeState.messageEdit?.takeIf { it.preserveFollowingMessages }?.let { edit ->
             val updated = RoleplayConversationReducer.edit(homeState, edit.targetMessageId, prompt) ?: return
             updateCurrentConversation(updated.copy(
@@ -1594,7 +1952,8 @@ internal class AgentAppState(
             state.messages.take(editBoundary.userMessageIndex) + userMessage
         }
         val userHistoryMessage = AgentModelClient.buildUserHistoryMessage(
-            text = runtimePrompt,
+            // 正文只在当轮注入：历史里压成一行标记，避免之后每轮都重复几 k 字符。
+            text = AgentSkillCommandPromptCodec.compactForHistory(runtimePrompt),
             images = pendingImages.toHistoryImages(),
         ).copy(messageId = userMessage.id)
 
@@ -1730,6 +2089,7 @@ internal class AgentAppState(
             revisions = removed.roleplayMessages.revisions.filterKeys { it in retainedIds },
         ))
         if (revised.messages.isEmpty()) {
+            forgetLoadedConversation(conversationId)
             conversationsById = conversationsById - conversationId
             conversationTitles = conversationTitles - conversationId
             conversationUpdatedAt = conversationUpdatedAt - conversationId
@@ -1776,7 +2136,7 @@ internal class AgentAppState(
         }
         val runId = "run-${UUID.randomUUID()}"
         val userHistoryMessage = AgentModelClient.buildUserHistoryMessage(
-            text = boundary.userMessage.content,
+            text = AgentSkillCommandPromptCodec.compactForHistory(boundary.userMessage.content),
             images = images.toHistoryImages(),
         )
         if (boundary.contextWasCompacted) showCompactedRevisionNotice()
@@ -2190,34 +2550,31 @@ internal class AgentAppState(
 
     fun stopCurrentRun() {
         // 并发时按当前会话定位它自己的 run，找不到再退回最近一次 run。
-        val runId = runConversationIds.entries.firstOrNull { entry -> entry.value == selectedConversationId }?.key
-            ?: currentRunId
-            ?: return
+        val runId = runIdForSelectedConversation() ?: currentRunId ?: return
         stopRun(runId)
     }
 
     /** 停止指定 run；非当前会话的 run 也能停。 */
     private fun stopRun(runId: String) {
         if (!stopRequestedRunIds.add(runId)) return
-        runPaused = false
         scope.launch(Dispatchers.IO) {
             AgentRuntimeClient(appContext, AndroidAgentLogger).cancelRun(runId)
         }
     }
 
-    /** 暂停当前运行：steering 注入在 turn 边界生效，不取消在途请求。 */
+    /** 暂停当前会话的运行：只发指令，暂停位由执行侧写进真源，再回灌到按钮。 */
     fun pauseCurrentRun() {
-        runPaused = true
+        val runId = runIdForSelectedConversation() ?: return
         scope.launch(Dispatchers.IO) {
-            AgentRuntimeClient(appContext, AndroidAgentLogger).pauseRun()
+            AgentRuntimeClient(appContext, AndroidAgentLogger).pauseRun(runId)
         }
     }
 
-    /** 恢复已暂停的运行。 */
+    /** 恢复当前会话已暂停的运行。 */
     fun resumeCurrentRun() {
-        runPaused = false
+        val runId = runIdForSelectedConversation() ?: return
         scope.launch(Dispatchers.IO) {
-            AgentRuntimeClient(appContext, AndroidAgentLogger).resumeRun()
+            AgentRuntimeClient(appContext, AndroidAgentLogger).resumeRun(runId)
         }
     }
 
@@ -2288,18 +2645,8 @@ internal class AgentAppState(
         when (event) {
             is AgentEvent.RunStarted -> {
                 historyTrimNotice = null
-                overflowDowngradeNotice = null
             }
             is AgentEvent.HistoryTrimmed -> historyTrimNotice = event.omittedUserRounds to event.omittedMessages
-            is AgentEvent.ContextOverflowDowngrade -> {
-                overflowDowngradeNotice = event.profileId
-                conversationIdForRun(runId)?.let { id ->
-                    val modelId = conversationsById[id]?.modelId
-                    scope.launch(Dispatchers.IO) {
-                        TokenUsageRecorder.recordDowngrade(appContext, id, modelId)
-                    }
-                }
-            }
             else -> Unit
         }
         when (event) {
@@ -2535,18 +2882,38 @@ internal class AgentAppState(
         state: AgentChatHomeUiState,
         updateTimestamp: Boolean = true,
     ) {
-        conversationsById = conversationsById + (conversationId to state)
+        // 占位会话的消息与上下文不在内存里：真有数据写进来时只接住草稿类瞬时字段，
+        // 数据字段沿用占位并从库里补载，避免把空列表当新状态覆盖库内历史（#006）。
+        val existing = conversationsById[conversationId]
+        val safeState = if (existing != null && conversationId in partiallyLoadedConversationIds && state.messages.isNotEmpty()) {
+            ensureConversationLoaded(conversationId)
+            existing.copy(
+                input = state.input,
+                inputResetToken = state.inputResetToken,
+                isCompacting = state.isCompacting,
+                availableReasoningEfforts = state.availableReasoningEfforts,
+                pendingImages = state.pendingImages,
+                pendingFileReferences = state.pendingFileReferences,
+                queuedMessages = state.queuedMessages,
+                messageEdit = state.messageEdit,
+                commandConfirm = state.commandConfirm,
+            )
+        } else {
+            state
+        }
+        conversationsById = conversationsById + (conversationId to safeState)
         // 草稿落盘：输入框每次变化/清空都同步，切会话或重启后还能贴回来。
-        ChatDraftStore.save(appContext, conversationId, state.input)
+        ChatDraftStore.save(appContext, conversationId, safeState.input)
         if (updateTimestamp) {
             conversationUpdatedAt = conversationUpdatedAt + (conversationId to System.currentTimeMillis())
         }
         if (conversationId == selectedConversationId) {
-            homeState = state
+            homeState = safeState
         }
     }
 
     private fun setConversationStreaming(runId: String, isStreaming: Boolean) {
+        if (!isStreaming) RunControl.clearRun(runId, "ui.finished")
         val conversationId = conversationIdForRun(runId) ?: return
         val state = conversationsById[conversationId] ?: return
         updateConversation(conversationId, state.copy(isStreaming = isStreaming, isCompacting = state.isCompacting && isStreaming))
@@ -2590,7 +2957,8 @@ internal class AgentAppState(
                             R.string.conversation_preview_tool_call,
                             lastMessage.toolName,
                         )
-                        else -> appContext.getString(R.string.conversation_preview_empty)
+                        else -> conversationPreviews[id]
+                            ?: appContext.getString(R.string.conversation_preview_empty)
                     }.take(MAX_PREVIEW_CHARS),
                     timeLabel = if (state.isStreaming) {
                         appContext.getString(R.string.time_now)
@@ -2647,6 +3015,96 @@ internal class AgentAppState(
         return matches
     }
 
+    /**
+     * #006：启动只把选中会话读进内存，其余会话只放元数据。
+     * 用户切过来时在这里按需补载；失败保留占位状态，不阻塞其它操作。
+     */
+    private fun ensureConversationLoaded(conversationId: String) {
+        if (conversationId !in partiallyLoadedConversationIds) return
+        if (conversationLoadJobs[conversationId]?.isActive == true) return
+        val placeholderInput = conversationsById[conversationId]?.input.orEmpty()
+        val job = scope.launch {
+            try {
+                val loaded = runCatching {
+                    AgentConversationStore.loadConversation(appContext, conversationId)
+                }.getOrNull()
+                if (loaded != null) {
+                    withContext(Dispatchers.Main.immediate) {
+                        applyLoadedConversation(conversationId, loaded, placeholderInput)
+                    }
+                }
+            } finally {
+                withContext(Dispatchers.Main.immediate) { conversationLoadJobs.remove(conversationId) }
+            }
+        }
+        conversationLoadJobs[conversationId] = job
+    }
+
+    /** suspend 版本：运行时恢复要在写入前确认目标会话已完整加载。 */
+    private suspend fun awaitConversationLoaded(conversationId: String) {
+        if (conversationId !in partiallyLoadedConversationIds) return
+        val placeholderInput = conversationsById[conversationId]?.input.orEmpty()
+        val loaded = runCatching {
+            AgentConversationStore.loadConversation(appContext, conversationId)
+        }.getOrNull() ?: return
+        withContext(Dispatchers.Main.immediate) {
+            applyLoadedConversation(conversationId, loaded, placeholderInput)
+        }
+    }
+
+    private fun applyLoadedConversation(
+        conversationId: String,
+        loaded: AgentChatHomeUiState,
+        placeholderInput: String,
+    ) {
+        partiallyLoadedConversationIds -= conversationId
+        val placeholder = conversationsById[conversationId]
+        // 只有 messages / journal / history 是库里的真值；草稿、待发送图片、排队消息、
+        // 编辑态这些都在内存里，补载必须原样留住，否则切会话会丢一次输入。
+        val base = if (selectedConversationId == conversationId) homeState else placeholder
+        val merged = if (base == null) {
+            loaded
+        } else {
+            loaded.copy(
+                input = base.input.ifBlank { placeholderInput },
+                isStreaming = base.isStreaming,
+                isCompacting = base.isCompacting,
+                thinkingEnabled = base.thinkingEnabled,
+                reasoningEffort = base.reasoningEffort,
+                availableReasoningEfforts = base.availableReasoningEfforts,
+                pendingImages = base.pendingImages,
+                pendingFileReferences = base.pendingFileReferences,
+                queuedMessages = base.queuedMessages,
+                inputSyncVersion = base.inputSyncVersion,
+                messageEdit = base.messageEdit,
+                searchJump = base.searchJump,
+                resumableRun = base.resumableRun,
+                commandConfirm = base.commandConfirm,
+                inputResetToken = base.inputResetToken,
+                pendingMessageRefs = base.pendingMessageRefs,
+            )
+        }
+        conversationsById = conversationsById + (conversationId to merged)
+        conversationPersistence.markLoaded(
+            conversationId,
+            merged,
+            conversationTitles[conversationId].orEmpty(),
+            conversationUpdatedAt[conversationId] ?: 0L,
+        )
+        if (selectedConversationId == conversationId) {
+            homeState = merged.copy(inputResetToken = homeState.inputResetToken)
+            refreshConversationModel()
+        }
+        refreshConversationSummaries()
+    }
+
+    /** 会话被删：解除占位保护，保存时才会真正删掉这一行。 */
+    private fun forgetLoadedConversation(conversationId: String) {
+        partiallyLoadedConversationIds -= conversationId
+        conversationLoadJobs.remove(conversationId)?.cancel()
+        conversationPersistence.markDropped(conversationId)
+    }
+
     private fun persistConversations(onSaved: (() -> Unit)? = null): Deferred<Boolean> {
         val selected = selectedConversationId
         val conversations = conversationsById
@@ -2661,7 +3119,16 @@ internal class AgentAppState(
                 try {
                     previous?.join()
                     persistence.save(appContext,
-                        AgentConversationStore.Snapshot(selected, conversations, titles, timestamps))
+                        AgentConversationStore.Snapshot(
+                            selectedConversationId = selected,
+                            conversationsById = conversations,
+                            titles = titles,
+                            updatedAt = timestamps,
+                            partiallyLoadedConversationIds = partiallyLoadedConversationIds.toSet(),
+                        ),
+                        // #002：归属跟着会话行一起落库，新会话第一次保存就带上分类。
+                        conversationCategoryIds.toMap(),
+                    )
                     onSaved?.invoke()
                     true
                 } catch (cancelled: CancellationException) {
