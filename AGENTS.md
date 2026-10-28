@@ -26,6 +26,23 @@ For native rebuilds, follow `docs/TERMINAL_NATIVE.md` and use the NDK version in
 
 Follow official Kotlin style with four-space indentation. Use PascalCase for types and Compose functions, camelCase for other functions/properties, UPPER_SNAKE_CASE for constants, and snake_case for Android resources. Use Android Studio formatting; no standalone formatter is configured. Keep English, Simplified Chinese, and Traditional Chinese resources synchronized.
 
+## Local Fork State
+
+This tree is a local fork: the working directory is **not** equal to `HEAD` (hundreds of
+uncommitted files), so read the working tree rather than `git show HEAD:` when judging whether a
+behavior exists. `docs/FORK_STATE.md` is the authoritative handover note; read it before changing
+agent context handling or tools. It records:
+
+- what exists only locally (virtual screen, tool profiles, MCP schema compaction, memory hot-zone
+  compaction) and therefore must not be assumed upstream;
+- what was deliberately removed to match upstream on 2026-10-28 (the 3-round compaction lock, the
+  tool-profile auto-downgrade ladder, the high-resolution image preview profile);
+- the Robolectric platform limit: `nativeruntime-dist-compat` ships only `linux-x86_64`,
+  `mac/aarch64`, and `windows/x86_64`, so on linux-aarch64 every `RobolectricTestRunner` class fails
+  during `AndroidTestEnvironment.setUpApplicationState`. All such classes use
+  `testsupport/EtaRobolectricTestRunner`, which skips instead of failing; treat skipped as
+  "not executed here", not as covered.
+
 ## Testing Guidelines
 
 Use JUnit 4 and Robolectric for Android-dependent tests. Name classes `<Subject>Test` and methods with descriptive camelCase behavior names. Add regression tests for changed behavior, including persistence migrations and permission boundaries. No numeric coverage threshold is configured. Run one class with `./gradlew :app:testDebugUnitTest --tests '*AppearanceSettingsTest'`. Validate OEM hooks on the relevant ROM/device.

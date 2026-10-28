@@ -122,9 +122,8 @@ internal data class PromptCustomization(
         appendInstructions = appendInstructions,
     )
 
+    /** 只对「实际内容」取指纹：开关这类不改变提示词文本的设置不该影响版本号与请求前缀。 */
     private fun fingerprint(): String = buildString {
-        append(if (enabled) '1' else '0')
-        append('\u0000')
         append(mode.name)
         append('\u0000')
         append(baseSystemPrompt)

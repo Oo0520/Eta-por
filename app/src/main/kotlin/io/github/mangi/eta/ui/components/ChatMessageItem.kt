@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Lightbulb
@@ -86,6 +87,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.model.AgentFileReferencePromptCodec
+import io.github.mangi.eta.agent.model.AgentSkillCommandPromptCodec
 import io.github.mangi.eta.agent.overlay.toolDisplayName
 import io.github.mangi.eta.ui.markdown.MarkdownTone
 import io.github.mangi.eta.ui.voice.LocalSpeechPlaybackProgress
@@ -240,7 +242,10 @@ internal fun ChatMessageItem(
             onSelectCandidate = { onSelectReplyCandidate(message.id, it) },
             modifier = modifier,
         )
-        is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction) {
+        is SystemNoticeMessageUi -> if (
+            message.code == SystemNoticeCode.ContextCompaction ||
+            message.code == SystemNoticeCode.CommandNote
+        ) {
             ContextCompactionMarker(message = message, modifier = modifier)
         } else {
             AgentMessageBlock(
@@ -256,6 +261,7 @@ internal fun ChatMessageItem(
                                     SystemNoticeCode.ModelRetry -> R.string.system_notice_model_retry
                                     SystemNoticeCode.RuntimeFailed -> R.string.system_notice_runtime_failed
                                     SystemNoticeCode.Interrupted -> R.string.system_notice_interrupted
+                                    SystemNoticeCode.CommandNote -> R.string.system_notice_command_note
                                 },
                             ),
                         )
@@ -331,6 +337,10 @@ private fun UserMessageBubble(
     val visiblePrompt = remember(message.content) {
         AgentFileReferencePromptCodec.parse(message.content)
     }
+    // 技能调用要跟普通消息区别开：正文被剥掉了，只剩这句话，这里补回「用了哪个技能」。
+    val skillCommand = remember(message.content) {
+        AgentSkillCommandPromptCodec.parseHeader(message.content)
+    }
     val overlayBubbleColor = if (MiuixTheme.colorScheme.background.luminance() < 0.5f) {
         Color(0xFF37393D)
     } else {
@@ -358,7 +368,9 @@ private fun UserMessageBubble(
                             label = stringResource(R.string.ui_copy_4edd1d),
                             onClick = {
                                 @Suppress("DEPRECATION")
-                                clipboardManager.setText(AnnotatedString(message.content))
+                                clipboardManager.setText(
+                                    AnnotatedString(AgentSkillCommandPromptCodec.strip(message.content)),
+                                )
                                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                                 tooltipState.dismiss()
                             },
@@ -419,6 +431,30 @@ private fun UserMessageBubble(
                         vertical = if (assistantOverlay) 8.dp else 12.dp,
                     ),
             ) {
+                skillCommand?.let { skill ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .background(
+                                color = MiuixTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(9.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = "/" + skill.skillId,
+                            style = MiuixTheme.textStyles.footnote1,
+                            fontWeight = FontWeight.Medium,
+                            color = MiuixTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = " · " + stringResource(R.string.agent_command_skill_tag),
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.primary.copy(alpha = 0.72f),
+                        )
+                    }
+                }
                 if (message.images.isNotEmpty()) {
                     var previewIndex by remember(message.images) { mutableStateOf<Int?>(null) }
                     Row(
@@ -481,7 +517,9 @@ private fun UserMessageBubble(
             copied = copied,
             onCopy = {
                 @Suppress("DEPRECATION")
-                clipboardManager.setText(AnnotatedString(message.content))
+                clipboardManager.setText(
+                    AnnotatedString(AgentSkillCommandPromptCodec.strip(message.content)),
+                )
                 copied = true
             },
             onEdit = onEdit,
@@ -595,7 +633,11 @@ private fun ContextCompactionMarker(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Rounded.Compress,
+                imageVector = if (message.code == SystemNoticeCode.CommandNote) {
+                    Icons.Rounded.Terminal
+                } else {
+                    Icons.Rounded.Compress
+                },
                 contentDescription = null,
                 modifier = Modifier
                     .size(12.dp)

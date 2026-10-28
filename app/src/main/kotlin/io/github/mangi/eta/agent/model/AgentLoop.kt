@@ -23,9 +23,9 @@ internal class AgentLoop(
     private val traceFormatter: AgentTraceFormatter,
     private val onEvent: (AgentEvent) -> Unit,
     private val toolsForRound: (() -> JSONArray)? = null,
+    /** 远端（MCP）工具名：它们的参数 schema 属于第三方服务器，循环只转发不预检。 */
+    private val remoteToolNames: Set<String> = emptySet(),
     private val modelRetry: AgentModelRetry = AgentModelRetry(),
-    /** 上下文超限时尝试降一档工具档；返回 null 表示已降到最低。 */
-    private val onContextOverflow: (() -> LocalToolProfile?)? = null,
     private val sessionId: String = java.util.UUID.randomUUID().toString(),
     private val transcript: JSONArray = JSONArray(),
     private val systemCount: Int = 0,
@@ -48,7 +48,7 @@ internal class AgentLoop(
     )
 
     private var availableToolNames = emptySet<String>()
-    private var toolCallValidator = AgentToolCallValidator(tools)
+    private var toolCallValidator = AgentToolCallValidator(localToolsOnly(tools))
     private val accumulatedReasoning = StringBuilder()
     private val sensitiveToolCallIds = linkedSetOf<String>()
     private var pendingToolImageMessage: JSONObject? = null
@@ -103,7 +103,7 @@ internal class AgentLoop(
             availableToolNames = (0 until roundTools.length()).mapNotNullTo(mutableSetOf()) { index ->
                 roundTools.optJSONObject(index)?.optJSONObject("function")?.optString("name")
             }
-            toolCallValidator = AgentToolCallValidator(roundTools)
+            toolCallValidator = AgentToolCallValidator(localToolsOnly(roundTools))
             publishTranscript()
             if (purpose.allowsTools) context.compact()
             val requestMessages = AssistantScreenContextProjection.project(
@@ -138,37 +138,6 @@ internal class AgentLoop(
                         providerEvent.toAgentEvent(attemptRound)?.let(onEvent)
                     },
                     discardAttemptReasoning = { accumulatedReasoning.setLength(reasoningLengthBeforeRound) },
-                    downgradeRequest = { _ ->
-                        val applied = onContextOverflow?.invoke()
-                        if (applied == null) {
-                            null
-                        } else {
-                            val nextTools = if (AnthropicEphemeralState.hasPendingToolResponse(messages)) {
-                                precedingTools ?: tools
-                            } else if (purpose.allowsTools) {
-                                toolsForRound?.invoke() ?: tools
-                            } else {
-                                JSONArray()
-                            }
-                            precedingTools = nextTools
-                            toolCallValidator = AgentToolCallValidator(nextTools)
-                            AgentHistoryTrimmer.trimInPlace(
-                                messages = messages,
-                                systemCount = systemCount,
-                                contextWindow = config.knownContextWindow,
-                                reservedTokens = AgentHistoryTrimmer.estimateTokens(nextTools.toString()),
-                            )
-                            ProviderRequest(
-                                config,
-                                AssistantScreenContextProjection.project(
-                                    roleplayContext?.projectMessages(messages) ?: messages,
-                                ),
-                                nextTools,
-                                sessionId,
-                                purpose,
-                            )
-                        }
-                    },
                 ).also { response ->
                     rejectContentFilter(response.response)
                     if (purpose == ProviderRequestPurpose.CHAT) validateChatResponse(response.response)
@@ -316,6 +285,18 @@ internal class AgentLoop(
         AgentConversationCodec.userTextMessage(steeringPrompt(supplement))
             .put("_eta_message_id", "user-$operationId-supplement-${++supplementIndex}")
 
+    /** 过滤掉远端工具后的本地工具清单，用于参数预检；远端工具交给服务器自己判。 */
+    private fun localToolsOnly(tools: JSONArray): JSONArray {
+        if (remoteToolNames.isEmpty()) return tools
+        val local = JSONArray()
+        for (index in 0 until tools.length()) {
+            val entry = tools.optJSONObject(index) ?: continue
+            val name = entry.optJSONObject("function")?.optString("name").orEmpty()
+            if (name.isBlank() || name !in remoteToolNames) local.put(entry)
+        }
+        return local
+    }
+
     private fun executeTool(
         round: Int,
         toolCall: AgentModelClient.ToolCall,
@@ -329,13 +310,16 @@ internal class AgentLoop(
                 message = "工具未在本轮能力目录中提供，请使用当前可用工具",
             )
         }
-        toolCallValidator.validate(toolCall)?.let { validationError ->
-            return rejectedToolOutcome(
-                round = round,
-                toolCall = toolCall,
-                code = "INVALID_TOOL_ARGUMENTS",
-                message = validationError,
-            )
+        // 远端（MCP）工具的参数 schema 属于第三方服务器：这里只转发，不拿本地副本做预检。
+        if (toolCall.name !in remoteToolNames) {
+            toolCallValidator.validate(toolCall)?.let { validationError ->
+                return rejectedToolOutcome(
+                    round = round,
+                    toolCall = toolCall,
+                    code = "INVALID_TOOL_ARGUMENTS",
+                    message = validationError,
+                )
+            }
         }
         onEvent(
             AgentEvent.ToolStarted(

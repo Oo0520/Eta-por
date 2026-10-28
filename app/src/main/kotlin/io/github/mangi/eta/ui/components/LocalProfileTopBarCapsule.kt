@@ -44,8 +44,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 /**
  * 顶栏的模式开关：只有「全部工具」和「纯聊天」两种，图标分段式，点一下就切。
  *
- * 轻度 / 开发 / 极简 / 标准仍留在 [LocalToolProfile] 里，但只作为上下文超限时的自动降档阶梯，
- * 不再让人手选——它们长期没人碰，摆在界面上只是噪音。
  * 模式只决定发给模型的工具清单，不影响工具自身的执行能力。
  *
  * 工作区是这颗胶囊的第三段：点它进入文件面板，此时高亮滑到第三格；
@@ -217,11 +215,3 @@ private fun CapsuleSegment(
     }
 }
 
-internal fun profileLabel(profile: LocalToolProfile): Int = when (profile) {
-    LocalToolProfile.FULL -> R.string.local_profile_full
-    LocalToolProfile.DEV -> R.string.local_profile_dev
-    LocalToolProfile.CHAT -> R.string.local_profile_chat
-    LocalToolProfile.LIGHT -> R.string.local_profile_light
-    LocalToolProfile.STANDARD -> R.string.local_profile_standard
-    LocalToolProfile.MINIMAL -> R.string.local_profile_minimal
-}

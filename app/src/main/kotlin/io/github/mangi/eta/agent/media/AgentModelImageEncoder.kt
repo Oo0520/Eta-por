@@ -22,7 +22,7 @@ internal const val MAX_AGENT_IMAGE_BYTES = 12 * 1024 * 1024
 /** 仅负责为工具截图和聊天预览生成独立的图片副本。 */
 internal object AgentModelImageEncoder {
     private const val MODEL_JPEG_QUALITY = 95
-    private const val PREVIEW_JPEG_QUALITY = 92
+    private const val PREVIEW_JPEG_QUALITY = 86
 
     private data class EncodingProfile(
         val format: Bitmap.CompressFormat,
@@ -50,9 +50,15 @@ internal object AgentModelImageEncoder {
         mimeType = "image/jpeg",
         quality = MODEL_JPEG_QUALITY,
     )
+    /**
+     * 聊天与输入框里显示的预览副本：只服务界面，模型始终读原图 [attachment]。
+     * 长边给到 1440、像素上限约 207 万（1440×1440）、质量 86，是为了在 1080p～1440p 屏上
+     * 全屏查看一张图时不发虚。上游的 512/256K/JP80 是「小缩略图」的取值，放大到整屏会明显模糊。
+     * 再往上加（例如 1600/1920）单张解码内存会超过 10 MB，多图时得不偿失。
+     */
     private val previewProfile = EncodingProfile(
-        maxLongEdge = 1920,
-        maxPixels = 3_686_400L,
+        maxLongEdge = 1440,
+        maxPixels = 2_073_600L,
         format = Bitmap.CompressFormat.JPEG,
         mimeType = "image/jpeg",
         quality = PREVIEW_JPEG_QUALITY,

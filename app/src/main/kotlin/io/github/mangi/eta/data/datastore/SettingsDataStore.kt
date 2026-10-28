@@ -92,11 +92,7 @@ internal object SettingsDataStore {
     private val VIRTUAL_SCREEN_FLOAT_POS_X = intPreferencesKey("virtual_screen_float_pos_x")
     private val VIRTUAL_SCREEN_FLOAT_POS_Y = intPreferencesKey("virtual_screen_float_pos_y")
     private val AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
-    private val OVERLAY_CAPSULE_PINNED = booleanPreferencesKey("overlay_capsule_pinned")
-    private val OVERLAY_CAPSULE_HIDDEN = booleanPreferencesKey("overlay_capsule_hidden")
     private val OVERLAY_FLUID_PINNED = booleanPreferencesKey("overlay_fluid_pinned")
-    private val OVERLAY_CAPSULE_POS_X = intPreferencesKey("overlay_capsule_pos_x")
-    private val OVERLAY_CAPSULE_POS_Y = intPreferencesKey("overlay_capsule_pos_y")
     private val RECENT_OPENED_IDS = stringPreferencesKey("recent_opened_conversation_ids")
     private val AUTO_BACKUP_INTERVAL = intPreferencesKey("auto_backup_interval_hours")
     /** 周期（分钟）：与老的小时键并存，分钟 > 0 时优先。 */
@@ -224,11 +220,7 @@ internal object SettingsDataStore {
             prefs[VIRTUAL_SCREEN_FLOAT_POS_X] = updated.virtualScreenFloatWindowPosX
             prefs[VIRTUAL_SCREEN_FLOAT_POS_Y] = updated.virtualScreenFloatWindowPosY
             prefs[AUTO_BACKUP_ENABLED] = updated.autoBackupEnabled
-            prefs[OVERLAY_CAPSULE_PINNED] = updated.overlayCapsulePinned
-            prefs[OVERLAY_CAPSULE_HIDDEN] = updated.overlayCapsuleHidden
             prefs[OVERLAY_FLUID_PINNED] = updated.overlayFluidPinned
-            prefs[OVERLAY_CAPSULE_POS_X] = updated.overlayCapsulePosX
-            prefs[OVERLAY_CAPSULE_POS_Y] = updated.overlayCapsulePosY
             prefs[RECENT_OPENED_IDS] = updated.recentOpenedConversationIds
             prefs[AUTO_BACKUP_INTERVAL] = updated.autoBackupIntervalHours
                 .coerceIn(1, io.github.mangi.eta.data.model.AutoBackupInterval.MAX_MINUTES / 60)
@@ -426,11 +418,7 @@ internal object SettingsDataStore {
         virtualScreenFloatWindowPosX = this[VIRTUAL_SCREEN_FLOAT_POS_X] ?: 16,
         virtualScreenFloatWindowPosY = this[VIRTUAL_SCREEN_FLOAT_POS_Y] ?: 120,
         autoBackupEnabled = this[AUTO_BACKUP_ENABLED] ?: false,
-        overlayCapsulePinned = this[OVERLAY_CAPSULE_PINNED] ?: false,
-        overlayCapsuleHidden = this[OVERLAY_CAPSULE_HIDDEN] ?: false,
         overlayFluidPinned = this[OVERLAY_FLUID_PINNED] ?: false,
-        overlayCapsulePosX = this[OVERLAY_CAPSULE_POS_X] ?: -1,
-        overlayCapsulePosY = this[OVERLAY_CAPSULE_POS_Y] ?: -1,
         recentOpenedConversationIds = this[RECENT_OPENED_IDS] ?: "",
         autoBackupIntervalMinutes = io.github.mangi.eta.data.model.AutoBackupInterval.effectiveMinutes(
             this[AUTO_BACKUP_INTERVAL_MINUTES] ?: 0,

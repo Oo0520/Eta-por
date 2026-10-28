@@ -59,14 +59,6 @@ internal class AgentContextSession(
         )
     }
 
-    /** 已发生的自动压缩轮数：即历史里的摘要条数。 */
-    fun compactionRounds(): Int = (systemCount until messages.length()).count {
-        messages.getJSONObject(it).optBoolean("_eta_context_summary")
-    }
-
-    /** 是否已压满轮数：此时对话只读，需新开对话继续。 */
-    fun isCompactionLocked(): Boolean = compactionRounds() >= AgentContextPolicy.MAX_COMPACTION_ROUNDS
-
     fun compact(force: Boolean = false, final: Boolean = false) {
         val before = inputTokens
         if (SignedToolContext.hasPendingResponse(messages)) {
@@ -75,17 +67,8 @@ internal class AgentContextSession(
             }
             return
         }
-        if (!final && before != null && contextWindow != null &&
-            before >= contextWindow * AgentContextPolicy.TRIGGER_RATIO &&
-            compactionRounds() >= AgentContextPolicy.MAX_COMPACTION_ROUNDS
-        ) {
-            throw AgentModelFailure(
-                "CONTEXT_COMPACTION_LIMIT", false,
-                "本对话已压缩 ${AgentContextPolicy.MAX_COMPACTION_ROUNDS} 轮，达到上限；请新开对话继续。",
-            )
-        }
         if (!force && (!config.autoCompactionEnabled || contextWindow == null || before == null ||
-                before < contextWindow * AgentContextPolicy.TRIGGER_RATIO)
+                before < contextWindow * TRIGGER_RATIO)
         ) {
             try {
                 publishSnapshot()
@@ -137,4 +120,7 @@ internal class AgentContextSession(
         return AgentConversationCodec.transcript(durable, 0, sensitiveIds())
     }
 
+    private companion object {
+        const val TRIGGER_RATIO = 0.85
+    }
 }

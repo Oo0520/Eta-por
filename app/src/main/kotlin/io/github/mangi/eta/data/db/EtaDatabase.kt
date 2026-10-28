@@ -7,6 +7,9 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
+/** 结构版本的唯一来源：@Database 与自检页共用，文案里不再写字面量。 */
+internal const val ETA_DB_SCHEMA_VERSION = 29
+
 @Database(
     entities = [
         AgentTextChunkEntity::class,
@@ -30,7 +33,7 @@ import androidx.room.migration.Migration
         AgentTaskRunEntity::class,
         TokenUsageRecordEntity::class,
     ],
-    version = 29,
+    version = ETA_DB_SCHEMA_VERSION,
     exportSchema = false,
 )
 internal abstract class EtaDatabase : RoomDatabase() {

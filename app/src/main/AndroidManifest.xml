@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Agent run 期间把执行通知提升为 Live Update，显示在状态栏胶囊与锁屏；普通权限，用户可在通知设置中关闭。 -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <!-- ColorOS 流体云实时活动（normal 级，声明即授予） -->
@@ -124,10 +125,13 @@
             </intent-filter>
         </activity>
         <receiver android:name=".agent.display.MainScreenFallbackReceiver" android:exported="false" />
-        <activity android:name=".agent.display.VirtualScreenViewerActivity" android:exported="false"
-            android:label="@string/virtual_screen_title" android:theme="@style/Theme.Eta"
+        <receiver android:name=".agent.display.dashboard.AgentLiveActionReceiver" android:exported="false" />
+        <activity android:name=".agent.display.TakeoverActivity" android:exported="false"
+            android:theme="@style/Theme.EtaTakeover" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".agent.display.VirtualScreenHomeActivity" android:exported="false"
+        <activity android:name=".agent.display.dashboard.AgentConfirmActivity" android:exported="false"
+            android:theme="@style/Theme.Eta" android:windowSoftInputMode="adjustResize" />
+<activity android:name=".agent.display.VirtualScreenHomeActivity" android:exported="false"
             android:excludeFromRecents="true" android:resizeableActivity="true"
             android:taskAffinity="io.github.mangi.eta.virtualscreen"
             android:theme="@style/Theme.Eta" />
@@ -256,6 +260,15 @@
             android:exported="true"
             android:grantUriPermissions="false"
             android:permission="android.permission.MANAGE_ACCESSIBILITY" />
+
+        <!-- 直通出帧：root helper 通过该 provider 取当前活动 Surface（authority 随包名变化，
+             测试版为 io.github.mangi.eta.beta.hostsurface）。provider 内部用一次性 token 校验，
+             token 只经 stdio 交给 helper，第三方应用即使拿到 authority 也取不到 Surface。 -->
+        <provider
+            android:name=".agent.display.VirtualScreenSurfaceProvider"
+            android:authorities="${applicationId}.hostsurface"
+            android:exported="true"
+            android:grantUriPermissions="false" />
     </application>
 
 </manifest>

@@ -30,6 +30,12 @@ sealed interface AgentHomeAction {
     data object OpenConversationNavigator : AgentHomeAction
     /** 命令确认卡：确认执行 / 收起。 */
     data object ConfirmAgentCommand : AgentHomeAction
+    /** 面板里点了一条（命令 / 技能 / 模型），按条目 key 回查。 */
+    data class PickPaletteEntry(val entryKey: String) : AgentHomeAction
+    data object CloseCommandPalette : AgentHomeAction
+    /** 长按面板条目：摊开完整描述。 */
+    data class ShowPaletteEntryDetail(val entryKey: String) : AgentHomeAction
+    data object DismissCommandResult : AgentHomeAction
     /** 工具与技能面板：切换某个 MCP 服务器 / 技能的启用状态。 */
     data class ToggleMcpServer(val serverId: String, val enabled: Boolean) : AgentHomeAction
     data class ToggleSkill(val skillId: String, val enabled: Boolean) : AgentHomeAction

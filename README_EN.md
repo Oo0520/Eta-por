@@ -50,7 +50,7 @@ Every comparison below is against **upstream 3.3.3**; it may drift as upstream m
 
 - **Tools and skills panel**: MCP and Skills toggles move above the input, with counters (for example MCP 1/2, skills 4/7, 57/57 tools per server).
 - **@ to quote earlier messages** into the current input.
-- **Slash commands** with a confirmation card.
+- **Slash commands**: built-ins plus every installed skill — even a switched-off skill can be run with `/skill-id task` (marked "disabled" in the palette) and its `SKILL.md` is injected into that turn; user bubbles get a `/skill-id · skill` header so they read differently from plain messages. `/help`, `/skills` and `/model` open a scrollable, tappable palette (tap a model to switch); `/status`, `/effort` and error messages use a dismissible result card above the input instead of a two-second toast; truncated skills or calling a disabled skill leave a compact notice in the timeline. The palette sizes itself to the space above the input (never pushing the input behind the keyboard), scrolls, shows two lines of description and expands the full text on long-press; side-effecting commands keep the confirmation card.
 - **Tool argument validation** against the schema before execution.
 - Per-server compression of MCP tool schemas to save context.
 

@@ -84,9 +84,6 @@ internal fun TokenUsageScreen(onBack: () -> Unit) {
     val usage = records.filter { it.kind == TokenUsageRecorder.KIND_USAGE }
     val todayRows = usage.filter { it.createdAt >= todayStart }
     val monthRows = usage.filter { it.createdAt >= monthStart }
-    val downgrades = records.filter { it.kind == TokenUsageRecorder.KIND_DOWNGRADE }
-    val downgradeToday = downgrades.count { it.createdAt >= todayStart }
-    val downgradeMonth = downgrades.count { it.createdAt >= monthStart }
     val noModelLabel = stringResource(R.string.usage_unknown_model)
     val byModel = monthRows
         .groupBy { it.modelId.orEmpty() }
@@ -157,13 +154,13 @@ internal fun TokenUsageScreen(onBack: () -> Unit) {
             item(key = "usage-today") {
                 UsageGroup(
                     title = stringResource(R.string.usage_range_today),
-                    pairs = summaryPairs(todayRows, downgradeToday),
+                    pairs = summaryPairs(todayRows),
                 )
             }
             item(key = "usage-month") {
                 UsageGroup(
                     title = stringResource(R.string.usage_range_month),
-                    pairs = summaryPairs(monthRows, downgradeMonth),
+                    pairs = summaryPairs(monthRows),
                 )
             }
             item(key = "usage-trend") {
@@ -205,14 +202,13 @@ internal fun TokenUsageScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun summaryPairs(rows: List<TokenUsageRecordEntity>, downgrades: Int): List<Pair<String, String>> = listOf(
+private fun summaryPairs(rows: List<TokenUsageRecordEntity>): List<Pair<String, String>> = listOf(
     stringResource(R.string.usage_requests) to stringResource(R.string.usage_times, rows.size),
     stringResource(R.string.usage_input) to formatTokens(sum(rows) { it.inputTokens }),
     stringResource(R.string.usage_output) to formatTokens(sum(rows) { it.outputTokens }),
     stringResource(R.string.usage_reasoning) to formatTokens(sum(rows) { it.reasoningTokens }),
     stringResource(R.string.usage_cached) to formatTokens(sum(rows) { it.cachedTokens }),
     stringResource(R.string.usage_context) to formatTokens(rows.mapNotNull { it.contextTokens }.maxOrNull()),
-    stringResource(R.string.usage_downgrade) to stringResource(R.string.usage_times, downgrades),
 )
 
 @Composable

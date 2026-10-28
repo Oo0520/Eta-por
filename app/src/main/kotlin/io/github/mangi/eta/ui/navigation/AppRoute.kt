@@ -80,6 +80,8 @@ sealed interface AppRoute : NavKey {
     data object SelfCheck : AppRoute
 
     @Serializable
+    data object DiagnosticsCenter : AppRoute
+
     data object DiagnosticsPatrol : AppRoute
 
     @Serializable

@@ -41,7 +41,7 @@ android {
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
         // 跨零点必须换成当天日期、序号归 01，不能接着前一天的号往下加——
         // 之前从 2026102020 起就一直在沿用 10-20 的日期，日期不再反映实际构建日。
-        versionCode = 2026102613
+        versionCode = 2026102815
         versionName = "3.3.4"
         testInstrumentationRunner = "io.github.mangi.eta.validation.DeviceValidationRunner"
 
@@ -58,6 +58,12 @@ android {
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
+                // 三种方案一起签：v1 给老工具/非 Android 校验器认，v2 是 Android 7+ 的主校验，
+                // v3 是 Android 9+ 的换钥与降级保护。只签 v3 时，部分 root 模块、MT 管理器、
+                // 第三方安装器会报「未签名」或校验失败。
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }

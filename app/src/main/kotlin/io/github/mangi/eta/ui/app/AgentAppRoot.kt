@@ -234,6 +234,10 @@ fun AgentAppRoot(
         }
     }
     val skillItems = appViewModel.skills.skillsState.skills
+    // 斜杠命令要能直接调用技能：技能开关一变就把命令表同步给 AgentAppState。
+    LaunchedEffect(skillItems) {
+        agentState.updateSkillCatalog(skillItems)
+    }
     val toolAccess = remember(mcpServers, skillItems) {
         io.github.mangi.eta.ui.model.ToolAccessUiState(
             items = mcpServers.map { server ->
@@ -424,13 +428,6 @@ fun AgentAppRoot(
                 )
             },
             conversationTrimmed = agentState.historyTrimNotice,
-            conversationDowngradedProfileId = agentState.overflowDowngradeNotice,
-            conversationCompaction = agentState.homeState.history
-                .let { io.github.mangi.eta.agent.model.AgentContextPolicy.rounds(it) }
-                .takeIf { it > 0 }
-                ?.let {
-                    it to io.github.mangi.eta.agent.model.AgentContextPolicy.MAX_COMPACTION_ROUNDS
-                },
             onBack = { popRoute() },
             onOpenConversationPane = {
                 // 反向同理：开左侧列表时把右侧工作区收起，避免两层叠在一起。
@@ -550,6 +547,9 @@ fun AgentAppRoot(
                         state = agentState.homeState,
                         modelPickerState = agentState.modelPickerState,
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
+                        commands = agentState.agentCommands,
+                        commandResult = agentState.homeState.commandResult,
+                        commandPalette = agentState.commandPalette,
                         onAction = { action ->
                             when (action) {
                                 is AgentHomeAction.ReasoningEffortChanged ->
@@ -594,6 +594,10 @@ fun AgentAppRoot(
                                     appViewModel.skills.toggleSkill(action.skillId, action.enabled)
                                 AgentHomeAction.ConfirmAgentCommand -> agentState.resolveCommandConfirm(true)
                                 AgentHomeAction.DismissAgentCommandConfirm -> agentState.resolveCommandConfirm(false)
+                                is AgentHomeAction.PickPaletteEntry -> agentState.runPaletteEntry(action.entryKey)
+                                AgentHomeAction.CloseCommandPalette -> agentState.closeCommandPalette()
+                                is AgentHomeAction.ShowPaletteEntryDetail -> agentState.showPaletteEntryDetail(action.entryKey)
+                                AgentHomeAction.DismissCommandResult -> agentState.dismissCommandResult()
                                 AgentHomeAction.ResumeInterruptedRun -> agentState.resumeInterruptedRun()
                                 AgentHomeAction.DismissInterruptedRun -> agentState.dismissInterruptedRun()
                                 is AgentHomeAction.DeleteMessage -> {
@@ -917,6 +921,9 @@ fun AgentAppRoot(
             }
             entry<AppRoute.DiagnosticsPatrol>(swipeDismiss = swipeDismiss) {
                 io.github.mangi.eta.ui.screens.selfcheck.DiagnosticsPatrolScreen(onBack = { popRoute() })
+            }
+            entry<AppRoute.DiagnosticsCenter>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.diagnostics.DiagnosticsCenterScreen(onBack = { popRoute() })
             }
 
             entry<AppRoute.PromptStudio>(swipeDismiss = swipeDismiss) {

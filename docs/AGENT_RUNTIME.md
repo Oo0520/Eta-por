@@ -350,6 +350,28 @@ Skill 安装工具始终向模型提供，不再根据顶层用户输入的固�
 
 已安装 Skill 的附属文本资源通过独立的有界读取工具访问，读取时再次做相对路径、canonical root、UTF-8 与大小检查；脚本和二进制 asset 不会借此被执行或当作无限文本送入上下文。
 
+## 斜杠命令调用技能
+
+输入框的斜杠命令表由「内置命令 + 全部已安装技能」组成（`AgentCommands.withSkills`），技能命令名就是技能 id；与内置命令撞名时加 `skill-` 前缀，保证解析结果唯一。界面层在技能开关变化时把列表同步给 `AgentAppState`，所以命令面板里看到的与能被解析执行的是同一份；解析与分派都在本地完成，技能命令不进入 Runtime 的命令分支，也不产生额外的模型请求。
+
+技能开关只决定它是否进入系统提示的 Skills 索引，不决定能否被显式调用：开关关掉的技能照样出现在命令表里（面板标「未启用」），命中后按 id 从管理列表取条目并加载正文。这样「不想让模型自动挑中」和「我这一轮就是要用它」是两件事。
+
+面板高度封在 320dp 以内、内容可滚动，技能条目显示完整描述（不再单行省略），也不再冗余标注 `[任务描述]` —— 需要补参数的命令点选后只补全命令名。用户消息气泡按 `<skill_command>` 抬头渲染 `/技能名 · 技能` 标记，因此与普通消息一眼可分；复制时剥掉技能正文，只留任务文本。
+
+命令的反馈分三种形态，不再统一走 Toast（`LENGTH_SHORT` 约 2 秒，不可滚动、不可交互）：
+
+- **面板**：`/help`、`/skills`、`/model` 直接展开命令面板（内置/技能分组，模型分组按 provider），条目可点——命令需要参数时把 `/名字 ` 写回输入框并聚焦，模型点一下即切换；面板由 `AgentAppState.commandPalette` 驱动，输入普通文本或点关闭即收起。面板高度固定 200dp（与 `@` 引用面板同一思路），打开期间输入框内的状态行（tok/s、MCP、技能、内存）一并收起，条目描述默认两行，长按条目把完整说明摊到结果卡里。这里不能用「输入框上沿到状态栏」的实测空间当上限：输入框会被面板推着上移，量到的空间越来越大，形成正反馈，最终把输入框挤到键盘后面。往输入框回填文本必须同时递增 `inputSyncVersion`，否则本地 `TextFieldState` 不会跟随业务状态（这条通道也是「撤回排队消息」用的那条）。
+- **结果卡**：`/status`、`/effort`、`/rename` 用法错误、技能读取失败这类信息写进 `AgentChatState.commandResult`，显示在输入框上方，停留到用户点关闭或开始下一次发送。
+- **消息流胶囊**：技能正文被截断、或调用的是开关关着的技能时，追加一条 `SystemNoticeCode.CommandNote`，随会话保留、可回看，不进入模型 history。
+
+命中技能命令时，App 在 IO 线程读取该技能的 `SKILL.md`（沿用 `SkillLoader` 的 canonical root 与符号链接检查），把正文内联进一条 `<skill_command id name path>` 块，再接本次任务描述，作为普通用户消息提交并启动 run：
+
+- 正文上限 6000 字符，超出部分只保留 `path` 提示，需要细节时模型按路径读取或走 `skills_read`；
+- 注入正文不依赖 `skills_read`，省 token 档位（非 FULL）同样能调用技能；
+- 展示层由 `AgentFileReferencePromptCodec.parse` 统一剥掉技能块，气泡里只留用户自己写的那句话，搜索、导出同样干净；
+- 写进 history 的表示由 `compactForHistory` 压成一行自闭合标记，避免之后每一轮重复整段正文；
+- 命令没带任务描述时不发送，只提示一句并把草稿留在输入框；读取失败按 `技能正文读取失败` 提示，不发送半截上下文。
+
 待确认结果和外部入口归档会把完整脱敏 transcript 一并写入 Room。显式迁移为旧记录补默认字段并搬迁大文本；分块读写集中在 DAO，协议投影集中在 Runtime，Provider 不负责持久化。恢复幂等性依据已应用 run 标记，不能靠比较 history 尾部文本猜测。旧结果缺少 transcript 时仍可用已有 assistant 内容合成兼容历史。
 
 主界面的 `AgentAppState` 由 Activity 级 ViewModel 持有，配置变更只重建 Compose UI，不替换正在等待 Runtime 的客户端。用户消息先提交到 Room，再启动可能产生设备副作用的 run。Runtime 为 App 会话维护追加式在途 checkpoint：文本增量有界合并，结构化边界先落盘再发布；块结束通常只保存边界和字符数，仅在终态修正流式内容时保存替换正文。工具调用的原始参数增量和原始结果不进入 UI 事件日志，UI 已展示的参数摘要、脱敏终端命令与结果摘要会随工具状态保存；完整普通工具交换另存于脱敏 transcript。终态先封存 checkpoint 再提交 outbox，只有会话成功落盘并 ACK 结果后才同时删除 outbox 与 checkpoint。
@@ -368,6 +390,7 @@ App 恢复时以 `checkpoint + outbox + active session` 统一对账，不再用
 - `AgentContinuationBuilderTest`
 - `AgentRuntimePolicyTest`
 - `AgentRuntimeSessionTest`
+- `AgentSkillCommandTest`
 - `AgentRunCheckpointStoreTest`
 - `AgentRunMessageProjectorTest`
 - `AgentToolCatalogTest`

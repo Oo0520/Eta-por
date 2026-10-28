@@ -24,7 +24,6 @@ internal object SpeechText {
                 when (node.type) {
                     MarkdownElementTypes.CODE_FENCE,
                     MarkdownElementTypes.CODE_BLOCK,
-                    MarkdownElementTypes.CODE_SPAN,
                     MarkdownElementTypes.IMAGE,
                     MarkdownElementTypes.LINK_DEFINITION,
                     MarkdownElementTypes.HTML_BLOCK,
@@ -73,7 +72,8 @@ internal object SpeechText {
             .replace(NEWLINE_PATTERN, "。")
             .replace(PERIOD_RUN_PATTERN, "。")
             .replace(PERIOD_BEFORE_PUNCTUATION_PATTERN, "$1")
-        return text.trim().trim('，', '。', '、', '；', '：', ' ', '\n')
+        // 只收掉连接用的标点与空白：句末的「。」是正文的一部分，读出来也不用它，但删掉会改掉句子。
+        return text.trim().trim('，', '、', '；', '：', ' ', '\n')
     }
 
     /** 默认片段上限：网络合成走流式，没有引擎侧的墙钟限制，500 字只为读音换气。 */
@@ -127,7 +127,7 @@ private val TECHNICAL_LABEL_PATTERN = Regex(
 
 /** 中英文正文、短数字和常用标点之外的符号（emoji、箭头、制表符残留等）都不读。 */
 private val UNSUPPORTED_SYMBOL_PATTERN =
-    Regex("""[^\p{IsHan}A-Za-z0-9，。、；：！？…—·「」『』（）()《》〈〉,.!?;:'"“”‘’\-\s%+]""")
+    Regex("""[^\p{IsHan}A-Za-z0-9_，。、；：！？…—·「」『』（）()《》〈〉,.!?;:'"“”‘’\-\s%+]""")
 
 private val UNSPEAKABLE_PATTERNS = listOf(
     URL_PATTERN,

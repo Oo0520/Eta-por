@@ -3,8 +3,15 @@ package io.github.mangi.eta.ui.screens.terminal
 import android.content.Context
 import android.text.format.Formatter
 import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
@@ -16,8 +23,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.terminal.AlpineEnvironmentInstaller
 import io.github.mangi.eta.agent.terminal.AlpineEnvironmentState
@@ -45,6 +54,7 @@ import io.github.mangi.eta.agent.terminal.LinuxPackageProfiles
 import io.github.mangi.eta.agent.terminal.PackageProfileInstallProgress
 import io.github.mangi.eta.agent.terminal.PackageProfileInstallResult
 import io.github.mangi.eta.agent.terminal.PackageProfileInstallStage
+import io.github.mangi.eta.agent.terminal.PackageProfileUninstallResult
 import io.github.mangi.eta.agent.terminal.SharedFolderMounts
 import io.github.mangi.eta.agent.terminal.terminalEnvironment
 import io.github.mangi.eta.core.AndroidAgentLogger
@@ -65,8 +75,14 @@ import io.github.mangi.eta.ui.components.EtaPreferenceGroup
 import io.github.mangi.eta.ui.components.EtaPreferenceGroupTitle
 import io.github.mangi.eta.ui.components.EtaPreferenceIcon
 import io.github.mangi.eta.ui.components.EtaTextButton
+import io.github.mangi.eta.ui.components.EtaWindowDialog
+import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
 import io.github.mangi.eta.ui.navigation.AppRoute
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -196,11 +212,21 @@ internal fun LinuxEnvironmentScreen(
             ),
         )
     }
-    LaunchedEffect(appContext, selectedDistribution, backend, status.version, debianStatus.version, apkAnalysisReady) {
+    var probeToken by remember { mutableStateOf(0) }
+    var uninstallTarget by remember { mutableStateOf<InstallTarget?>(null) }
+    // profileReady / apkAnalysisReady 进 key：装完或卸完立刻重测，别让能力检测停在旧结果。
+    LaunchedEffect(
+        appContext,
+        selectedDistribution,
+        backend,
+        status.version,
+        debianStatus.version,
+        apkAnalysisReady,
+        profileReady,
+        probeToken,
+    ) {
         capabilityChecking = true
-        capabilityItems = withContext(Dispatchers.IO) {
-            LinuxCapabilityProbe.probe(appContext, selectedDistribution)
-        }
+        capabilityItems = LinuxCapabilityProbe.probe(appContext, selectedDistribution)
         capabilityChecking = false
     }
     LaunchedEffect(selectedDistribution, backend, kimiWebLaunching) {
@@ -302,6 +328,45 @@ internal fun LinuxEnvironmentScreen(
             if (result is KimiWebLaunchResult.Failed) {
                 resultMessage = result.message(context)
             }
+        }
+    }
+
+    /** 卸载一个可选工具：先在 Linux 环境里删掉 Eta 自己的资产，再撤销安装记录。 */
+    fun performUninstall(target: InstallTarget) {
+        if (busyTarget != null || requiresRoot) return
+        busyTarget = target
+        resultMessage = null
+        profileProgressSummary = context.getString(R.string.linux_uninstalling)
+        launchInstallation {
+            when (target) {
+                InstallTarget.APK_ANALYSIS -> {
+                    val uninstalled = apkAnalysisInstaller.uninstall()
+                    apkAnalysisReady = apkAnalysisInstaller.isReady()
+                    busyTarget = null
+                    resultMessage = if (uninstalled) {
+                        context.getString(R.string.linux_apk_uninstalled)
+                    } else {
+                        context.getString(R.string.linux_uninstall_failed)
+                    }
+                }
+                else -> {
+                    if (target == InstallTarget.KIMI && kimiWebRunning) {
+                        kimiWebLauncher.stop(selectedDistribution.terminalEnvironment)
+                        kimiWebRunning = false
+                    }
+                    val profileInstaller = profileInstallers.getValue(target)
+                    val result = profileInstaller.uninstall()
+                    profileReady = profileReady + (target to profileInstaller.isReady())
+                    profileProgressSummary = null
+                    busyTarget = null
+                    val profileTitle = packageProfileUis
+                        .firstOrNull { it.target == target }
+                        ?.let { context.getString(it.titleRes) }
+                        .orEmpty()
+                    resultMessage = result.toMessage(context, profileTitle)
+                }
+            }
+            probeToken++
         }
     }
 
@@ -436,6 +501,28 @@ internal fun LinuxEnvironmentScreen(
                         } else {
                             profileUi.readyRes
                         }
+                        // 动作区只有行宽的 45%，放不下第三个按钮：Kimi Web 运行中时把「停止」放到行下方。
+                        val kimiRunningAction: (@Composable () -> Unit)? = if (isKimi && ready && kimiWebRunning) {
+                            {
+                                Text(
+                                    text = stringResource(R.string.linux_kimi_web_running_stop),
+                                    style = MiuixTheme.textStyles.footnote1,
+                                    color = MiuixTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable(
+                                        enabled = !kimiWebLaunching && !requiresRoot && busyTarget == null,
+                                    ) {
+                                        coroutineScope.launch {
+                                            val stopped = kimiWebLauncher.stop(
+                                                selectedDistribution.terminalEnvironment,
+                                            )
+                                            kimiWebRunning = !stopped
+                                        }
+                                    },
+                                )
+                            }
+                        } else {
+                            null
+                        }
                         if (index > 0) EtaPreferenceDivider(hasLeading = false)
                         EtaPreference(
                             title = stringResource(profileUi.titleRes),
@@ -446,63 +533,59 @@ internal fun LinuxEnvironmentScreen(
                             } else {
                                 stringResource(summaryRes)
                             },
+                            bottomAction = kimiRunningAction,
                             endActions = {
-                                if (isKimi && kimiWebRunning) {
-                                    EtaTextButton(
-                                        text = stringResource(R.string.action_stop),
-                                        enabled = !kimiWebLaunching && !requiresRoot,
-                                        onClick = {
-                                            coroutineScope.launch {
-                                                val stopped = kimiWebLauncher.stop(selectedDistribution.terminalEnvironment)
-                                                kimiWebRunning = !stopped
-                                            }
-                                        },
-                                    )
-                                }
-                                EtaTextButton(
-                                    text = when {
-                                        isKimi && ready -> stringResource(
-                                            if (kimiWebLaunching) {
-                                                R.string.linux_kimi_web_starting
-                                            } else if (kimiWebRunning) {
-                                                R.string.action_open
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (ready && isKimi) {
+                                        CompactTextButton(
+                                            text = when {
+                                                kimiWebLaunching -> stringResource(R.string.linux_kimi_web_starting)
+                                                kimiWebRunning -> stringResource(R.string.action_open)
+                                                else -> stringResource(R.string.linux_kimi_web_launch_short)
+                                            },
+                                            enabled = !requiresRoot && !kimiWebLaunching && busyTarget == null,
+                                            onClick = { launchKimiWeb() },
+                                        )
+                                    }
+                                    if (ready) {
+                                        UninstallIconButton(
+                                            enabled = busyTarget == null && !requiresRoot && !kimiWebLaunching,
+                                            onClick = { uninstallTarget = profileUi.target },
+                                        )
+                                    } else {
+                                        CompactTextButton(
+                                            text = if (busyTarget == profileUi.target) {
+                                                stringResource(R.string.linux_installing)
                                             } else {
-                                                R.string.linux_kimi_web_launch
+                                                stringResource(R.string.linux_install)
+                                            },
+                                            enabled = busyTarget == null && !requiresRoot,
+                                            onClick = {
+                                                if (busyTarget != null) return@CompactTextButton
+                                                busyTarget = profileUi.target
+                                                resultMessage = null
+                                                val profileTitle = context.getString(profileUi.titleRes)
+                                                launchInstallation {
+                                                    val profileInstaller = profileInstallers.getValue(profileUi.target)
+                                                    val result = profileInstaller.install { update ->
+                                                        withContext(Dispatchers.Main.immediate) {
+                                                            profileProgressSummary = update.summary(context, profileTitle)
+                                                        }
+                                                    }
+                                                    profileReady = profileReady +
+                                                        (profileUi.target to profileInstaller.isReady())
+                                                    profileProgressSummary = null
+                                                    busyTarget = null
+                                                    resultMessage = result.toMessage(context, profileTitle)
+                                                    probeToken++
+                                                }
                                             },
                                         )
-                                        ready -> stringResource(R.string.linux_installed)
-                                        busyTarget == profileUi.target -> stringResource(R.string.linux_installing)
-                                        else -> stringResource(R.string.linux_install)
-                                    },
-                                    enabled = !requiresRoot && if (isKimi && ready) {
-                                        !kimiWebLaunching && busyTarget == null
-                                    } else {
-                                        busyTarget == null && !ready
-                                    },
-                                    onClick = {
-                                        if (isKimi && ready) {
-                                            launchKimiWeb()
-                                            return@EtaTextButton
-                                        }
-                                        if (busyTarget != null || ready) return@EtaTextButton
-                                        busyTarget = profileUi.target
-                                        resultMessage = null
-                                        val profileTitle = context.getString(profileUi.titleRes)
-                                        launchInstallation {
-                                            val profileInstaller = profileInstallers.getValue(profileUi.target)
-                                            val result = profileInstaller.install { update ->
-                                                withContext(Dispatchers.Main.immediate) {
-                                                    profileProgressSummary = update.summary(context, profileTitle)
-                                                }
-                                            }
-                                            profileReady = profileReady +
-                                                (profileUi.target to profileInstaller.isReady())
-                                            profileProgressSummary = null
-                                            busyTarget = null
-                                            resultMessage = result.toMessage(context, profileTitle)
-                                        }
-                                    },
-                                )
+                                    }
+                                }
                             },
                         )
                     }
@@ -515,33 +598,67 @@ internal fun LinuxEnvironmentScreen(
                             context.getString(R.string.linux_apk_tools_summary)
                         },
                         endActions = {
-                            EtaTextButton(
-                                text = when {
-                                    apkAnalysisReady -> context.getString(R.string.linux_installed)
-                                    busyTarget == InstallTarget.APK_ANALYSIS -> context.getString(R.string.linux_installing)
-                                    else -> context.getString(R.string.linux_install)
-                                },
-                                enabled = busyTarget == null && !requiresRoot && !apkAnalysisReady,
-                                onClick = {
-                                    if (busyTarget != null || apkAnalysisReady) return@EtaTextButton
-                                    busyTarget = InstallTarget.APK_ANALYSIS
-                                    resultMessage = null
-                                    launchInstallation {
-                                        val result = apkAnalysisInstaller.install { update ->
-                                            withContext(Dispatchers.Main.immediate) {
-                                                apkAnalysisProgress = update
+                            if (apkAnalysisReady) {
+                                UninstallIconButton(
+                                    enabled = busyTarget == null && !requiresRoot,
+                                    onClick = { uninstallTarget = InstallTarget.APK_ANALYSIS },
+                                )
+                            } else {
+                                CompactTextButton(
+                                    text = if (busyTarget == InstallTarget.APK_ANALYSIS) {
+                                        context.getString(R.string.linux_installing)
+                                    } else {
+                                        context.getString(R.string.linux_install)
+                                    },
+                                    enabled = busyTarget == null && !requiresRoot,
+                                    onClick = {
+                                        if (busyTarget != null) return@CompactTextButton
+                                        busyTarget = InstallTarget.APK_ANALYSIS
+                                        resultMessage = null
+                                        launchInstallation {
+                                            val result = apkAnalysisInstaller.install { update ->
+                                                withContext(Dispatchers.Main.immediate) {
+                                                    apkAnalysisProgress = update
+                                                }
                                             }
+                                            apkAnalysisReady = apkAnalysisInstaller.isReady()
+                                            apkAnalysisProgress = null
+                                            busyTarget = null
+                                            resultMessage = result.toMessage(context)
+                                            probeToken++
                                         }
-                                        apkAnalysisReady = apkAnalysisInstaller.isReady()
-                                        apkAnalysisProgress = null
-                                        busyTarget = null
-                                        resultMessage = result.toMessage(context)
-                                    }
-                                },
-                            )
+                                    },
+                                )
+                            }
                         },
                     )
                 }
+            }
+        }
+    }
+
+    // 卸载是可逆但破坏性的：先弹一次确认再动手。
+    uninstallTarget?.let { target ->
+        val pendingTitle = when (target) {
+            InstallTarget.APK_ANALYSIS -> context.getString(R.string.ui_apk_analysis_95ad17)
+            else -> context.getString(packageProfileUis.first { it.target == target }.titleRes)
+        }
+        EtaWindowDialog(
+            show = true,
+            title = context.getString(R.string.linux_uninstall_title, pendingTitle),
+            summary = context.getString(R.string.linux_uninstall_summary),
+            onDismissRequest = { uninstallTarget = null },
+        ) {
+            Column {
+                MiuixDialogActions(
+                    confirmText = context.getString(R.string.linux_uninstall_confirm),
+                    destructive = true,
+                    onCancel = { uninstallTarget = null },
+                    onConfirm = {
+                        uninstallTarget = null
+                        performUninstall(target)
+                    },
+                )
             }
         }
     }
@@ -657,6 +774,25 @@ private fun ApkAnalysisInstallResult.toMessage(context: Context): String = when 
     is ApkAnalysisInstallResult.Failed -> context.getString(R.string.linux_apk_stage_failed, stage.displayName(context))
 }
 
+private fun PackageProfileUninstallResult.toMessage(
+    context: Context,
+    profileTitle: String,
+): String = when (this) {
+    PackageProfileUninstallResult.NotInstalled ->
+        context.getString(R.string.linux_uninstalled, profileTitle)
+    PackageProfileUninstallResult.EnvironmentNotReady -> context.getString(R.string.linux_base_required)
+    is PackageProfileUninstallResult.BlockedByDependent -> {
+        val dependencyTitle = packageProfileUis
+            .firstOrNull { it.profile.id == profileId }
+            ?.let { context.getString(it.titleRes) }
+            ?: profileId
+        context.getString(R.string.linux_uninstall_blocked, dependencyTitle)
+    }
+    PackageProfileUninstallResult.Uninstalled ->
+        context.getString(R.string.linux_uninstalled, profileTitle)
+    is PackageProfileUninstallResult.Failed -> context.getString(R.string.linux_uninstall_failed)
+}
+
 private fun AlpineInstallStage.displayName(context: Context): String = context.getString(
     when (this) {
         AlpineInstallStage.CHECKING -> R.string.linux_stage_checking
@@ -687,4 +823,43 @@ private fun ApkAnalysisInstallStage.displayName(context: Context): String = cont
         ApkAnalysisInstallStage.VERIFYING -> R.string.linux_apk_stage_verifying
         ApkAnalysisInstallStage.COMPLETE -> R.string.linux_apk_stage_complete
     },
+)
+
+/** 卸载入口用图标而不是开关/文字按钮：动作区只有行宽 45%，图标最省地方也不抢主色。 */
+@Composable
+private fun UninstallIconButton(
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        minWidth = 32.dp,
+        minHeight = 32.dp,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Delete,
+            contentDescription = stringResource(R.string.linux_uninstall_confirm),
+            modifier = Modifier.size(18.dp),
+            tint = if (enabled) {
+                MiuixTheme.colorScheme.onSurfaceVariantActions
+            } else {
+                MiuixTheme.colorScheme.disabledOnSurface
+            },
+        )
+    }
+}
+
+/** 行内小按钮：收窄内边距，动作区里塞两个控件时不至于溢出。 */
+@Composable
+private fun CompactTextButton(
+    text: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) = EtaTextButton(
+    text = text,
+    enabled = enabled,
+    onClick = onClick,
+    minWidth = 0.dp,
+    insideMargin = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
 )

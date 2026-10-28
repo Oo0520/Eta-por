@@ -21,6 +21,10 @@ internal data class AgentCommand(
     val requiresConfirmation: Boolean = false,
     /** 技能命令对应的技能 id；内置命令为 null。 */
     val skillId: String? = null,
+    /** 选中后只补全命令名、等用户补参数（即使没有 argHint）。 */
+    val waitsForArgs: Boolean = false,
+    /** 技能命令对应技能当前是否启用；禁用技能仍可被显式调用。 */
+    val skillEnabled: Boolean = true,
 ) {
     fun matches(token: String): Boolean =
         name.equals(token, ignoreCase = true) ||
@@ -65,6 +69,28 @@ internal fun parseAgentCommand(
     return AgentCommandInput.Run(command, args)
 }
 
+/** 面板排序：内置命令在前，同类里按名字排；技能命令不会因为数量多把内置命令挤下去。 */
+private val agentCommandDisplayOrder: Comparator<AgentCommand> = compareBy(
+    { if (it.kind == AgentCommandKind.BuiltIn) 0 else 1 },
+    { it.name.lowercase() },
+)
+
+/** 输入前缀过滤出的命令，转成面板条目（分组标题由调用方决定）。 */
+internal fun commandPaletteEntries(commands: List<AgentCommand>): List<AgentPaletteEntry> =
+    commands.map { command ->
+        AgentPaletteEntry(
+            key = "cmd:" + command.name,
+            title = "/" + command.name,
+            subtitle = command.summary,
+            payload = AgentPalettePayload.Run(command),
+            badge = when {
+                command.kind != AgentCommandKind.Skill -> null
+                command.skillEnabled -> AgentPaletteBadge.Skill
+                else -> AgentPaletteBadge.SkillDisabled
+            },
+        )
+    }
+
 /**
  * 命令面板的候选列表：输入 `/<前缀>` 时按名字前缀过滤，其次是包含匹配。
  * 已经输入空格（开始写参数）后返回空列表，面板随之收起。
@@ -76,7 +102,7 @@ internal fun filterAgentCommands(
     if (!raw.startsWith("/") || raw.startsWith("//")) return emptyList()
     val token = raw.substring(1)
     if (token.any { it.isWhitespace() }) return emptyList()
-    if (token.isEmpty()) return commands.sortedBy { it.name.lowercase() }
+    if (token.isEmpty()) return commands.sortedWith(agentCommandDisplayOrder)
     val prefix = commands.filter { command ->
         command.name.startsWith(token, ignoreCase = true) ||
             command.aliases.any { alias -> alias.startsWith(token, ignoreCase = true) }
@@ -87,5 +113,5 @@ internal fun filterAgentCommands(
                 command.aliases.any { alias -> alias.contains(token, ignoreCase = true) }
             )
     }
-    return prefix.sortedBy { it.name.lowercase() } + contains.sortedBy { it.name.lowercase() }
+    return prefix.sortedWith(agentCommandDisplayOrder) + contains.sortedWith(agentCommandDisplayOrder)
 }

@@ -2151,6 +2151,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 hasUniqueId = hasUniqueId,
                 snapshotTruncated = truncated,
                 identityMatchCount = matches,
+                clickable = target.clickable,
             )
         }
     }

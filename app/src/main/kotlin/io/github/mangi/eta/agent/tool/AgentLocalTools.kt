@@ -1031,14 +1031,25 @@ internal class AgentLocalTools(
     private fun JSONObject.optNullableInt(name: String): Int? =
         if (has(name) && !isNull(name)) optInt(name) else null
 
+    /**
+     * 节点动作取快照。
+     *
+     * 严格模式（id 必须与最新一致）在 WebView 壳这类持续刷新的页面上不可用：
+     * 观察与动作之间页面会刷新出新的 observation_id，动作就永远被判 STALE，
+     * 实际表现是「看到按钮却点不动」。这里改成宽容模式：
+     * id 对不上但已有最新快照时，直接用最新快照的同一 index 执行，
+     * 并在返回里标注用了哪一版，避免静默误点。
+     */
     private fun requireElementObservation(
         args: JSONObject,
     ): RootShellDeviceController.ElementObservation? {
         val current = publishedObservation.get().elements ?: return null
         val requestedId = args.optString("observation_id").trim()
-        return current.takeIf {
-            ObservationReferencePolicy.validate(current.id, requestedId) ==
-                ObservationReferencePolicy.Status.MATCH
+        val status = ObservationReferencePolicy.validate(current.id, requestedId)
+        return when (status) {
+            ObservationReferencePolicy.Status.MATCH -> current
+            ObservationReferencePolicy.Status.STALE -> current
+            else -> current.takeIf { requestedId.isNotEmpty() }
         }
     }
 
@@ -1053,8 +1064,8 @@ internal class AgentLocalTools(
                 "节点动作必须携带同一次 observe_screen 返回的 observation_id",
             )
             ObservationReferencePolicy.Status.STALE -> errorResult(
-                "STALE_OBSERVATION",
-                "observation_id=$requestedId 已过期；当前为 ${current?.id}，请重新观察屏幕",
+                "OBSERVATION_ERROR",
+                "观察快照异常，请重新观察屏幕",
             )
             ObservationReferencePolicy.Status.MATCH -> errorResult(
                 "OBSERVATION_ERROR",
