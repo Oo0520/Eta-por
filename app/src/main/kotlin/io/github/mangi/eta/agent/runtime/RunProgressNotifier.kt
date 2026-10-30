@@ -377,7 +377,12 @@ internal object RunProgressNotifier {
         val intent = Intent(app, SupplementActivity::class.java)
             .putExtra(AgentRuntimeService.EXTRA_SUPPLEMENT_CONVERSATION_ID, card.conversationKey)
             .putExtra(SupplementActivity.EXTRA_TITLE, card.title)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            // 独立任务：否则会把 Eta 主界面一起带到前台，看起来像「点插入回到对话页」。
+            .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
         val pending = PendingIntent.getActivity(
             app,
             cardId * 10 + 3,
