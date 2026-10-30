@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private var appliedPredictiveBackEnabled = true
     private var speechSettingsRequested by mutableStateOf(false)
     private var terminalRequested by mutableStateOf(false)
+    private var linuxEnvironmentRequested by mutableStateOf(false)
     /** 上次前台补查自动备份的时间，用来节流 onResume。 */
     private var lastAutoBackupCheckAt = 0L
 
@@ -88,6 +89,8 @@ class MainActivity : ComponentActivity() {
                         openSpeechSettings = speechSettingsRequested,
                         openTerminal = terminalRequested,
                         onTerminalOpened = { terminalRequested = false; intent?.action = null },
+                        openLinuxEnvironment = linuxEnvironmentRequested,
+                        onLinuxEnvironmentOpened = { linuxEnvironmentRequested = false; intent?.action = null },
                         onSpeechSettingsOpened = { speechSettingsRequested = false; intent?.action = null },
                         onAssistantConversationOpened = { opened ->
                             assistantConversationKey = null
@@ -193,6 +196,10 @@ class MainActivity : ComponentActivity() {
             terminalRequested = true
             return
         }
+        if (intent?.action == ACTION_OPEN_LINUX_ENVIRONMENT) {
+            linuxEnvironmentRequested = true
+            return
+        }
         if (intent?.action == ACTION_VIEW_EXECUTION) {
             assistantConversationSource = intent.getStringExtra(EXTRA_EXECUTION_SOURCE)
                 ?.takeIf { it in setOf(
@@ -288,6 +295,7 @@ class MainActivity : ComponentActivity() {
         /** 前台补查自动备份的最小间隔。 */
         private const val AUTO_BACKUP_CHECK_INTERVAL_MS = 5 * 60 * 1000L
         const val ACTION_OPEN_TERMINAL = "io.github.mangi.eta.action.OPEN_TERMINAL"
+        const val ACTION_OPEN_LINUX_ENVIRONMENT = "io.github.mangi.eta.action.OPEN_LINUX_ENVIRONMENT"
         const val ACTION_VIEW_EXECUTION = "io.github.mangi.eta.action.VIEW_EXECUTION"
         const val EXTRA_EXECUTION_SOURCE = "io.github.mangi.eta.extra.EXECUTION_SOURCE"
         /** 运行浮层的结果卡片回到本体：App 发起的 run 带会话 ID，直接打开该会话；缺省时只回到首页。 */
