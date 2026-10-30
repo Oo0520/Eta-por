@@ -200,27 +200,6 @@ internal fun SubagentSettingsScreen(
         },
         overlay = {
             OverlayBottomSheet(
-                show = showModelSheet,
-                title = "子智能体模型",
-                onDismissRequest = { showModelSheet = false },
-                insideMargin = DpSize(0.dp, 0.dp),
-            ) {
-                SubagentModelPickerContent(
-                    pickerState = pickerState,
-                    selectedSecondaryModelId = resolvedSecondary?.model?.id,
-                    primaryModelName = primaryModelName,
-                    onSelectModel = { modelId ->
-                        showModelSheet = false
-                        scope.launch {
-                            RuntimeConfigRepository.setSubagentSettings(
-                                subagentSettings.copy(modelId = modelId),
-                            )
-                        }
-                    },
-                )
-            }
-
-            OverlayBottomSheet(
                 show = showAuthorizedSheet,
                 title = "授权给主 Agent 的模型",
                 onDismissRequest = { showAuthorizedSheet = false },
@@ -475,43 +454,6 @@ internal fun SubagentSettingsScreen(
                         }
                     },
                 )
-                EtaPreferenceDivider()
-                EtaArrowPreference(
-                    title = "子智能体模型",
-                    summary = secondarySummary,
-                    enabled = subagentEnabled,
-                    startAction = {
-                        EtaPreferenceIcon(
-                            icon = Icons.Rounded.Cloud,
-                            tint = EtaPreferenceColors.Blue,
-                        )
-                    },
-                    onClick = { showModelSheet = true },
-                )
-                if (effortOptions.size > 1) {
-                    EtaPreferenceDivider()
-                    EtaOverlayDropdownPreference(
-                        title = "思考强度",
-                        items = effortLabels,
-                        selectedIndex = selectedEffortIndex,
-                        enabled = subagentEnabled,
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.Psychology,
-                                tint = EtaPreferenceColors.Orange,
-                            )
-                        },
-                        onSelectedIndexChange = { index ->
-                            val chosen = effortOptions.getOrNull(index)
-                            scope.launch {
-                                RuntimeConfigRepository.setSubagentSettings(
-                                    subagentSettings.copy(reasoningEffort = chosen?.wireValue),
-                                )
-                            }
-                        },
-                    )
-                }
-
                 EtaPreferenceDivider()
                 EtaArrowPreference(
                     title = "并行上限",

@@ -127,7 +127,9 @@ internal class SubagentExecutor(
         val childController = AgentRunController()
         val controllerBinding = parentController.register(childController::cancel)
 
-        val requestedModel = args.optString("model").trim().takeIf { it.isNotBlank() }
+        val requestedModel = args.optString("model").trim().takeIf {
+            it.isNotBlank() && it.lowercase() !in setOf("default", "primary", "inherit", "auto")
+        }
         val requestedEffort = args.optString("reasoning_effort").trim().takeIf { it.isNotBlank() }
         val allowModelPick = runCatching {
             kotlinx.coroutines.runBlocking {
@@ -140,7 +142,10 @@ internal class SubagentExecutor(
                     io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
                 }.allowedModelIds
             }.getOrDefault(emptyList())
-            if (allowed.isNotEmpty() && requestedModel !in allowed) {
+            // 模型 id 可能带服务商前缀（cn: / openai: …），比较时去掉前缀再比，避免勾选后仍被判未授权。
+            val target = normalizeModelId(requestedModel)
+            val matched = allowed.isEmpty() || allowed.any { normalizeModelId(it) == target }
+            if (!matched) {
                 SubagentSessionStore.releaseRunning(conversationKey, subagentId)
                 controllerBinding.close()
                 return errorResult(
@@ -326,6 +331,10 @@ internal class SubagentExecutor(
             controllerBinding.close()
         }
     }
+
+    /** 去掉 "cn:" 这类服务商前缀，只比较模型本体。 */
+    private fun normalizeModelId(raw: String): String =
+        raw.trim().lowercase().substringAfterLast(':')
 
     fun executeProfileManagement(toolCall: AgentModelClient.ToolCall): AgentModelClient.ToolResult {
         parentController.throwIfCancelled()
