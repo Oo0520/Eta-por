@@ -44,16 +44,26 @@ class SubagentTest {
 
         SubagentProfile.BUILTIN_PROFILES.forEach { profile ->
             val allowed = profile.filterTools(fullCatalog).toolNames()
+            // 所有内置 profile 都禁止递归与改记忆
             assertFalse("subagent" in allowed)
-            assertFalse("observe_screen" in allowed)
-            assertFalse("tap_element" in allowed)
-            assertFalse("type_text" in allowed)
-            assertFalse("browser_use" in allowed)
             assertFalse("memory_write" in allowed)
             assertTrue("read_file" in allowed)
             assertTrue("glob_files" in allowed)
             assertTrue("grep_files" in allowed)
             assertTrue("web_search" in allowed)
+            if (profile.name == SubagentProfile.TYPE_SCREEN) {
+                // 灵屏专用子代理允许 GUI 与灵屏工具，但仅限灵屏、不给内置浏览器
+                assertTrue("observe_screen" in allowed)
+                assertTrue("tap_element" in allowed)
+                assertTrue("type_text" in allowed)
+                assertTrue("virtual_screen" in allowed)
+                assertFalse("browser_use" in allowed)
+            } else {
+                assertFalse("observe_screen" in allowed)
+                assertFalse("tap_element" in allowed)
+                assertFalse("type_text" in allowed)
+                assertFalse("browser_use" in allowed)
+            }
         }
 
         val exploreTools = SubagentProfile.EXPLORE.filterTools(fullCatalog).toolNames()
