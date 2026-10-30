@@ -95,6 +95,7 @@ internal class VirtualScreenUiTools(
         info: VirtualDisplayInfo
     ): AgentModelClient.ToolResult = when (name) {
         "observe_screen" -> observe(args, info)
+        "tap_smart" -> tapSmart(args, info)
         "tap", "tap_area", "long_press", "swipe", "scroll" -> coordinateAction(name, args, info)
         "tap_element", "long_press_element", "scroll_element" -> nodeAction(name, args, info)
         "type_text" -> typeText(args, info)
@@ -355,6 +356,73 @@ internal class VirtualScreenUiTools(
             )
         return actionResult(result, info)
     }
+
+
+    /**
+     * 智能点击：先按无障碍节点点，失败按节点中心坐标点，最后才用调用方给的坐标。
+     * 目的是让模型不必自己判断"该用节点还是坐标"，减少盲点与反复试探。
+     */
+    private fun tapSmart(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
+        val text = args.optString("text").trim()
+        val desc = args.optString("desc").trim()
+        val hasCoords = args.has("x") && args.has("y")
+        if (text.isBlank() && desc.isBlank() && !hasCoords) {
+            return failure("INVALID_ARGUMENTS", "至少提供 text、desc 或 x/y 之一")
+        }
+        val service = AgentAccessibilityService.current()
+        val options = AgentScreenObservationContract.resolve(args)
+        val snap = service?.captureNodeSnapshot(options.maxNodes, info.displayId)
+            ?.takeIf { it.displayId == info.displayId && it.packageName == info.focusedPackage }
+        if (snap != null && service != null) {
+            snapshot = snap
+            observedSession = info.sessionId
+            observedManualGeneration = info.manualInputGeneration
+            val matched = snap.nodes.firstOrNull { node ->
+                (text.isNotBlank() && node.text.contains(text, true)) ||
+                    (desc.isNotBlank() && node.desc.contains(desc, true))
+            }
+            if (matched != null) {
+                VirtualScreenSession.showNodeGesture(
+                    info, "tap", matched.bounds.centerX(), matched.bounds.centerY(), 0
+                )
+                val click = service.clickNode(snap, matched.index)
+                if (click.ok) {
+                    return AgentModelClient.ToolResult(
+                        JSONObject().put("ok", true).put("tool", "tap_smart")
+                            .put("method", "accessibility").put("display_id", info.displayId)
+                            .put("matched", matched.text.ifBlank { matched.desc })
+                            .toString()
+                    )
+                }
+                // 无障碍点不动：用该节点中心坐标再点一次
+                if (!matched.bounds.isEmpty) {
+                    val coords = JSONObject()
+                        .put("x", matched.bounds.centerX())
+                        .put("y", matched.bounds.centerY())
+                        .put("coordinate_space", "screen")
+                    val byBounds = coordinateAction("tap", coords, info)
+                    return withMethod(byBounds, "bounds_tap")
+                }
+            }
+        }
+        if (hasCoords) {
+            val raw = JSONObject(args.toString())
+            if (!raw.has("coordinate_space")) raw.put("coordinate_space", "screen")
+            return withMethod(coordinateAction("tap", raw, info), "coordinate")
+        }
+        return failure(
+            "NODE_NOT_FOUND",
+            "没有找到文本/描述匹配的可点控件；请先 observe_screen（必要时 include_screenshot=true），再用 tap_area 指定坐标",
+        )
+    }
+
+    /** 给坐标点击结果补一个 method 字段，便于回看是哪条路径生效。 */
+    private fun withMethod(result: AgentModelClient.ToolResult, method: String): AgentModelClient.ToolResult =
+        runCatching {
+            val json = JSONObject(result.content ?: "{}")
+            json.put("method", method)
+            AgentModelClient.ToolResult(json.toString())
+        }.getOrDefault(result)
 
     private fun typeText(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
         val mode = args.optString("mode", "replace").trim().lowercase(Locale.ROOT).ifBlank { "replace" }

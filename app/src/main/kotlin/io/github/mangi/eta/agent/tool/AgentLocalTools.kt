@@ -323,6 +323,12 @@ internal class AgentLocalTools(
                 }
                 "tap" -> afterAction(tap(args))
                 "tap_area" -> afterAction(tapArea(args))
+                "tap_smart" -> textResult(
+                    errorResult(
+                        "VIRTUAL_ONLY",
+                        "tap_smart 只在灵屏会话可用；主屏请先 observe_screen，再用 tap_element 或 tap_area",
+                    )
+                )
                 "tap_element" -> afterAction(tapElement(args))
                 "long_press" -> afterAction(longPress(args))
                 "long_press_element" -> afterAction(longPressElement(args))

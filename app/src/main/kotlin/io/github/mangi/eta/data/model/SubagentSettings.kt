@@ -12,6 +12,12 @@ import kotlinx.serialization.Serializable
 internal data class SubagentSettings(
     val modelId: String? = null,
     val reasoningEffort: String? = null,
+    /** 最大递归深度：0 = 禁用子智能体，1 = 仅允许主 Agent 创建子智能体。 */
+    val maxDepth: Int = 1,
+    /** 同一主 Agent 下同时存活的子智能体总数上限（主 Agent 不计入）。 */
+    val maxParallel: Int = 8,
+    /** 允许 Agent 为子智能体挑选模型（仅影响新会话）。 */
+    val allowModelSelection: Boolean = false,
 ) {
     val resolvedReasoningEffort: ReasoningEffort?
         get() = ReasoningEffort.fromWireValue(reasoningEffort)
