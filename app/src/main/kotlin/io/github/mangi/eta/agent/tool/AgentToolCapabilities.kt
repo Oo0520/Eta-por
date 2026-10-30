@@ -92,8 +92,8 @@ internal data class AgentToolCapabilities(
                         function.put(
                             "description",
                             function.getString("description") + if (virtualScreenFallbackEnabled)
-                                " 当前优先使用虚拟屏；不兼容时暂停并等待通知授权。仅用户点击允许后，本次任务才能改用主屏；切换后必须重新观察。"
-                            else " 当前已启用虚拟屏：此工具只作用于独立 display，自动创建会话；不会操作主屏。"
+                                " 当前优先使用灵屏；不兼容时暂停并等待通知授权。仅用户点击允许后，本次任务才能改用主屏；切换后必须重新观察。"
+                            else " 当前已启用灵屏：此工具只作用于独立 display，自动创建会话；不会操作主屏。"
                         )
                         if (name == "press_key" && !virtualScreenFallbackEnabled) function.getJSONObject(
                             "parameters"
@@ -103,7 +103,7 @@ internal data class AgentToolCapabilities(
                         if (name in setOf("set_clipboard", "get_clipboard")) {
                             function.put(
                                 "description",
-                                "仅访问本次虚拟屏运行的临时剪贴板，不读取或修改用户系统剪贴板。"
+                                "仅访问本次灵屏运行的临时剪贴板，不读取或修改用户系统剪贴板。"
                             )
                         }
                     }

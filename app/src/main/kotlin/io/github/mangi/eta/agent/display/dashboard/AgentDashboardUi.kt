@@ -70,7 +70,7 @@ internal data class VisionFocus(
     val label: String = "",
 )
 
-/** Agent 视线层的输入：虚拟屏像素坐标，绘制时再经 viewport 换算。 */
+/** Agent 视线层的输入：灵屏像素坐标，绘制时再经 viewport 换算。 */
 internal data class AgentVisionState(
     val displayWidth: Int = 0,
     val displayHeight: Int = 0,

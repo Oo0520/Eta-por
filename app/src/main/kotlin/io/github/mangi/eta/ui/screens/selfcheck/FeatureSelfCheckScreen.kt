@@ -254,7 +254,7 @@ private suspend fun probeTextStore(context: Context): SelfCheckItem {
 /** 实测 Root：su 路径存在只是必要条件，真正判据是 su -c id -u 能不能返回 0。 */
 private fun probeRootState(): Pair<String, String> {
     val path = SU_PATHS.firstOrNull { File(it).exists() }
-        ?: return STATE_MISSING to "未发现 su：虚拟屏、终端与特权功能会受限"
+        ?: return STATE_MISSING to "未发现 su：灵屏、终端与特权功能会受限"
     return runCatching {
         val process = ProcessBuilder("su", "-c", "id -u").redirectErrorStream(true).start()
         val finished = process.waitFor(4, java.util.concurrent.TimeUnit.SECONDS)
@@ -264,7 +264,7 @@ private fun probeRootState(): Pair<String, String> {
         }
         val text = process.inputStream.bufferedReader().use { it.readText() }.trim()
         if (text == "0") {
-            STATE_OK to "su -c id -u 返回 0（$path），虚拟屏、终端与特权功能可用"
+            STATE_OK to "su -c id -u 返回 0（$path），灵屏、终端与特权功能可用"
         } else {
             STATE_MISSING to "su 存在（$path）但没拿到 uid 0（输出「${text.ifBlank { "空" }}」），多半是被拒绝授权"
         }
@@ -362,9 +362,9 @@ private suspend fun runSelfCheck(context: Context, probeRoot: Boolean): SelfChec
             name = "悬浮窗权限",
             state = if (overlayOk) STATE_OK else STATE_MISSING,
             detail = if (overlayOk) {
-                "虚拟屏小窗能正常显示"
+                "灵屏小窗能正常显示"
             } else {
-                "缺这个：虚拟屏小窗不会出现。去 应用详情 → 显示在其他应用上层"
+                "缺这个：灵屏小窗不会出现。去 应用详情 → 显示在其他应用上层"
             },
             actionUri = if (overlayOk) null else "package:$pkg",
         ),
@@ -388,7 +388,7 @@ private suspend fun runSelfCheck(context: Context, probeRoot: Boolean): SelfChec
             name = "无障碍服务",
             state = if (a11yOk) STATE_OK else STATE_MISSING,
             detail = if (a11yOk) {
-                "界面操作（点击/输入/观察）与虚拟屏控制可用"
+                "界面操作（点击/输入/观察）与灵屏控制可用"
             } else {
                 "未开：所有界面自动化都会失败（不是 Eta 的 bug，是系统没授权）"
             },
@@ -437,10 +437,10 @@ private suspend fun runSelfCheck(context: Context, probeRoot: Boolean): SelfChec
             },
             detail = when {
                 popupMode == android.app.AppOpsManager.MODE_ALLOWED ->
-                    "允许从后台拉起界面：虚拟屏小窗能自己出来"
+                    "允许从后台拉起界面：灵屏小窗能自己出来"
                 popupMode == android.app.AppOpsManager.MODE_IGNORED ||
                     popupMode == android.app.AppOpsManager.MODE_ERRORED ->
-                    "被禁止从后台拉起界面：虚拟屏小窗可能不出现（ColorOS 叫「后台弹出界面」）"
+                    "被禁止从后台拉起界面：灵屏小窗可能不出现（ColorOS 叫「后台弹出界面」）"
                 else -> "系统没给这个权限项的可读状态（ColorOS 私有项）；到应用详情 → 权限管理里确认「后台弹出界面」"
             },
             actionUri = "package:$pkg",

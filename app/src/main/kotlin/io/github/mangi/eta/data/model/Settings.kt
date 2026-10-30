@@ -133,7 +133,7 @@ internal object AutoBackupKeepCount {
     fun normalize(count: Int): Int = count.takeIf { it in MIN..MAX } ?: 5
 }
 
-/** 虚拟屏出帧目标帧率；越低越省电，越高越跟手。 */
+/** 灵屏出帧目标帧率；越低越省电，越高越跟手。 */
 internal object VirtualScreenFrameRate {
     /**
      * 极低帧率优先：灵屏主要给 Agent 读屏用，画面不需要流畅；

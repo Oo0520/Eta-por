@@ -145,7 +145,7 @@ internal object DiagnosticsBundle {
 
         val settings = runCatching { SettingsDataStore.settings() }.getOrNull()
         if (settings != null) {
-            append("\n[虚拟屏]\n")
+            append("\n[灵屏]\n")
             append("开关：").append(settings.virtualScreenEnabled).append('\n')
             append("熄屏执行：").append(settings.virtualScreenOffEnabled).append('\n')
             append("主屏回退：").append(settings.virtualScreenFallbackEnabled).append('\n')
@@ -211,10 +211,10 @@ internal object DiagnosticsBundle {
     private val README = """
         这是 Eta 生成的诊断包，内容全部只读采集：
 
-        - state.txt：设备、虚拟屏、语音与运行状态快照
-        - helper-exit.txt：虚拟屏服务进程（root helper）的 stderr 尾部与退出码
+        - state.txt：设备、灵屏、语音与运行状态快照
+        - helper-exit.txt：灵屏服务进程（root helper）的 stderr 尾部与退出码
         - crash/*.txt：崩溃现场（每次崩溃一份，最多 10 份，含调用栈与日志尾部）
-        - trace.txt：Eta 自留运行日志（按天保留最近 7 天；会话启停、取消原因、并发槽位、无障碍连接、虚拟屏服务启停）
+        - trace.txt：Eta 自留运行日志（按天保留最近 7 天；会话启停、取消原因、并发槽位、无障碍连接、灵屏服务启停）
         - 行为核查.txt：把「隐形功能有没有真的跑起来」自动算好（多开会话、并发排队、重任务互斥、进度通知、开机续跑、分享入口等），不用自己盯
         - logcat.txt：最近日志。已授权 root 时为全量日志，否则只有 Eta 自己的日志
 

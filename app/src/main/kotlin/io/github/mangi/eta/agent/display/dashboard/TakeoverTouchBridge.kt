@@ -51,7 +51,7 @@ internal object AgentInjectionGate {
  * - 一切坐标经 [VirtualScreenViewport] 换算，FIT_CENTER 的留白区不参与（返回 false 让窗口拖动接管）；
  * - 用户一按下就抢占控制权（`onPreempt`），再补这一帧 DOWN，避免 AI 与人的手势互相踩；
  * - MOVE 只保留最新一格（[pendingMove]），拖动时不会把队列撑爆，也不会出现「慢半拍」；
- * - 抬指/取消/多指一律做手势收尾，绝不留半截 DOWN 在虚拟屏里。
+ * - 抬指/取消/多指一律做手势收尾，绝不留半截 DOWN 在灵屏里。
  */
 internal class TakeoverTouchBridge(
     private val context: Context,
@@ -108,7 +108,7 @@ internal class TakeoverTouchBridge(
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // 单指协议，多指只做收尾：不留半截 DOWN 给虚拟屏。
+                // 单指协议，多指只做收尾：不留半截 DOWN 给灵屏。
                 val point = lastPoint
                 if (pressed.compareAndSet(true, false) && point != null) submit("cancel", point)
                 return true

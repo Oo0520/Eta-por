@@ -4,7 +4,7 @@ import android.view.Surface
 import java.util.UUID
 
 /**
- * 直通出帧（A′）：把本机 Surface 交给 root helper，当虚拟屏的输出面。
+ * 直通出帧（A′）：把本机 Surface 交给 root helper，当灵屏的输出面。
  * 画面由 SurfaceFlinger 直接合成进本 Surface，不再走截屏→JPEG→base64→解码。
  *
  * 多开后每个会话一块屏，宿主面按 **会话（owner）** 分槽：

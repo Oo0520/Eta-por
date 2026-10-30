@@ -72,7 +72,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * 虚拟屏幕悬浮小窗【最终版·无标题栏】
+ * 灵屏悬浮小窗【最终版·无标题栏】
  * 纯监控：画面区单指拖拽移动、双指缩放、双击跳全屏；无顶部黑条；四角圆角；贴边折叠；
  * 透明度、尺寸/位置持久化、一键重置、帧异常捕获。
  */
@@ -142,7 +142,7 @@ internal object VirtualScreenFloatWindow {
     private val sinkRunnable = Runnable { sinkToEdge() }
     /** 拖拽途中已经折叠过：松手不再重复吸附。 */
     private var collapsedDuringDrag = false
-    /** 实机键盘桥：虚拟屏要键盘但系统没弹时，用主屏隐形编辑区申请真机输入法。 */
+    /** 实机键盘桥：灵屏要键盘但系统没弹时，用主屏隐形编辑区申请真机输入法。 */
     private var imeBridgeOn = false
     private var imeSinkView: View? = null
     /** 系统 inset 真实报告的“键盘在屏”状态：收起过一次之后 showSoftInput 的返回值不可信。 */
@@ -155,7 +155,7 @@ internal object VirtualScreenFloatWindow {
     private var preCollapseX = 0
     private var preCollapseY = 0
 
-    /** 本次手势是否发生在“最小档”：是则单指只搬窗、点一下放大，不直通虚拟屏。 */
+    /** 本次手势是否发生在“最小档”：是则单指只搬窗、点一下放大，不直通灵屏。 */
     private var miniGesture = false
     private var miniMoved = false
     private var miniDownRawX = 0f
@@ -281,7 +281,7 @@ internal object VirtualScreenFloatWindow {
                             // 接管态要 100% 不透明；这里如果无脑写回 windowAlpha，
                             // 会话状态每变一次就把透明度打回 0.85（实测就是这个原因）。
                             rootView?.alpha = if (takeoverFull) 1f else windowAlpha
-                            // 虚拟屏横竖变了，画面控件必须同步拿到新尺寸：TextureView 的默认缓冲尺寸按它设置，
+                            // 灵屏横竖变了，画面控件必须同步拿到新尺寸：TextureView 的默认缓冲尺寸按它设置，
                             // 留着旧的竖屏尺寸就会把横屏合成结果塞进竖缓冲里，看着只有左边一条。
                             surfaceView?.setDisplayInfo(next)
                             surfaceView?.post { surfaceView?.setDisplayInfo(next) }
@@ -365,7 +365,7 @@ internal object VirtualScreenFloatWindow {
         root.clipToOutline = true
 
         val surface = VirtualScreenSurfaceView(ctx)
-        // 沿用旧小窗参数：窗口内容区比例已严格等于虚拟屏比例，画面等比完整显示即可，不裁切。
+        // 沿用旧小窗参数：窗口内容区比例已严格等于灵屏比例，画面等比完整显示即可，不裁切。
         surface.fitContent = true
         surface.touchEnabled = false
         surface.onFrameSize = { w, h -> onFrameSize(w, h) }
@@ -409,7 +409,7 @@ internal object VirtualScreenFloatWindow {
         // 旧的“⋮”帽子（全屏/常规大小/键盘/关闭）已彻底移除：
         // 入口改为顶部状态栏 + 长按白边框，避免再留下点不动的装饰。
 
-        // 实机键盘桥：隐形编辑区只负责向系统申请真机输入法，提交的文字再回灌虚拟屏。
+        // 实机键盘桥：隐形编辑区只负责向系统申请真机输入法，提交的文字再回灌灵屏。
         val imeSink = ImeSinkView(ctx, { text -> forwardText(text) }, { code -> forwardKey(code) }).apply {
             alpha = 0f
             isFocusable = true
@@ -444,7 +444,7 @@ internal object VirtualScreenFloatWindow {
         root.post { surface.setDisplayInfo(next) }
         rootView = root; surfaceView = surface; triggerBar = trigger; lp = p
         root.postDelayed(dotsHatSync, 200L)
-        // 画面里的手指交给虚拟屏里的应用；白边框才用来移动小窗。
+        // 画面里的手指交给灵屏里的应用；白边框才用来移动小窗。
         root.setOnTouchListener { _, ev -> onBorderTouch(ev) }
         startTouchPump()
         startFrameLoop()
@@ -452,7 +452,7 @@ internal object VirtualScreenFloatWindow {
         VscrDiag.line(
             "小窗显示 外框=" + p.width + "x" + p.height + "px 内容区=" + (p.width - border * 2) + "x" +
                 (p.height - border * 2) + "px 外框比例=" + String.format("%.4f", p.width.toFloat() / p.height) +
-                " 虚拟屏=" + next.width + "x" + next.height + " 投影比例=" + String.format("%.4f", contentAspect())
+                " 灵屏=" + next.width + "x" + next.height + " 投影比例=" + String.format("%.4f", contentAspect())
         )
     }
 
@@ -491,7 +491,7 @@ internal object VirtualScreenFloatWindow {
                         VirtualScreenHostSurfaces.currentHost() != null
                     if (wantDirect != view.direct) view.post { view.setDirectMode(wantDirect) }
                 }
-                // 直通模式不拉整帧，但每秒探一次尺寸：虚拟屏切成横屏后小窗才会跟着横过来。
+                // 直通模式不拉整帧，但每秒探一次尺寸：灵屏切成横屏后小窗才会跟着横过来。
                 if (view?.direct == true && !collapsed) {
                     val nowMs = android.os.SystemClock.elapsedRealtime()
                     if (nowMs - lastShapeProbeAt > 400L) {
@@ -584,13 +584,13 @@ internal object VirtualScreenFloatWindow {
     }
 
     /**
-     * 触控直通：画面里的单指就是真手指，点按、长按、拖动都由虚拟屏里的应用处理。
+     * 触控直通：画面里的单指就是真手指，点按、长按、拖动都由灵屏里的应用处理。
      * 两指仍旧缩放小窗；移动小窗改成拖白边框。
      */
     /**
      * 画面区触摸。
      *
-     * 小窗只做观察：单指拖动搬窗、点一下展开工具栏，绝不把手指灌进虚拟屏里的 App
+     * 小窗只做观察：单指拖动搬窗、点一下展开工具栏，绝不把手指灌进灵屏里的 App
      * （误触会真的点掉别人的按钮）。要亲手操作，点「接管控制」进全屏。
      * 双指仍然缩放窗口尺寸。
      */
@@ -598,7 +598,7 @@ internal object VirtualScreenFloatWindow {
      * 画面区触摸。
      *
      * - 普通态：只观察。单指拖动搬窗、双击切换档位、长按进全屏接管；绝不注入。
-     * - 接管态：全屏铺开，手指直通虚拟屏（只有这一种情况会注入）。
+     * - 接管态：全屏铺开，手指直通灵屏（只有这一种情况会注入）。
      * 双指缩放已移除：大小改用固定档位循环。
      */
     private fun onSurfaceTouch(ev: MotionEvent): Boolean {
@@ -608,7 +608,7 @@ internal object VirtualScreenFloatWindow {
         return onObserveTouch(ev)
     }
 
-    /** 接管态直通：只有这里会把手指写进虚拟屏。 */
+    /** 接管态直通：只有这里会把手指写进灵屏。 */
     private fun onTakeoverTouch(ev: MotionEvent): Boolean {
         val view = surfaceView ?: return false
         when (ev.actionMasked) {
@@ -806,7 +806,7 @@ internal object VirtualScreenFloatWindow {
     }
 
     /**
-     * 让窗口形状跟随虚拟屏内容方向，并让"内容区"比例严格等于内容比例（消除信箱黑边）。
+     * 让窗口形状跟随灵屏内容方向，并让"内容区"比例严格等于内容比例（消除信箱黑边）。
      * 拿到内容尺寸时总是按内容比例重算并返回 true；没有内容信息时返回 false，由调用方退回按手机横竖屏对调。
      */
     private fun alignToContent(): Boolean {
@@ -1048,7 +1048,7 @@ internal object VirtualScreenFloatWindow {
         return false
     }
 
-    /** 一次点击直通到虚拟屏之后，真机键盘常被系统顺手收掉，这里自动补回来。 */
+    /** 一次点击直通到灵屏之后，真机键盘常被系统顺手收掉，这里自动补回来。 */
     private fun ensureImeAfterTap() {
         if (collapsed || !imeBridgeOn) return
         val now = SystemClock.elapsedRealtime()
@@ -1058,7 +1058,7 @@ internal object VirtualScreenFloatWindow {
             if (collapsed || !imeBridgeOn) return@postDelayed
             if (imeVisible) return@postDelayed
             VscrDiag.line("键盘桥 补弹 可见=false")
-            // 补弹前仍要走一遍“虚拟屏是否真要键盘”的核对，否则用过一次键盘后，
+            // 补弹前仍要走一遍“灵屏是否真要键盘”的核对，否则用过一次键盘后，
             // 任何直通点击都会把真机正在用的键盘抢回来。
             offerImeBridge()
         }, 1200L)
@@ -1137,7 +1137,7 @@ internal object VirtualScreenFloatWindow {
     }
 
     /**
-     * 点过小窗内容之后核对：虚拟屏里的编辑框要是申请了输入法、系统却没弹，
+     * 点过小窗内容之后核对：灵屏里的编辑框要是申请了输入法、系统却没弹，
      * 就由主屏接手把真机键盘叫出来；最多重试 2 次，避免每点一下都误弹。
      */
     private fun offerImeBridge() {
@@ -1162,17 +1162,17 @@ internal object VirtualScreenFloatWindow {
                     if (shown || imeVisible) {
                         VscrDiag.line("键盘桥 跳过：系统键盘已在")
                     } else {
-                        // 虚拟屏那侧经常“以为自己申请到了键盘、实际没渲染出来”，
+                        // 灵屏那侧经常“以为自己申请到了键盘、实际没渲染出来”，
                         // 所以只要点过小窗内容，就由主屏把真机输入法叫出来。
                         VscrDiag.line("键盘桥 检查 申请=" + requested + " 已显示=" + shown)
-                        if (requested) openImeBridge() else VscrDiag.line("键盘桥 跳过：虚拟屏未请求键盘")
+                        if (requested) openImeBridge() else VscrDiag.line("键盘桥 跳过：灵屏未请求键盘")
                     }
                 }
             }
         }, 700L)
     }
 
-    /** 虚拟屏里已提交的文字：拼音候选阶段不会打到虚拟屏应用里。 */
+    /** 灵屏里已提交的文字：拼音候选阶段不会打到灵屏应用里。 */
     private fun forwardText(text: String) {
         if (text.isEmpty()) return
         val session = info?.sessionId ?: return
@@ -1249,7 +1249,7 @@ internal object VirtualScreenFloatWindow {
         }
     }
 
-    /** 顶栏 ×：结束这次虚拟屏会话并收起浮窗。 */
+    /** 顶栏 ×：结束这次灵屏会话并收起浮窗。 */
     private fun closeVirtualScreen() {
         val owner = VirtualScreenSession.state.value.display?.owner
         runCatching {
@@ -1517,7 +1517,7 @@ internal object VirtualScreenFloatWindow {
         runCatching { wm?.updateViewLayout(rootView, p) }
     }
 
-    /** 当前被投屏应用（虚拟屏里的前台应用）的图标。 */
+    /** 当前被投屏应用（灵屏里的前台应用）的图标。 */
     private fun focusedAppIcon(): android.graphics.drawable.Drawable? {
         val pkg = VirtualScreenSession.state.value.display?.focusedPackage ?: return null
         return runCatching { context?.packageManager?.getApplicationIcon(pkg) }.getOrNull()

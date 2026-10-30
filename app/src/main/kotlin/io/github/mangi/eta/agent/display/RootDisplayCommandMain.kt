@@ -31,10 +31,10 @@ internal object RootDisplayCommandMain {
     private const val MARKER = "ETA_DISPLAY_RESULT:"
 
     /**
-     * 虚拟屏所在 DisplayGroup 的唤醒锁参数。
+     * 灵屏所在 DisplayGroup 的唤醒锁参数。
      *
      * `PowerManager.newWakeLock(int, String, int)` 是 @hide 三参重载，按 displayId 把锁绑到该显示
-     * 所属的 DisplayGroup（虚拟屏带 OWN_DISPLAY_GROUP，独占一组，不会点亮手机屏）。
+     * 所属的 DisplayGroup（灵屏带 OWN_DISPLAY_GROUP，独占一组，不会点亮手机屏）。
      * 实测（ColorOS / Android 16）：只给 FULL_WAKE_LOCK 时对已经睡下的组无效——
      * display state 仍 OFF、窗口 focused=false、节点树为空；必须并上 ACQUIRE_CAUSES_WAKEUP
      * 才能真正把组唤醒。锁带超时，靠后台线程每 20s 续期一次。
@@ -133,7 +133,7 @@ internal object RootDisplayCommandMain {
 
     @JvmStatic
     fun main(args: Array<String>) {
-        // App 侧会收集 stderr：非受控异常必须留下类型与堆栈，否则只看到"虚拟屏不可用"。
+        // App 侧会收集 stderr：非受控异常必须留下类型与堆栈，否则只看到"灵屏不可用"。
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             System.err.println("ETA_HELPER_UNCAUGHT " + thread.name)
             error.printStackTrace()
@@ -144,7 +144,7 @@ internal object RootDisplayCommandMain {
         val readerRef = java.util.concurrent.atomic.AtomicReference<ImageReader?>(null)
         var frames: HandlerThread? = null
         var wakeLock: PowerManager.WakeLock? = null
-        /** 虚拟屏所在显示组的唤醒锁；拿不到时为 null（退回仅探活，不影响其它逻辑）。 */
+        /** 灵屏所在显示组的唤醒锁；拿不到时为 null（退回仅探活，不影响其它逻辑）。 */
         var displayWakeLock: PowerManager.WakeLock? = null
         try {
             require(Process.myUid() == 0) { "ROOT_REQUIRED" }
@@ -162,7 +162,7 @@ internal object RootDisplayCommandMain {
             var width = integer(setup, "width", 320, VirtualScreenProfile.MAX_WIDTH)
             var height = integer(setup, "height", 480, VirtualScreenProfile.MAX_HEIGHT)
             val dpi = integer(setup, "density", 120, VirtualScreenProfile.MAX_DENSITY)
-            // 虚拟屏刷新率跟随用户选的出帧档位（60/90/120/144/165），越高越跟手。
+            // 灵屏刷新率跟随用户选的出帧档位（60/90/120/144/165），越高越跟手。
             val refreshRate = setup.optInt("refreshRate", 165).coerceIn(60, 165).toFloat()
             val allowOff = setup.optBoolean("allowScreenOff", false)
             val idleTimer = VirtualScreenIdleTimer(setup.optInt("idleTimeoutMinutes", 20),
@@ -211,7 +211,7 @@ internal object RootDisplayCommandMain {
                             ?: return@use
                     }
                     // 先按帧缓冲实际长度拷进受保护的堆数组，再写位图：直接 copyPixelsFromBuffer
-                    // 在缓冲比位图小时会在 native memmove 越界读并 SIGSEGV，整块虚拟屏服务一起挂掉。
+                    // 在缓冲比位图小时会在 native memmove 越界读并 SIGSEGV，整块灵屏服务一起挂掉。
                     try {
                         val required = padded.rowBytes * padded.height
                         val bytes = frameStore.copyBuffer(required) ?: return@use
@@ -236,7 +236,7 @@ internal object RootDisplayCommandMain {
                     }
                 }
                 } catch (_: Throwable) {
-                    // 丢帧即可：帧回调线程抛异常会直接杀死 root helper 进程（表现为打开虚拟屏闪退）。
+                    // 丢帧即可：帧回调线程抛异常会直接杀死 root helper 进程（表现为打开灵屏闪退）。
                 }
             }
             val surfaceToken = setup.optString("surfaceToken")
@@ -270,13 +270,13 @@ internal object RootDisplayCommandMain {
             val id = display.display.displayId
             require(id > 0) { "INVALID_DISPLAY" }
             activeDisplayId = id
-            // 打开虚拟屏先拉起本应用自己的虚拟屏桌面（应用导航页），按 Home/应用键也回这儿。
+            // 打开灵屏先拉起本应用自己的灵屏桌面（应用导航页），按 Home/应用键也回这儿。
             selfPackage = setup.optString("selfPackage")
             runCatching { startVirtualHome(id, setup.optString("sessionId"), "HOME") }
                 .onFailure { runCatching { startSystemHome(id) } }
             val localIme = configureLocalIme(id)
             val textInput = VirtualScreenRootTextInput(id)
-            // 横屏场景：虚拟屏自身不能旋转，按顶层应用请求的方向把 display 换成横屏尺寸（画面不旋转、
+            // 横屏场景：灵屏自身不能旋转，按顶层应用请求的方向把 display 换成横屏尺寸（画面不旋转、
             // 坐标系仍是 0°），否则系统会把横屏应用信箱化成长条，小窗里看起来"横不过来"。
             var shapeProbeAt = 0L
             fun applyShape(landscape: Boolean) {
@@ -290,7 +290,7 @@ internal object RootDisplayCommandMain {
                     try {
                         val previous = reader
                         runCatching { previous?.setOnImageAvailableListener(null, null) }
-                        // A′ 直通：宿主面不变。改虚拟屏尺寸会让直通面重新分配缓冲，实测会崩 native，
+                        // A′ 直通：宿主面不变。改灵屏尺寸会让直通面重新分配缓冲，实测会崩 native，
                         // 因此直通下建屏尺寸保持不变（横屏应用按信箱化显示）。
                         if (hostSurface != null) {
                             // 直通下也要能横过来：先把直通面摘下来，改完尺寸再挂回去，
@@ -348,7 +348,7 @@ internal object RootDisplayCommandMain {
             if (allowOff) wakeLock =
                 power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Eta:virtual-task")
                     .apply { acquire() }
-            // 虚拟屏整组的唤醒锁：三参 newWakeLock 按 displayId 绑定该显示所属 DisplayGroup。
+            // 灵屏整组的唤醒锁：三参 newWakeLock 按 displayId 绑定该显示所属 DisplayGroup。
             // 只给 FULL_WAKE_LOCK 对已经睡下的组无效，必须并上 ACQUIRE_CAUSES_WAKEUP。
             displayWakeLock = runCatching {
                 val method = PowerManager::class.java.getMethod(
@@ -377,7 +377,7 @@ internal object RootDisplayCommandMain {
                         hlog("display gone id=" + id + "，停止续期")
                         break
                     }
-                    // allowScreenOff=false 时跟随手机屏：手机熄屏或锁屏就让虚拟屏睡回去。
+                    // allowScreenOff=false 时跟随手机屏：手机熄屏或锁屏就让灵屏睡回去。
                     if (!allowOff && (!power.isInteractive || keyguard.isDeviceLocked)) continue
                     runCatching { lock.acquire(DISPLAY_WAKE_HOLD_MS) }
                 }
@@ -438,7 +438,7 @@ internal object RootDisplayCommandMain {
                                 if (known != null) put("landscape", known) else put("landscapeKnown", false)
                             }
 
-                        // 真机键盘状态：虚拟屏里的编辑框有没有申请输入法、系统到底弹没弹。
+                        // 真机键盘状态：灵屏里的编辑框有没有申请输入法、系统到底弹没弹。
                         "ime" -> {
                             val dump = runCatching {
                                 command(listOf("/system/bin/dumpsys", "input_method"), 400_000)
@@ -594,7 +594,7 @@ internal object RootDisplayCommandMain {
                                 "ENTER" -> 66
                                 "DEL" -> 67
                                 "HOME", "MENU", "APPS" -> {
-                                    // 虚拟屏里按 Home/应用键直接回系统桌面：不再用 Eta 自己的导航页接管这个 display。
+                                    // 灵屏里按 Home/应用键直接回系统桌面：不再用 Eta 自己的导航页接管这个 display。
                                     val sid = setup.optString("sessionId")
                                     require(Regex("[a-fA-F0-9-]{36}").matches(sid)) { "DISPLAY_OWNER_REQUIRED" }
                                     startVirtualHome(id, sid, button)
@@ -708,7 +708,7 @@ internal object RootDisplayCommandMain {
         }
     }
 
-    /** 在虚拟屏上拉起本应用自己的虚拟屏桌面（应用导航页）。 */
+    /** 在灵屏上拉起本应用自己的灵屏桌面（应用导航页）。 */
     private fun startVirtualHome(displayId: Int, sessionId: String, mode: String): String {
         val home = VirtualScreenHomeActivity::class.java.name
         val output = command(listOf("/system/bin/am", "start", "--display", displayId.toString(),
@@ -725,7 +725,7 @@ internal object RootDisplayCommandMain {
         error("DISPLAY_LAUNCH_MISMATCH")
     }
 
-    /** 在虚拟屏上拉起系统桌面，返回桌面包名；解析不出来时返回空串。 */
+    /** 在灵屏上拉起系统桌面，返回桌面包名；解析不出来时返回空串。 */
     private fun startSystemHome(displayId: Int): String {
         val output = command(listOf("/system/bin/am", "start", "--display", displayId.toString(),
             "-f", "0x10820000", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"))
@@ -750,8 +750,8 @@ internal object RootDisplayCommandMain {
         val service = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null)
         val type = Class.forName("android.view.IWindowManager")
         // IWindowManager 的取值：LOCAL=0，FALLBACK_DEFAULT_DISPLAY=1，HIDE=2。
-        // 要“虚拟屏里点输入框、真机屏幕弹键盘”，只能用 1（IME 交给默认屏显示）；
-        // 之前用的 2 是 HIDE，等于把虚拟屏的输入法整个关掉，所以点了输入框什么都不弹。
+        // 要“灵屏里点输入框、真机屏幕弹键盘”，只能用 1（IME 交给默认屏显示）；
+        // 之前用的 2 是 HIDE，等于把灵屏的输入法整个关掉，所以点了输入框什么都不弹。
         val set = type.getMethod("setDisplayImePolicy", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
         val get = type.getMethod("getDisplayImePolicy", Int::class.javaPrimitiveType)
         set.invoke(service, displayId, 1)
@@ -791,7 +791,7 @@ internal object RootDisplayCommandMain {
     }
 
     /**
-     * 关闭虚拟屏前把里面的任务一并结束，否则应用只是被“藏起来”，还会在后台继续跑。
+     * 关闭灵屏前把里面的任务一并结束，否则应用只是被“藏起来”，还会在后台继续跑。
      * 先 removeTask（等于从最近任务划掉，销毁 Activity、停掉播放），
      * 仍残留的包再退回 force-stop；Eta 自己的任务永远不动。
      */
@@ -901,7 +901,7 @@ internal object RootDisplayCommandMain {
     }
 
     private fun failure(code: String) = JSONObject().put("ok", false).put("code", code)
-        .put("message", "虚拟屏操作未执行；不会回退到主屏")
+        .put("message", "灵屏操作未执行；不会回退到主屏")
 
     private fun reply(value: JSONObject) {
         System.out.println(MARKER + value.toString()); System.out.flush()

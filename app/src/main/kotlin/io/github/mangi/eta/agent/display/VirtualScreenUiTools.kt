@@ -37,7 +37,7 @@ internal class VirtualScreenUiTools(
         if (name in VirtualScreenRoutingPolicy.unavailableTools) {
             failure(
                 "VIRTUAL_ACTION_UNSUPPORTED",
-                "此 UI 工具不能在虚拟屏执行；请使用虚拟屏内的应用，不会操作主屏。"
+                "此 UI 工具不能在灵屏执行；请使用灵屏内的应用，不会操作主屏。"
             )
         } else when (name) {
             "launch_app" -> launchApp(args)
@@ -58,7 +58,7 @@ internal class VirtualScreenUiTools(
         failure(
             if (error is IllegalArgumentException || error is IllegalStateException) error.message
                 ?: "VIRTUAL_UI_FAILED" else "VIRTUAL_UI_FAILED",
-            "虚拟屏操作未完成；请重新观察，不会回退到主屏。"
+            "灵屏操作未完成；请重新观察，不会回退到主屏。"
         )
     }
 
@@ -126,7 +126,7 @@ internal class VirtualScreenUiTools(
             )
         }
 
-        else -> failure("VIRTUAL_ACTION_UNSUPPORTED", "此 UI 操作不支持虚拟屏")
+        else -> failure("VIRTUAL_ACTION_UNSUPPORTED", "此 UI 操作不支持灵屏")
     }
 
     private fun observe(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
@@ -164,7 +164,7 @@ internal class VirtualScreenUiTools(
                 "execution_scope",
                 JSONObject().put("type", "virtual_display").put("display_id", info.displayId)
                     .put("main_screen_locked", context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true)
-                    .put("note", "观察和输入仅针对这个虚拟屏。主屏的锁屏、指纹窗口（如 UDfinger）和全局 mCurrentFocus 不代表此虚拟屏被遮挡；依据本次观察和此虚拟屏工具的实际结果判断。")
+                    .put("note", "观察和输入仅针对这个灵屏。主屏的锁屏、指纹窗口（如 UDfinger）和全局 mCurrentFocus 不代表此灵屏被遮挡；依据本次观察和此灵屏工具的实际结果判断。")
             )
             .put("observation_id", nodes?.id ?: JSONObject.NULL)
             .put("observation_source", if (nodes != null) "accessibility" else JSONObject.NULL)
@@ -182,14 +182,14 @@ internal class VirtualScreenUiTools(
                             "当前应用窗口多次返回空 UI 树，暂时停用节点工具；后续观察仍会探测，节点恢复或切换应用窗口后解除限制。使用截图与坐标工具；焦点文本可使用 Root 输入。"
                         else if (nodes == null)
                             "当前窗口尚无有效 UI 树，可能仍在加载；后续观察会重新探测。"
-                        else "仅查询此虚拟屏窗口，不读取主屏窗口。")
+                        else "仅查询此灵屏窗口，不读取主屏窗口。")
             )
             .put(
                 "coordinate_contract",
                 JSONObject().put("coordinate_space_required", true)
                     .put("supported_coordinate_spaces", JSONArray(listOf("normalized", "screen", "screenshot")))
                     .put("screen", screen)
-                    .put("note", "screen 与截图均为虚拟屏原始像素；所有 GUI 工具均针对该 display。")
+                    .put("note", "screen 与截图均为灵屏原始像素；所有 GUI 工具均针对该 display。")
             )
         val captureScreenshot = options.includeScreenshot ||
             (nodes == null && options.includeUiTree && !args.has("include_screenshot"))
@@ -526,7 +526,7 @@ internal class VirtualScreenUiTools(
             if (!json.optBoolean("ok") || json.optBoolean("matched")) return result
             waitCancellable(200)
         } while (SystemClock.elapsedRealtime() < deadline)
-        return failure("TIMEOUT", "等待虚拟屏目标超时")
+        return failure("TIMEOUT", "等待灵屏目标超时")
     }
 
     private fun waitCancellable(duration: Int) {

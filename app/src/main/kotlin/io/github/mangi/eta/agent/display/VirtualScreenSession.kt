@@ -23,7 +23,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 
 /**
- * 虚拟屏会话表：**每个会话（owner）一块屏**，可以多开。
+ * 灵屏会话表：**每个会话（owner）一块屏**，可以多开。
  *
  * - [sessions] 以 owner（会话 id）为键；同一个会话跨 run 复用同一块屏；
  * - 并发上限 [MAX_SESSIONS]，超限时先回收别的会话里空闲（无 run 租约）的屏；
@@ -49,7 +49,7 @@ internal object VirtualScreenSession {
     @Volatile
     private var focusedOwner: String? = null
 
-    /** 同时最多几块虚拟屏：再多内存与合成压力都顶不住。 */
+    /** 同时最多几块灵屏：再多内存与合成压力都顶不住。 */
     private const val MAX_SESSIONS = 1
 
     private val gestureIds = AtomicLong()
@@ -59,7 +59,7 @@ internal object VirtualScreenSession {
 
     private val operationIds = AtomicLong()
 
-    /** 会被写入虚拟屏的输入类动作；接管态下一律要过注入门。 */
+    /** 会被写入灵屏的输入类动作；接管态下一律要过注入门。 */
     private val AGENT_INPUT_ACTIONS = setOf("tap", "swipe", "touch", "long_press", "text", "key", "back")
 
     private val cleanup = Executors.newSingleThreadExecutor { r ->
@@ -450,7 +450,7 @@ internal object VirtualScreenSession {
                 )
                     .put(
                         "message",
-                        "虚拟屏操作未执行；不会回退到主屏。请确认 Root、虚拟屏开关和设备接口。"
+                        "灵屏操作未执行；不会回退到主屏。请确认 Root、灵屏开关和设备接口。"
                     ).toString()
             )
         }
@@ -471,7 +471,7 @@ internal object VirtualScreenSession {
     var lastLandscape: Boolean? = null
         private set
 
-    /** 只探尺寸与前台包，不拉整帧：直通模式下小窗靠它跟上虚拟屏的横竖屏切换。 */
+    /** 只探尺寸与前台包，不拉整帧：直通模式下小窗靠它跟上灵屏的横竖屏切换。 */
     fun refreshForViewer(context: Context, owner: String? = null): AgentModelClient.ToolResult = synchronized(lock) {
         val target = chooseSession(owner) ?: return@synchronized failure("NO_VIRTUAL_SCREEN")
         execute(context, target.owner, JSONObject().put("action", "probe"))

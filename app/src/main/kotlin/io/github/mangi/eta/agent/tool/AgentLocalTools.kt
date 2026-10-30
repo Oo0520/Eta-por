@@ -201,7 +201,7 @@ internal class AgentLocalTools(
         if (!permitted() || closed.get() || fallbackDeclined != null) return@synchronized result
         fun restartApp(): AgentModelClient.ToolResult {
             if (!permitted() || closed.get() || isRunCancelled() || !deviceDirectToolsEnabled()) {
-                return textResult(errorResult("DISPLAY_CANCELLED", "任务或虚拟屏许可已失效，未停止应用"))
+                return textResult(errorResult("DISPLAY_CANCELLED", "任务或灵屏许可已失效，未停止应用"))
             }
             val restart = JSONObject().put("action", "launch").put("component", response.optString("component"))
                 .put("uri", response.optString("uri")).put("restartApp", true)
@@ -257,22 +257,22 @@ internal class AgentLocalTools(
                     return@runCatching textResult(errorResult("MAIN_SCREEN_FALLBACK_DISABLED", "本次主屏回退许可已关闭，后续界面操作停止"))
                 }
                 if (!primaryObserved.get() && toolCall.name !in VirtualScreenRoutingPolicy.allowedBeforePrimaryObservation) {
-                    return@runCatching textResult(errorResult("MAIN_SCREEN_OBSERVATION_REQUIRED", "切换屏幕后必须先调用 observe_screen；旧虚拟屏坐标和节点不能用于主屏"))
+                    return@runCatching textResult(errorResult("MAIN_SCREEN_OBSERVATION_REQUIRED", "切换屏幕后必须先调用 observe_screen；旧灵屏坐标和节点不能用于主屏"))
                 }
             }
             if (virtualUi && virtualSettings?.virtualScreenEnabled != true) {
-                return@runCatching textResult(errorResult("VIRTUAL_SCREEN_DISABLED", "本次运行已使用虚拟屏；权限关闭后不切换主屏"))
+                return@runCatching textResult(errorResult("VIRTUAL_SCREEN_DISABLED", "本次运行已使用灵屏；权限关闭后不切换主屏"))
             }
             if (virtualUi && !rootAvailable()) {
                 deviceToolPermissionError("virtual_screen")?.let { return@runCatching it }
-                return@runCatching handleVirtualResult(toolCall.name, textResult(errorResult("ROOT_REQUIRED", "启用虚拟屏后 UI 操作需要 Root")))
+                return@runCatching handleVirtualResult(toolCall.name, textResult(errorResult("ROOT_REQUIRED", "启用灵屏后 UI 操作需要 Root")))
             }
             if (AgentToolRequirements.find(toolCall.name) != null &&
                 AgentToolRequirements.rootDenied(toolCall.name, args, rootAvailable())
             ) {
                 if (toolCall.name == "virtual_screen" && args.optString("action") != "close") {
                     deviceToolPermissionError("virtual_screen")?.let { return@runCatching it }
-                    return@runCatching handleVirtualResult(toolCall.name, textResult(errorResult("ROOT_REQUIRED", "虚拟屏需要 Root 授权")))
+                    return@runCatching handleVirtualResult(toolCall.name, textResult(errorResult("ROOT_REQUIRED", "灵屏需要 Root 授权")))
                 }
                 return@runCatching textResult(errorResult("ROOT_REQUIRED", "此操作需要 Root 授权，本次未执行"))
             }
@@ -296,7 +296,7 @@ internal class AgentLocalTools(
             }
             if (virtualUi) {
                 if (!VirtualScreenSession.prepareForRun(virtualScreenOwner, browserRunId)) {
-                    return@runCatching textResult(errorResult("DISPLAY_BUSY", "虚拟屏正被其他任务使用"))
+                    return@runCatching textResult(errorResult("DISPLAY_BUSY", "灵屏正被其他任务使用"))
                 }
                 val result = virtualUiExecutor?.invoke(toolCall.name, args) ?: virtualUiTools.execute(toolCall.name, args)
                 VirtualScreenSession.recordOperation(virtualScreenOwner, browserRunId, toolCall.name, JSONObject(result.content).optBoolean("ok"))
@@ -304,7 +304,7 @@ internal class AgentLocalTools(
             }
             when (toolCall.name) {
                 "virtual_screen" -> if (virtualRouting.usesPrimary) textResult(errorResult("MAIN_SCREEN_ROUTE_ACTIVE", "本次任务已获准改用主屏，请使用普通 UI 工具并重新观察"))
-                    else if (!VirtualScreenSession.prepareForRun(virtualScreenOwner, browserRunId)) textResult(errorResult("DISPLAY_BUSY", "虚拟屏正被其他任务使用"))
+                    else if (!VirtualScreenSession.prepareForRun(virtualScreenOwner, browserRunId)) textResult(errorResult("DISPLAY_BUSY", "灵屏正被其他任务使用"))
                     else VirtualScreenSession.execute(context, virtualScreenOwner, args, closed::get, browserRunId).let { result ->
                         if (args.optString("action") == "close") result else handleVirtualResult(toolCall.name, result)
                     }

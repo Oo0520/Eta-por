@@ -198,7 +198,7 @@ internal class AgentRuntimeRunExecutor(
                         (toolName in io.github.mangi.eta.agent.automation.AgentTaskTools.names || toolName in setOf("terminal", "run_command") ||
                             (!session.mainScreenFallbackApproved.get() && (AgentToolRequirements.requiresAccessibility(toolName) ||
                                 AgentOverlayVisibilityPolicy.isForegroundOperationTool(toolName) || toolName == "browser_use")))) {
-                        ToolExecutionDecision.Reject("AUTOMATION_ACTION_UNAVAILABLE", "自动任务暂不支持创建其他任务或操作主屏；需要独立虚拟屏执行环境")
+                        ToolExecutionDecision.Reject("AUTOMATION_ACTION_UNAVAILABLE", "自动任务暂不支持创建其他任务或操作主屏；需要独立灵屏执行环境")
                     } else {
                         val requiresAccessibility =
                             AgentToolRequirements.requiresAccessibility(toolName)
@@ -238,7 +238,7 @@ internal class AgentRuntimeRunExecutor(
                 pendingSkillConflict = pendingSkillConflict,
                 skillAuthoringService = SkillAuthoringService(skillIndexService, skillPackageInstaller),
                 onMainScreenFallback = { session.mainScreenFallbackApproved.set(true) },
-                onVirtualTaskCancelled = { session.cancel("用户取消虚拟屏任务") },
+                onVirtualTaskCancelled = { session.cancel("用户取消灵屏任务") },
             )
             val routingExecutor = RoutingToolExecutor(
                 local = executor,

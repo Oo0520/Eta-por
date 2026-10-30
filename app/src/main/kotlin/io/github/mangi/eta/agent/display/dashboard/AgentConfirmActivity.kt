@@ -201,7 +201,7 @@ internal class AgentConfirmActivity : ComponentActivity() {
         const val EXTRA_PREVIEW_PATH = "confirm_preview"
         const val EXTRA_CONVERSATION = "confirm_conversation"
 
-        /** 从当前虚拟屏真帧裁中部一块，作为确认页的「证据图」。 */
+        /** 从当前灵屏真帧裁中部一块，作为确认页的「证据图」。 */
         fun capturePreview(context: Context, token: String): String = runCatching {
             val result = io.github.mangi.eta.agent.display.VirtualScreenSession.observeForViewer(context)
             val reference = result.images.firstOrNull()?.reference ?: return ""

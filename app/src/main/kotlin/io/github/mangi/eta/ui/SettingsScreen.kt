@@ -1080,7 +1080,7 @@ private val SETTINGS_SEARCH_INDEX = listOf(
     SettingsSearchEntry("section_agent", "llm 提供商 模型 服务商 api 密钥 深度思考"),
     SettingsSearchEntry("section_context_extensions", "上下文 扩展 自动压缩 记忆"),
     SettingsSearchEntry("section_tools", "工具 工具档 精简 五档 mcp"),
-    SettingsSearchEntry("system_enhancements", "能力增强 语音 朗读 语速 音调 tts 虚拟屏 小窗 悬浮窗 折叠 胶囊 常驻"),
+    SettingsSearchEntry("system_enhancements", "能力增强 语音 朗读 语速 音调 tts 灵屏 小窗 悬浮窗 折叠 胶囊 常驻"),
     SettingsSearchEntry("section_assistant_takeover", "系统助手接管 接管 助手"),
     SettingsSearchEntry("section_oem_assistant_compatibility", "厂商助手兼容 小布 小爱 vivo 蓝心 兼容"),
     SettingsSearchEntry("section_general", "通用 外观 主题 语言"),

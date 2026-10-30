@@ -90,9 +90,9 @@ internal object BehaviorAudit {
             "自动任务失败时才会出现：task.retry=已排重试，task.giveup=不重试（动过手／非网络类）。",
         ),
         Probe(
-            "虚拟屏路由",
+            "灵屏路由",
             setOf("vscr"),
-            "用到虚拟屏操作时出现。",
+            "用到灵屏操作时出现。",
         ),
         Probe(
             "无障碍动作",

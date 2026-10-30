@@ -69,7 +69,7 @@ internal object RunProgressNotifier {
     /** 会话 key → 卡片。LinkedHashMap 保持启动顺序，撤卡时不动别人。 */
     private val cards = LinkedHashMap<String, RunCard>()
 
-    /** 虚拟屏接管的那几条会话：只有它们让位给仪表盘，其余照常发卡。 */
+    /** 灵屏接管的那几条会话：只有它们让位给仪表盘，其余照常发卡。 */
     private val delegatedRuns = LinkedHashSet<String>()
 
     private var active = false
@@ -111,7 +111,7 @@ internal object RunProgressNotifier {
         EtaTrace.log("run.progress.start", "开始汇报运行进度（多卡）")
     }
 
-    /** 虚拟屏会话在跑时，只让这一张卡让位给仪表盘，其余会话不受影响。 */
+    /** 灵屏会话在跑时，只让这一张卡让位给仪表盘，其余会话不受影响。 */
     fun delegateToVirtualScreen(runId: String, value: Boolean) {
         if (!isMainThread()) {
             handler.post { delegateToVirtualScreen(runId, value) }

@@ -164,7 +164,7 @@ internal object SettingsDataStore {
 
     suspend fun settings(): Settings = settingsFlow().first()
 
-    /** 虚拟屏应用菜单的收藏（按包名保存，跨会话保留）。 */
+    /** 灵屏应用菜单的收藏（按包名保存，跨会话保留）。 */
     suspend fun favoriteApps(): Set<String> {
         ensureInitialized()
         return dataStore.data.first()[VIRTUAL_SCREEN_FAVORITE_APPS] ?: emptySet()
