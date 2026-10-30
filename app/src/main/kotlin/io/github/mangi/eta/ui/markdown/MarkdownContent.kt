@@ -1,6 +1,7 @@
 package io.github.mangi.eta.ui.markdown
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.draw.drawBehind
@@ -55,7 +57,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -208,12 +212,42 @@ private fun MarkdownText(
     }
     // 字色偏安静：用 onSurfaceVariantSummary，比正文淡一点，但仍然清晰。
     val quietColor = MiuixTheme.colorScheme.onSurfaceVariantSummary
-    val renderText = remember(text, codeRanges, quietColor) {
+    val linkColor = MiuixTheme.colorScheme.primary
+    // 可点击的本地路径：只认行内代码里以 / 开头、且文件真实存在的写法。
+    val pathRanges = remember(text, codeRanges) {
+        codeRanges.mapNotNull { range ->
+            val raw = text.text.substring(range.first, range.last + 1)
+            MarkdownPathLinks.resolve(raw)?.let { range to it }
+        }
+    }
+    val context = LocalContext.current
+    val renderText = remember(text, codeRanges, quietColor, linkColor, pathRanges) {
         if (codeRanges.isEmpty()) text else AnnotatedString.Builder(text).apply {
             codeRanges.forEach { addStyle(SpanStyle(color = quietColor), it.first, it.last + 1) }
+            // 能打开的文件路径：主色 + 下划线，和普通行内代码区分开。
+            pathRanges.forEach { (range, _) ->
+                addStyle(
+                    SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
+                    range.first,
+                    range.last + 1,
+                )
+            }
         }.toAnnotatedString()
     }
     var textLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    val pathTapModifier = if (pathRanges.isEmpty()) {
+        Modifier
+    } else {
+        Modifier.pointerInput(pathRanges) {
+            detectTapGestures { position ->
+                val layout = textLayout ?: return@detectTapGestures
+                val offset = layout.getOffsetForPosition(position)
+                pathRanges.firstOrNull { (range, _) -> offset in range }?.let { (_, path) ->
+                    MarkdownPathLinks.open(context, path)
+                }
+            }
+        }
+    }
     // 用 onSurface 的一档半透明，比 codeBackground 更实，浅色主题下才看得出边界。
     val pillColor = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.10f)
     val pillModifier = modifier.drawBehind {
@@ -259,7 +293,7 @@ private fun MarkdownText(
             text = renderText,
             style = style,
             softWrap = softWrap,
-            modifier = pillModifier,
+            modifier = pillModifier.then(pathTapModifier),
             onTextLayout = { layout -> textLayout = layout },
         )
         return
@@ -271,7 +305,7 @@ private fun MarkdownText(
         text = renderText,
         style = animatedStyle,
         softWrap = softWrap,
-        modifier = pillModifier.smoothTextReveal(revealState),
+        modifier = pillModifier.smoothTextReveal(revealState).then(pathTapModifier),
         onTextLayout = { layout ->
             textLayout = layout
             revealState.onTextLayout(renderText.text, layout)
