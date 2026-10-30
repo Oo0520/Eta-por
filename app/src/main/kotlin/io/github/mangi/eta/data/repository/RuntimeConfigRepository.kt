@@ -53,10 +53,9 @@ internal object RuntimeConfigRepository {
         overrideModelId: String? = null,
         overrideEffortWire: String? = null,
     ): AgentModelClient.ModelConfig {
-        val settings = SettingsDataStore.subagentSettings()
-        // 主 Agent 为本次子智能体临时指定的模型优先于全局设置（需在设置里放行）。
+        // 子智能体模型只有一个来源：主 Agent 本次指定的（需已授权）。
+        // 未指定就跟随主模型，不再读取历史上的「子智能体模型」单选，避免两套设置打架。
         val secondaryModelId = overrideModelId?.takeIf { it.isNotBlank() }
-            ?: settings.modelId?.takeIf { it.isNotBlank() }
         val resolvedSecondary = if (secondaryModelId != null) {
             ProviderRepository.ensureBuiltInsMerged()
             ProviderRepository.allProviders().enabledModel(secondaryModelId)
@@ -67,7 +66,6 @@ internal object RuntimeConfigRepository {
             buildRuntimeConfig(provider, model)
         } ?: primaryConfig
         val explicitEffort = overrideEffortWire?.let { ReasoningEffort.fromWireValue(it) }
-            ?: settings.resolvedReasoningEffort
         val effort = when {
             explicitEffort != null -> {
                 val capabilities = base.reasoningCapabilities
