@@ -23,6 +23,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.TouchApp
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Code
@@ -174,7 +178,7 @@ internal fun SubagentSettingsScreen(
     var editorError by remember { mutableStateOf<String?>(null) }
 
     MiuixScaffoldPage(
-        title = "Subagent",
+        title = "子智能体",
         onBack = onBack,
         actions = {
             IconButton(
@@ -192,7 +196,7 @@ internal fun SubagentSettingsScreen(
         overlay = {
             OverlayBottomSheet(
                 show = showModelSheet,
-                title = "Subagent 模型",
+                title = "子智能体模型",
                 onDismissRequest = { showModelSheet = false },
                 insideMargin = DpSize(0.dp, 0.dp),
             ) {
@@ -358,7 +362,7 @@ internal fun SubagentSettingsScreen(
         item(key = "config_group") {
             EtaPreferenceGroup {
                 EtaSwitchPreference(
-                    title = "启用 Subagent",
+                    title = "启用子智能体",
                     checked = subagentEnabled,
                     enabled = agentPrefs != null,
                     startAction = {
@@ -380,7 +384,7 @@ internal fun SubagentSettingsScreen(
                 )
                 EtaPreferenceDivider()
                 EtaArrowPreference(
-                    title = "Subagent 模型",
+                    title = "子智能体模型",
                     summary = secondarySummary,
                     enabled = subagentEnabled,
                     startAction = {
@@ -414,11 +418,73 @@ internal fun SubagentSettingsScreen(
                         },
                     )
                 }
+
+                EtaPreferenceDivider()
+                EtaOverlayDropdownPreference(
+                    title = "最大递归深度",
+                    items = listOf("禁用子智能体", "仅主 Agent 创建"),
+                    selectedIndex = if (subagentSettings.maxDepth <= 0) 0 else 1,
+                    enabled = subagentEnabled,
+                    startAction = {
+                        EtaPreferenceIcon(
+                            icon = Icons.Rounded.AccountTree,
+                            tint = EtaPreferenceColors.Green,
+                        )
+                    },
+                    onSelectedIndexChange = { index ->
+                        scope.launch {
+                            RuntimeConfigRepository.setSubagentSettings(
+                                subagentSettings.copy(maxDepth = if (index == 0) 0 else 1),
+                            )
+                        }
+                    },
+                )
+                EtaPreferenceDivider()
+                EtaOverlayDropdownPreference(
+                    title = "并行上限（当前 ${subagentSettings.maxParallel}）",
+                    items = PARALLEL_OPTIONS.map { it.toString() },
+                    selectedIndex = PARALLEL_OPTIONS.indexOf(subagentSettings.maxParallel)
+                        .takeIf { it >= 0 } ?: PARALLEL_OPTIONS.indexOf(8),
+                    enabled = subagentEnabled,
+                    startAction = {
+                        EtaPreferenceIcon(
+                            icon = Icons.Rounded.Groups,
+                            tint = EtaPreferenceColors.Blue,
+                        )
+                    },
+                    onSelectedIndexChange = { index ->
+                        val chosen = PARALLEL_OPTIONS.getOrNull(index) ?: 8
+                        scope.launch {
+                            RuntimeConfigRepository.setSubagentSettings(
+                                subagentSettings.copy(maxParallel = chosen),
+                            )
+                        }
+                    },
+                )
+                EtaPreferenceDivider()
+                EtaSwitchPreference(
+                    title = "允许子智能体自选模型",
+                    checked = subagentSettings.allowModelSelection,
+                    enabled = subagentEnabled,
+                    startAction = {
+                        EtaPreferenceIcon(
+                            icon = Icons.Rounded.Tune,
+                            tint = EtaPreferenceColors.Orange,
+                        )
+                    },
+                    onCheckedChange = { checked ->
+                        scope.launch {
+                            RuntimeConfigRepository.setSubagentSettings(
+                                subagentSettings.copy(allowModelSelection = checked),
+                            )
+                        }
+                    },
+                )
             }
         }
 
         item(key = "builtin_title") {
-            EtaPreferenceGroupTitle("Built-in Subagents")
+            EtaPreferenceGroupTitle("内置子智能体")
         }
         item(key = "builtin_group") {
             EtaPreferenceGroup {
@@ -440,13 +506,13 @@ internal fun SubagentSettingsScreen(
         }
 
         item(key = "custom_title") {
-            EtaPreferenceGroupTitle("Custom Subagents")
+            EtaPreferenceGroupTitle("自定义子智能体")
         }
         item(key = "custom_group") {
             EtaPreferenceGroup {
                 if (customProfiles.isEmpty()) {
                     ListEmptyState(
-                        title = "暂无自定义 Subagent",
+                        title = "暂无自定义子智能体",
                         summary = "可在对话中直接让 Eta 创建专属 Subagent（保存在 agents/<name>.md），或点击右上角 + 手动新建",
                         icon = Icons.Rounded.Extension,
                         action = {
@@ -480,10 +546,13 @@ internal fun SubagentSettingsScreen(
     }
 }
 
+private val PARALLEL_OPTIONS = listOf(1, 2, 4, 6, 8, 12, 16)
+
 private fun iconForProfile(name: String): ImageVector = when (name) {
     SubagentProfile.TYPE_EXPLORE -> Icons.Rounded.Explore
     SubagentProfile.TYPE_CODER -> Icons.Rounded.Code
     SubagentProfile.TYPE_PLAN -> Icons.Rounded.Route
+    SubagentProfile.TYPE_SCREEN -> Icons.Rounded.TouchApp
     else -> Icons.Rounded.Hub
 }
 
@@ -491,6 +560,7 @@ private fun tintForProfile(name: String) = when (name) {
     SubagentProfile.TYPE_EXPLORE -> EtaPreferenceColors.Blue
     SubagentProfile.TYPE_CODER -> EtaPreferenceColors.Green
     SubagentProfile.TYPE_PLAN -> EtaPreferenceColors.Orange
+    SubagentProfile.TYPE_SCREEN -> EtaPreferenceColors.Yellow
     else -> EtaPreferenceColors.Blue
 }
 

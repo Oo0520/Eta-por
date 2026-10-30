@@ -231,14 +231,15 @@ internal data class SubagentProfile(
                 "open app, navigate pages, fill forms, toggle switches, verify results. It prefers accessibility node actions " +
                 "and falls back to coordinate taps only when node actions fail, then records proven flows as skills.",
             toolHighlights = listOf(
-                "virtual_screen", "observe_screen", "tap_element", "scroll_element",
+                "virtual_screen", "observe_screen", "tap_smart", "tap_element", "scroll_element",
                 "tap_area", "scroll", "type_text", "press_key", "wait_for_text", "skills_manage",
             ),
             roleInstruction = "你是灵屏操作 Subagent（screen）。你负责在灵屏（独立 display）里完成多步界面任务，" +
                 "并把真正跑通的流程沉淀成技能。\n\n" +
                 "操作纪律（必须按顺序）：\n" +
                 "1. 动手前先 observe_screen 读取当前界面节点，确认目标在哪里；不清楚就多观察一次，不要盲点。\n" +
-                "2. 优先无障碍：能用 tap_element / long_press_element / scroll_element / wait_for_text 就用它们，" +
+                "2. 优先无障碍：知道控件文字或描述时直接用 tap_smart（它自己会先按节点点、失败再降级坐标）；" +
+                "需要精确定位时用 tap_element / long_press_element / scroll_element / wait_for_text，" +
                 "这类操作按节点执行，不依赖坐标、失败率低。\n" +
                 "3. 每一步动作后必须 observe_screen 验证结果（页面变化、文本出现、开关状态），不要连续盲点。\n" +
                 "4. 无障碍路径不可用（节点缺失、点击后界面无变化、控件不可点击）时，才退回坐标操作：" +

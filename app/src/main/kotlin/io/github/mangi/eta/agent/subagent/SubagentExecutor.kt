@@ -34,7 +34,33 @@ internal class SubagentExecutor(
 
     fun latestSnapshotJson(toolCallId: String): String? = latestSnapshots[toolCallId]
 
+    /** 同一主 Agent 下存活的子智能体计数（按对话隔离）；达到并行上限时拒绝新的派发。 */
+    private val concurrencyKey: String get() = conversationKey
+
     fun execute(
+        parentRound: Int,
+        toolCall: AgentModelClient.ToolCall,
+    ): AgentModelClient.ToolResult {
+        val limit = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
+            }.maxParallel
+        }.getOrDefault(8)
+        if (!SubagentConcurrency.tryAcquire(concurrencyKey, limit)) {
+            return errorResult(
+                "SUBAGENT_LIMIT_REACHED",
+                "同一主 Agent 下已有 $limit 个子智能体在运行，本次派发被拒绝；" +
+                    "请等现有子智能体结束，或在设置里调高并行上限。",
+            )
+        }
+        return try {
+            executeInternal(parentRound, toolCall)
+        } finally {
+            SubagentConcurrency.release(concurrencyKey)
+        }
+    }
+
+    private fun executeInternal(
         parentRound: Int,
         toolCall: AgentModelClient.ToolCall,
     ): AgentModelClient.ToolResult {
@@ -604,5 +630,27 @@ internal class SubagentExecutor(
         private const val MAX_STEP_DETAIL_CHARS = 2_000
         private const val MAX_OUTPUT_CHARS = 12_000
         private const val MAX_STEPS = 48
+    }
+}
+
+/** 子智能体并行计数：同一主 Agent（按对话）下同时存活的子智能体总数。 */
+internal object SubagentConcurrency {
+    private val active = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
+
+    fun activeCount(key: String): Int = active[key]?.get() ?: 0
+
+    fun tryAcquire(key: String, limit: Int): Boolean {
+        if (limit <= 0) return false
+        val counter = active.getOrPut(key) { java.util.concurrent.atomic.AtomicInteger() }
+        while (true) {
+            val current = counter.get()
+            if (current >= limit) return false
+            if (counter.compareAndSet(current, current + 1)) return true
+        }
+    }
+
+    fun release(key: String) {
+        val counter = active[key] ?: return
+        if (counter.decrementAndGet() <= 0) active.remove(key, counter)
     }
 }
