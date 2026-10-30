@@ -37,6 +37,7 @@ import io.github.mangi.eta.agent.terminal.ApkAnalysisInstallProgress
 import io.github.mangi.eta.agent.terminal.ApkAnalysisInstallResult
 import io.github.mangi.eta.agent.terminal.ApkAnalysisInstallStage
 import io.github.mangi.eta.agent.terminal.DebianEnvironmentInstaller
+import io.github.mangi.eta.agent.terminal.LinuxInstallRunner
 import io.github.mangi.eta.agent.terminal.DebianEnvironmentState
 import io.github.mangi.eta.agent.terminal.DebianInstallProgress
 import io.github.mangi.eta.agent.terminal.DebianInstallResult
@@ -255,18 +256,27 @@ internal fun LinuxEnvironmentScreen(
                 busyTarget = null
             }
         }
-        if (backend == LinuxExecutionBackend.PROOT) {
-            requestExecutionNotifications()
-            coroutineScope.launchForegroundExecution(
-                context = appContext,
-                onUnavailable = {
-                    busyTarget = null
-                    resultMessage = context.getString(R.string.capability_background_failed)
-                },
-                block = operation,
-            )
-        } else {
-            coroutineScope.launch { operation() }
+        // 安装改到进程级作用域：退出设置页、切后台都不再中断下载（之前挂在页面 scope 上，
+        // 一退页面协程就被取消，进度条停在原地）。前台租约拿不到时退回普通执行，不影响功能。
+        if (!LinuxInstallRunner.tryAdopt()) {
+            resultMessage = "已有安装任务在后台进行，完成后再试"
+            return
+        }
+        requestExecutionNotifications()
+        val hosted: suspend () -> Unit = {
+            try {
+                operation()
+            } finally {
+                LinuxInstallRunner.release()
+            }
+        }
+        val job = LinuxInstallRunner.scope.launchForegroundExecution(
+            context = appContext,
+            onUnavailable = { /* 前台不可用不阻塞：下面退回普通执行 */ },
+            block = hosted,
+        )
+        if (job == null) {
+            LinuxInstallRunner.scope.launch { hosted() }
         }
     }
 
