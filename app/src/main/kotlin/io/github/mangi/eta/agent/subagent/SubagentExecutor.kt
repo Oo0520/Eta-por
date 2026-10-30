@@ -134,6 +134,21 @@ internal class SubagentExecutor(
                 io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
             }.allowModelSelection
         }.getOrDefault(false)
+        if (allowModelPick && requestedModel != null) {
+            val allowed = runCatching {
+                kotlinx.coroutines.runBlocking {
+                    io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
+                }.allowedModelIds
+            }.getOrDefault(emptyList())
+            if (allowed.isNotEmpty() && requestedModel !in allowed) {
+                SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+                controllerBinding.close()
+                return errorResult(
+                    "MODEL_NOT_AUTHORIZED",
+                    "模型 $requestedModel 没有在子智能体设置里授权；请让用户在「授权模型」里勾选后再派发。",
+                )
+            }
+        }
         val useOverride = allowModelPick && configForOverride != null &&
             (requestedModel != null || requestedEffort != null)
         val resolvedConfig = runCatching {

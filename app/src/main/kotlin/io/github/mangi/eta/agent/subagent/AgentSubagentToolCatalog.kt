@@ -95,7 +95,7 @@ internal object AgentSubagentToolCatalog {
                     .put("maxLength", 120)
                     .put(
                         "description",
-                        "Optional model id (from the authorized model list) for THIS subagent. " +
+                        "Optional model id for THIS subagent; must be one of the models the user authorized in Subagent settings. " +
                             "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings.",
                     ),
             )

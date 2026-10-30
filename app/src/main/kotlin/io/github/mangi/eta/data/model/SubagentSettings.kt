@@ -16,6 +16,8 @@ internal data class SubagentSettings(
     val maxParallel: Int = 8,
     /** 允许 Agent 为子智能体挑选模型（仅影响新会话）。 */
     val allowModelSelection: Boolean = false,
+    /** 授权给主 Agent 挑选的模型 id 列表；为空表示不限制（可选全部已启用模型）。 */
+    val allowedModelIds: List<String> = emptyList(),
 ) {
     val resolvedReasoningEffort: ReasoningEffort?
         get() = ReasoningEffort.fromWireValue(reasoningEffort)

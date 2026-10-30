@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Explore
@@ -174,6 +175,8 @@ internal fun SubagentSettingsScreen(
 
     var showModelSheet by remember { mutableStateOf(false) }
     var showParallelDialog by remember { mutableStateOf(false) }
+    var showAuthorizedSheet by remember { mutableStateOf(false) }
+    var authorizedDraft by remember { mutableStateOf<Set<String>>(emptySet()) }
     var parallelDraft by remember { mutableStateOf("8") }
     var inspectedProfile by remember { mutableStateOf<SubagentProfile?>(null) }
     var editorDraft by remember { mutableStateOf<CustomSubagentDraft?>(null) }
@@ -215,6 +218,48 @@ internal fun SubagentSettingsScreen(
                         }
                     },
                 )
+            }
+
+            OverlayBottomSheet(
+                show = showAuthorizedSheet,
+                title = "授权给主 Agent 的模型",
+                onDismissRequest = { showAuthorizedSheet = false },
+                insideMargin = DpSize(0.dp, 0.dp),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    SubagentModelMultiPickerContent(
+                        pickerState = pickerState,
+                        selectedIds = authorizedDraft,
+                        onToggle = { id ->
+                            authorizedDraft = if (id in authorizedDraft) authorizedDraft - id
+                            else authorizedDraft + id
+                        },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        EtaTextButton(
+                            text = "清空",
+                            modifier = Modifier.weight(1f),
+                            onClick = { authorizedDraft = emptySet() },
+                        )
+                        EtaTextButton(
+                            text = "保存",
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                            onClick = {
+                                val snapshot = authorizedDraft.toList()
+                                scope.launch {
+                                    RuntimeConfigRepository.setSubagentSettings(
+                                        subagentSettings.copy(allowedModelIds = snapshot),
+                                    )
+                                }
+                                showAuthorizedSheet = false
+                            },
+                        )
+                    }
+                }
             }
 
             val currentProfile = inspectedProfile
@@ -504,6 +549,26 @@ internal fun SubagentSettingsScreen(
                         }
                     },
                 )
+                EtaPreferenceDivider()
+                EtaArrowPreference(
+                    title = "授权模型",
+                    summary = if (subagentSettings.allowedModelIds.isEmpty()) {
+                        "未勾选：主 Agent 可使用全部已启用模型"
+                    } else {
+                        "已授权 ${subagentSettings.allowedModelIds.size} 个模型，主 Agent 只能从中挑选"
+                    },
+                    enabled = subagentEnabled && subagentSettings.allowModelSelection,
+                    startAction = {
+                        EtaPreferenceIcon(
+                            icon = Icons.Rounded.Checklist,
+                            tint = EtaPreferenceColors.Yellow,
+                        )
+                    },
+                    onClick = {
+                        authorizedDraft = subagentSettings.allowedModelIds.toSet()
+                        showAuthorizedSheet = true
+                    },
+                )
             }
         }
 
@@ -584,6 +649,62 @@ private fun tintForProfile(name: String) = when (name) {
     SubagentProfile.TYPE_PLAN -> EtaPreferenceColors.Orange
     SubagentProfile.TYPE_SCREEN -> EtaPreferenceColors.Yellow
     else -> EtaPreferenceColors.Blue
+}
+
+@Composable
+private fun SubagentModelMultiPickerContent(
+    pickerState: io.github.mangi.eta.ui.model.AgentModelPickerUiState,
+    selectedIds: Set<String>,
+    onToggle: (String) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val groups = remember(pickerState.providerGroups, query) { pickerState.filterGroups(query) }
+    val density = LocalDensity.current
+    val sheetHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.68f
+    Column(
+        modifier = Modifier.fillMaxWidth().height(sheetHeight).navigationBarsPadding(),
+    ) {
+        InputField(
+            query = query,
+            onQueryChange = { query = it },
+            onSearch = {},
+            expanded = false,
+            onExpandedChange = {},
+            label = "搜索模型或服务商",
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        Text(
+            text = "勾选后，主 Agent 只能从这些模型里为子智能体挑模型；全部不勾表示不限制。",
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(bottom = 16.dp),
+        ) {
+            groups.forEach { group ->
+                item(key = "h:${group.providerId}") {
+                    Text(
+                        text = group.providerName,
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
+                    )
+                }
+                items(
+                    items = group.models,
+                    key = { model -> "pick:${model.providerId}:${model.id}" },
+                ) { model ->
+                    SubagentModelOptionRow(
+                        model = model,
+                        selected = model.id in selectedIds,
+                        onClick = { onToggle(model.id) },
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
