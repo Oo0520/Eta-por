@@ -291,6 +291,7 @@ internal class AgentLoop(
             if (name.isBlank() || name !in remoteToolNames) local.put(entry)
         }
         return local
+    }
 
     private fun executeToolBatch(
         round: Int,

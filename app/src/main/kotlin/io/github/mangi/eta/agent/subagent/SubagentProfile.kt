@@ -70,6 +70,8 @@ internal data class SubagentProfile(
         val FORBIDDEN_TOOLS = setOf(
             AgentSubagentToolCatalog.TOOL_NAME,
             AgentSubagentToolCatalog.PROFILE_TOOL_NAME,
+            // 灵屏是父任务的独占资源：子代理既不能建屏，也不能接管屏幕。
+            "virtual_screen",
             "observe_screen",
             "release_gui",
             "tap",
