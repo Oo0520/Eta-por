@@ -120,14 +120,15 @@ internal class AgentExecutionService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.execution_stop), stop).build())
-        // 只有 Agent run 在跑时才申请提升为 Live Update；终端会话、Linux 启动等长驻任务不属于"正在进行、需要持续关注"的活动。
-        if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-            builder
-                .setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
-                .setShortCriticalText(status.shortText())
-            // 请求方法从 API 36.1 才公开；标准 extra 也可供支持该协议的 API 36 系统读取。
-            builder.extras.putBoolean("android.requestPromotedOngoing", true)
-        }
+        // 运行总卡片保持普通前台服务通知：不申请提升为 Live Update / 流体云。
+        // 逐会话的进度由 RunProgressNotifier 的会话卡片承担，避免同一件事在通知栏里出现两张"正在运行"的流体云。
+        // 若要恢复提升，把下面这段解注释即可。
+        // if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+        //     builder
+        //         .setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
+        //         .setShortCriticalText(status.shortText())
+        //     builder.extras.putBoolean("android.requestPromotedOngoing", true)
+        // }
         return builder.build()
     }
 
