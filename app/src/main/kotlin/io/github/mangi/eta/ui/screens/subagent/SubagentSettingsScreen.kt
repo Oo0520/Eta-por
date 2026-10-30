@@ -173,6 +173,8 @@ internal fun SubagentSettingsScreen(
     }
 
     var showModelSheet by remember { mutableStateOf(false) }
+    var showParallelDialog by remember { mutableStateOf(false) }
+    var parallelDraft by remember { mutableStateOf("8") }
     var inspectedProfile by remember { mutableStateOf<SubagentProfile?>(null) }
     var editorDraft by remember { mutableStateOf<CustomSubagentDraft?>(null) }
     var editorError by remember { mutableStateOf<String?>(null) }
@@ -257,6 +259,52 @@ internal fun SubagentSettingsScreen(
                         } else {
                             null
                         },
+                    )
+                }
+            }
+
+            EtaWindowDialog(
+                show = showParallelDialog,
+                title = "并行上限",
+                onDismissRequest = { showParallelDialog = false },
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    TextField(
+                        value = parallelDraft,
+                        onValueChange = { input ->
+                            parallelDraft = input.filter(Char::isDigit).take(2)
+                        },
+                        label = "同时运行的子智能体数（1–64）",
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "同一主 Agent 下同时存活的子智能体总数，主 Agent 不计入；" +
+                            "达到上限时新的派发请求会被拒绝。",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    EtaTextButton(
+                        text = "保存",
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColorsPrimary(),
+                        onClick = {
+                            val chosen = parallelDraft.toIntOrNull()?.coerceIn(1, 64)
+                                ?: subagentSettings.maxParallel
+                            scope.launch {
+                                RuntimeConfigRepository.setSubagentSettings(
+                                    subagentSettings.copy(maxParallel = chosen),
+                                )
+                            }
+                            showParallelDialog = false
+                        },
+                    )
+                    EtaTextButton(
+                        text = "取消",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showParallelDialog = false },
                     )
                 }
             }
@@ -420,31 +468,9 @@ internal fun SubagentSettingsScreen(
                 }
 
                 EtaPreferenceDivider()
-                EtaOverlayDropdownPreference(
-                    title = "最大递归深度",
-                    items = listOf("禁用子智能体", "仅主 Agent 创建"),
-                    selectedIndex = if (subagentSettings.maxDepth <= 0) 0 else 1,
-                    enabled = subagentEnabled,
-                    startAction = {
-                        EtaPreferenceIcon(
-                            icon = Icons.Rounded.AccountTree,
-                            tint = EtaPreferenceColors.Green,
-                        )
-                    },
-                    onSelectedIndexChange = { index ->
-                        scope.launch {
-                            RuntimeConfigRepository.setSubagentSettings(
-                                subagentSettings.copy(maxDepth = if (index == 0) 0 else 1),
-                            )
-                        }
-                    },
-                )
-                EtaPreferenceDivider()
-                EtaOverlayDropdownPreference(
-                    title = "并行上限（当前 ${subagentSettings.maxParallel}）",
-                    items = PARALLEL_OPTIONS.map { it.toString() },
-                    selectedIndex = PARALLEL_OPTIONS.indexOf(subagentSettings.maxParallel)
-                        .takeIf { it >= 0 } ?: PARALLEL_OPTIONS.indexOf(8),
+                EtaArrowPreference(
+                    title = "并行上限",
+                    summary = "同一主 Agent 下最多同时运行 ${subagentSettings.maxParallel} 个子智能体（主 Agent 不计入）",
                     enabled = subagentEnabled,
                     startAction = {
                         EtaPreferenceIcon(
@@ -452,18 +478,16 @@ internal fun SubagentSettingsScreen(
                             tint = EtaPreferenceColors.Blue,
                         )
                     },
-                    onSelectedIndexChange = { index ->
-                        val chosen = PARALLEL_OPTIONS.getOrNull(index) ?: 8
-                        scope.launch {
-                            RuntimeConfigRepository.setSubagentSettings(
-                                subagentSettings.copy(maxParallel = chosen),
-                            )
-                        }
+                    onClick = {
+                        parallelDraft = subagentSettings.maxParallel.toString()
+                        showParallelDialog = true
                     },
                 )
                 EtaPreferenceDivider()
                 EtaSwitchPreference(
-                    title = "允许子智能体自选模型",
+                    title = "允许主 Agent 为子智能体选择模型",
+                    summary = "开启后，主 Agent 可以从下方授权模型中，为每个子智能体选择提供方、模型和推理强度；" +
+                        "仅影响新会话。",
                     checked = subagentSettings.allowModelSelection,
                     enabled = subagentEnabled,
                     startAction = {
@@ -545,8 +569,6 @@ internal fun SubagentSettingsScreen(
         }
     }
 }
-
-private val PARALLEL_OPTIONS = listOf(1, 2, 4, 6, 8, 12, 16)
 
 private fun iconForProfile(name: String): ImageVector = when (name) {
     SubagentProfile.TYPE_EXPLORE -> Icons.Rounded.Explore

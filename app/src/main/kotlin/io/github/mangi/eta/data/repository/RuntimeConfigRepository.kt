@@ -50,9 +50,13 @@ internal object RuntimeConfigRepository {
      */
     suspend fun subagentRuntimeConfig(
         primaryConfig: AgentModelClient.ModelConfig,
+        overrideModelId: String? = null,
+        overrideEffortWire: String? = null,
     ): AgentModelClient.ModelConfig {
         val settings = SettingsDataStore.subagentSettings()
-        val secondaryModelId = settings.modelId?.takeIf { it.isNotBlank() }
+        // 主 Agent 为本次子智能体临时指定的模型优先于全局设置（需在设置里放行）。
+        val secondaryModelId = overrideModelId?.takeIf { it.isNotBlank() }
+            ?: settings.modelId?.takeIf { it.isNotBlank() }
         val resolvedSecondary = if (secondaryModelId != null) {
             ProviderRepository.ensureBuiltInsMerged()
             ProviderRepository.allProviders().enabledModel(secondaryModelId)
@@ -62,7 +66,8 @@ internal object RuntimeConfigRepository {
         val base = resolvedSecondary?.let { (provider, model) ->
             buildRuntimeConfig(provider, model)
         } ?: primaryConfig
-        val explicitEffort = settings.resolvedReasoningEffort
+        val explicitEffort = overrideEffortWire?.let { ReasoningEffort.fromWireValue(it) }
+            ?: settings.resolvedReasoningEffort
         val effort = when {
             explicitEffort != null -> {
                 val capabilities = base.reasoningCapabilities

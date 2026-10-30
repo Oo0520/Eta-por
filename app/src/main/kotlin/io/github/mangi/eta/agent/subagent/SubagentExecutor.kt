@@ -21,6 +21,8 @@ internal class SubagentExecutor(
     private val conversationKey: String,
     private val parentController: AgentRunController,
     private val configProvider: () -> AgentModelClient.ModelConfig,
+    /** 主 Agent 指定模型时的配置来源（modelId, effortWire）；未开启放行时不会被调用。 */
+    private val configForOverride: (suspend (String?, String?) -> AgentModelClient.ModelConfig)? = null,
     private val capabilitiesProvider: () -> AgentToolCapabilities,
     private val baseToolExecutor: AgentModelClient.ToolExecutor,
     private val skillContext: SkillContext,
@@ -125,7 +127,22 @@ internal class SubagentExecutor(
         val childController = AgentRunController()
         val controllerBinding = parentController.register(childController::cancel)
 
-        val resolvedConfig = runCatching { configProvider() }.getOrElse { throwable ->
+        val requestedModel = args.optString("model").trim().takeIf { it.isNotBlank() }
+        val requestedEffort = args.optString("reasoning_effort").trim().takeIf { it.isNotBlank() }
+        val allowModelPick = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
+            }.allowModelSelection
+        }.getOrDefault(false)
+        val useOverride = allowModelPick && configForOverride != null &&
+            (requestedModel != null || requestedEffort != null)
+        val resolvedConfig = runCatching {
+            if (useOverride) {
+                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(requestedModel, requestedEffort) }
+            } else {
+                configProvider()
+            }
+        }.getOrElse { throwable ->
             SubagentSessionStore.releaseRunning(conversationKey, subagentId)
             controllerBinding.close()
             return errorResult("SUBAGENT_CONFIG_ERROR", throwable.message ?: "无法加载 Subagent 模型配置")

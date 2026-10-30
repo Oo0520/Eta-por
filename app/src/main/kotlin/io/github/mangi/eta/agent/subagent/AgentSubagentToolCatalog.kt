@@ -89,6 +89,27 @@ internal object AgentSubagentToolCatalog {
                     ),
             )
             .put(
+                "model",
+                JSONObject()
+                    .put("type", "string")
+                    .put("maxLength", 120)
+                    .put(
+                        "description",
+                        "Optional model id (from the authorized model list) for THIS subagent. " +
+                            "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings.",
+                    ),
+            )
+            .put(
+                "reasoning_effort",
+                JSONObject()
+                    .put("type", "string")
+                    .put(
+                        "description",
+                        "Optional reasoning effort for THIS subagent (off / low / medium / high …). " +
+                            "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings.",
+                    ),
+            )
+            .put(
                 "resume",
                 JSONObject()
                     .put("type", "string")
