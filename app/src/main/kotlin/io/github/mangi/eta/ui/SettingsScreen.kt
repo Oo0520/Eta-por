@@ -342,7 +342,7 @@ private fun SettingsPageContent(
                     )
                     EtaPreferenceDivider()
                     EtaArrowPreference(
-                        title = "Subagent",
+                        title = "子智能体",
                         startAction = {
                             EtaPreferenceIcon(
                                 icon = Icons.Rounded.Hub,

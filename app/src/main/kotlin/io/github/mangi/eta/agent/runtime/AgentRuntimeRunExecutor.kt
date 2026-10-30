@@ -258,12 +258,8 @@ internal class AgentRuntimeRunExecutor(
                     journal + session.transcript
                 }
             }
-            // 递归深度 0 = 禁用子智能体：工具不出现在目录里，执行侧也会拒绝。
-            val subagentMaxDepth = runCatching {
-                runBlocking { io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings() }.maxDepth
-            }.getOrDefault(1)
             val subagentAllowed = {
-                request.config.subagentTools && currentPermissions().subagentTools && subagentMaxDepth > 0
+                request.config.subagentTools && currentPermissions().subagentTools
             }
             val subagentExecutor = SubagentExecutor(
                 // 子代理会话按「对话」隔离；无对话（外部入口）时退回 runId。
@@ -276,6 +272,12 @@ internal class AgentRuntimeRunExecutor(
                     AgentRuntimePolicy.constrain(rawSubagentConfig, currentPermissions())
                 },
                 capabilitiesProvider = { AgentToolCapabilities.capture(appContext) },
+                configForOverride = { modelId, effort ->
+                    val overridden = RuntimeConfigRepository.subagentRuntimeConfig(
+                        request.config, overrideModelId = modelId, overrideEffortWire = effort,
+                    )
+                    AgentRuntimePolicy.constrain(overridden, currentPermissions())
+                },
                 baseToolExecutor = routingExecutor,
                 skillContext = skillContext,
                 memoryContext = memoryContext,
