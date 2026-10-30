@@ -142,6 +142,8 @@ fun AgentAppRoot(
     openSpeechSettings: Boolean = false,
     openTerminal: Boolean = false,
     onTerminalOpened: () -> Unit = {},
+    openLinuxEnvironment: Boolean = false,
+    onLinuxEnvironmentOpened: () -> Unit = {},
     onSpeechSettingsOpened: () -> Unit = {},
     onAssistantConversationOpened: (Boolean) -> Unit = {},
 ) {
@@ -180,6 +182,13 @@ fun AgentAppRoot(
         if (openTerminal) {
             if (backStack.lastOrNull() != AppRoute.Terminal) backStack.add(AppRoute.Terminal)
             onTerminalOpened()
+        }
+    }
+    LaunchedEffect(openLinuxEnvironment) {
+        if (openLinuxEnvironment) {
+            // 从「安装进度」通知点进来时，直接落到 Linux 工具环境页，而不是停在首页。
+            if (backStack.lastOrNull() != AppRoute.LinuxEnvironment) backStack.add(AppRoute.LinuxEnvironment)
+            onLinuxEnvironmentOpened()
         }
     }
     var navigationResetKey by rememberSaveable { mutableIntStateOf(0) }

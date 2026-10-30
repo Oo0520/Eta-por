@@ -95,8 +95,13 @@ internal class AgentExecutionService : Service() {
 
     private fun notification(): Notification {
         val status = runStatus
+        // 正在装 Linux 工具时，点击通知直接落到 Linux 工具环境页，而不是停在首页。
+        val openIntent = Intent(this, MainActivity::class.java)
+        if (io.github.mangi.eta.agent.terminal.LinuxInstallRunner.busy) {
+            openIntent.action = MainActivity.ACTION_OPEN_LINUX_ENVIRONMENT
+        }
         val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
+            this, if (openIntent.action == null) 0 else 2, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val stop = PendingIntent.getService(

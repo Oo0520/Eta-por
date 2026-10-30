@@ -409,7 +409,9 @@ internal fun LinuxEnvironmentScreen(
                 summary = when {
                     requiresRoot -> stringResource(R.string.capability_linux_root_lost)
                     kimiWebLaunching -> stringResource(R.string.linux_kimi_web_starting)
-                    busyTarget != null -> activeProgress ?: stringResource(R.string.linux_installing)
+                    // 页面重建后 busyTarget 会归零，这里必须同时看进程级状态，否则会错显成「已就绪」
+                    hostedInstall != null || busyTarget != null ->
+                        activeProgress ?: stringResource(R.string.linux_installing)
                     selectedToolsReady -> stringResource(R.string.linux_environment_tools_ready)
                     selectedBaseReady -> stringResource(R.string.linux_environment_base_ready)
                     else -> stringResource(R.string.linux_not_installed) + "\n" + stringResource(
@@ -420,7 +422,7 @@ internal fun LinuxEnvironmentScreen(
                         },
                     )
                 },
-                busy = busyTarget != null || kimiWebLaunching,
+                busy = hostedInstall != null || busyTarget != null || kimiWebLaunching,
                 message = resultMessage,
                 actionText = when {
                     requiresRoot -> stringResource(R.string.capability_enhancements)
