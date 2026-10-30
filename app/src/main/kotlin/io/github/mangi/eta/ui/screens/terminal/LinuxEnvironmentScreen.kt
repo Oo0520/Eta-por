@@ -244,7 +244,11 @@ internal fun LinuxEnvironmentScreen(
         LinuxDistribution.DEBIAN -> debianStatus.state == DebianEnvironmentState.READY
     }
 
-    fun launchInstallation(block: suspend () -> Unit) {
+    fun launchInstallation(title: String, block: suspend () -> Unit) {
+        if (!LinuxInstallRunner.tryAdopt(title)) {
+            resultMessage = "已有安装任务在后台进行，完成后再试"
+            return
+        }
         val operation: suspend () -> Unit = {
             try {
                 block()
@@ -254,29 +258,19 @@ internal fun LinuxEnvironmentScreen(
                 profileProgressSummary = null
                 apkAnalysisProgress = null
                 busyTarget = null
-            }
-        }
-        // 安装改到进程级作用域：退出设置页、切后台都不再中断下载（之前挂在页面 scope 上，
-        // 一退页面协程就被取消，进度条停在原地）。前台租约拿不到时退回普通执行，不影响功能。
-        if (!LinuxInstallRunner.tryAdopt()) {
-            resultMessage = "已有安装任务在后台进行，完成后再试"
-            return
-        }
-        requestExecutionNotifications()
-        val hosted: suspend () -> Unit = {
-            try {
-                operation()
-            } finally {
                 LinuxInstallRunner.release()
             }
         }
+        // 安装跑在进程级作用域：退出设置页、切后台都不再中断下载（之前挂在页面 scope 上，
+        // 一退页面协程就被取消，进度条停在原地）。前台租约拿不到时退回普通执行，不影响功能。
+        requestExecutionNotifications()
         val job = LinuxInstallRunner.scope.launchForegroundExecution(
             context = appContext,
             onUnavailable = { /* 前台不可用不阻塞：下面退回普通执行 */ },
-            block = hosted,
+            block = operation,
         )
         if (job == null) {
-            LinuxInstallRunner.scope.launch { hosted() }
+            LinuxInstallRunner.scope.launch { operation() }
         }
     }
 
@@ -284,13 +278,16 @@ internal fun LinuxEnvironmentScreen(
         if (busyTarget != null || requiresRoot) return
         busyTarget = InstallTarget.BASE
         resultMessage = null
-        launchInstallation {
+        launchInstallation("安装基础工具") {
             resultMessage = when (selectedDistribution) {
                 LinuxDistribution.ALPINE -> installer.installBase { update ->
                     withContext(Dispatchers.Main.immediate) { progress = update }
                 }.toMessage(context)
                 LinuxDistribution.DEBIAN -> debianInstaller.installBase { update ->
-                    withContext(Dispatchers.Main.immediate) { debianProgress = update }
+                    withContext(Dispatchers.Main.immediate) {
+                        debianProgress = update
+                        LinuxInstallRunner.updateDetail(update.summary(context))
+                    }
                 }.toMessage(context)
             }
             status = installer.status()
@@ -305,13 +302,16 @@ internal fun LinuxEnvironmentScreen(
         if (busyTarget != null || requiresRoot) return
         busyTarget = InstallTarget.TOOLS
         resultMessage = null
-        launchInstallation {
+        launchInstallation("安装扩展工具") {
             resultMessage = when (selectedDistribution) {
                 LinuxDistribution.ALPINE -> installer.installTools { update ->
                     withContext(Dispatchers.Main.immediate) { progress = update }
                 }.toMessage(context)
                 LinuxDistribution.DEBIAN -> debianInstaller.installTools { update ->
-                    withContext(Dispatchers.Main.immediate) { debianProgress = update }
+                    withContext(Dispatchers.Main.immediate) {
+                        debianProgress = update
+                        LinuxInstallRunner.updateDetail(update.summary(context))
+                    }
                 }.toMessage(context)
             }
             status = installer.status()
@@ -347,7 +347,7 @@ internal fun LinuxEnvironmentScreen(
         busyTarget = target
         resultMessage = null
         profileProgressSummary = context.getString(R.string.linux_uninstalling)
-        launchInstallation {
+        launchInstallation("正在卸载") {
             when (target) {
                 InstallTarget.APK_ANALYSIS -> {
                     val uninstalled = apkAnalysisInstaller.uninstall()
@@ -380,6 +380,9 @@ internal fun LinuxEnvironmentScreen(
         }
     }
 
+    // 安装跑在进程级作用域后，页面重建也要能把「后台正在装」这件事显示出来。
+    val hostedInstall by LinuxInstallRunner.state.collectAsState()
+
     MiuixScaffoldPage(
         title = stringResource(R.string.ui_linux_tool_environment_314d22),
         onBack = onBack,
@@ -389,7 +392,9 @@ internal fun LinuxEnvironmentScreen(
                 LinuxDistribution.ALPINE -> status.version
                 LinuxDistribution.DEBIAN -> debianStatus.version
             }
-            val activeProgress = when (busyTarget) {
+            val activeProgress = hostedInstall?.detail
+                ?: hostedInstall?.title
+                ?: when (busyTarget) {
                 InstallTarget.BASE, InstallTarget.TOOLS -> when (selectedDistribution) {
                     LinuxDistribution.ALPINE -> progress?.summary(context)
                     LinuxDistribution.DEBIAN -> debianProgress?.summary(context)
@@ -437,7 +442,7 @@ internal fun LinuxEnvironmentScreen(
                 distribution = selectedDistribution,
                 backend = backend,
                 rootGranted = capabilities.root.isGranted,
-                enabled = busyTarget == null && !kimiWebLaunching,
+                enabled = busyTarget == null && hostedInstall == null && !kimiWebLaunching,
                 onDistributionSelected = { distribution ->
                     if (busyTarget == null && !kimiWebLaunching && distribution != selectedDistribution) {
                         resultMessage = null
@@ -562,7 +567,7 @@ internal fun LinuxEnvironmentScreen(
                                     }
                                     if (ready) {
                                         UninstallIconButton(
-                                            enabled = busyTarget == null && !requiresRoot && !kimiWebLaunching,
+                                            enabled = busyTarget == null && hostedInstall == null && !requiresRoot && !kimiWebLaunching,
                                             onClick = { uninstallTarget = profileUi.target },
                                         )
                                     } else {
@@ -572,17 +577,18 @@ internal fun LinuxEnvironmentScreen(
                                             } else {
                                                 stringResource(R.string.linux_install)
                                             },
-                                            enabled = busyTarget == null && !requiresRoot,
+                                            enabled = busyTarget == null && hostedInstall == null && !requiresRoot,
                                             onClick = {
                                                 if (busyTarget != null) return@CompactTextButton
                                                 busyTarget = profileUi.target
                                                 resultMessage = null
                                                 val profileTitle = context.getString(profileUi.titleRes)
-                                                launchInstallation {
+                                                launchInstallation(profileTitle) {
                                                     val profileInstaller = profileInstallers.getValue(profileUi.target)
                                                     val result = profileInstaller.install { update ->
                                                         withContext(Dispatchers.Main.immediate) {
                                                             profileProgressSummary = update.summary(context, profileTitle)
+                                                            LinuxInstallRunner.updateDetail(profileProgressSummary)
                                                         }
                                                     }
                                                     profileReady = profileReady +
@@ -610,7 +616,7 @@ internal fun LinuxEnvironmentScreen(
                         endActions = {
                             if (apkAnalysisReady) {
                                 UninstallIconButton(
-                                    enabled = busyTarget == null && !requiresRoot,
+                                    enabled = busyTarget == null && hostedInstall == null && !requiresRoot,
                                     onClick = { uninstallTarget = InstallTarget.APK_ANALYSIS },
                                 )
                             } else {
@@ -620,15 +626,16 @@ internal fun LinuxEnvironmentScreen(
                                     } else {
                                         context.getString(R.string.linux_install)
                                     },
-                                    enabled = busyTarget == null && !requiresRoot,
+                                    enabled = busyTarget == null && hostedInstall == null && !requiresRoot,
                                     onClick = {
                                         if (busyTarget != null) return@CompactTextButton
                                         busyTarget = InstallTarget.APK_ANALYSIS
                                         resultMessage = null
-                                        launchInstallation {
+                                        launchInstallation("下载 APK 分析工具") {
                                             val result = apkAnalysisInstaller.install { update ->
                                                 withContext(Dispatchers.Main.immediate) {
                                                     apkAnalysisProgress = update
+                                                    LinuxInstallRunner.updateDetail(update.summary(context))
                                                 }
                                             }
                                             apkAnalysisReady = apkAnalysisInstaller.isReady()
