@@ -349,57 +349,63 @@ internal object RunProgressNotifier {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setContentIntent(open)
             .addAction(
-                action(
+                textAction(
                     app,
-                    if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
+                    if (paused) "继续" else "暂停",
                     if (paused) AgentRuntimeService.ACTION_RESUME_RUN else AgentRuntimeService.ACTION_PAUSE_RUN,
-                    ACTION_PAUSE_REQUEST,
+                    1,
                     card.runId,
                     cardId,
                 ),
             )
             .addAction(
-                action(
+                textAction(
                     app,
-                    R.drawable.ic_stat_stop,
+                    "停止",
                     AgentRuntimeService.ACTION_STOP_RUN,
-                    ACTION_STOP_REQUEST,
+                    2,
                     card.runId,
                     cardId,
                 ),
             )
-        builder.addAction(insertAction(app, card, cardId))
-        if (open != null) {
-            builder.addAction(
-                Notification.Action.Builder(
-                    Icon.createWithResource(app, progressIcon(card.stage)),
-                    "",
-                    open,
-                ).build(),
-            )
-        }
-        // 降级开关打开时，进度卡只做普通通知：标题、正文、按钮照旧，不进流体云。
-        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK && FluidNotificationPolicy.allowsFluid()) {
+            .addAction(insertAction(app, card, cardId))
+        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
             builder.setShortCriticalText(if (paused) "已暂停" else card.actionShort)
             builder.setRequestPromotedOngoing(true)
         }
         return builder.build()
     }
 
-    /** 「插入」：拉起轻量输入弹层，提交后走 supplement 通道按对话精确投递。 */
+    /** 文字版按钮：icon 传 null，系统会渲染成文字胶囊。 */
+    private fun textAction(
+        app: Context,
+        label: String,
+        serviceAction: String,
+        requestOffset: Int,
+        runId: String,
+        cardId: Int,
+    ): Notification.Action {
+        val intent = Intent(app, AgentRuntimeService::class.java)
+            .setAction(serviceAction)
+            .putExtra(AgentRuntimeService.EXTRA_RUN_ID, runId)
+        val pending = PendingIntent.getService(
+            app,
+            cardId * 10 + requestOffset,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(null, label, pending).build()
+    }
+
+    /** 「插入」：拉起轻量输入弹层，提交后走 supplement 通道。 */
     private fun insertAction(app: Context, card: RunCard, cardId: Int): Notification.Action {
         val intent = Intent(app, SupplementActivity::class.java)
             .putExtra(AgentRuntimeService.EXTRA_SUPPLEMENT_CONVERSATION_ID, card.conversationKey)
             .putExtra(SupplementActivity.EXTRA_TITLE, card.title)
-            // 独立任务：否则会把 Eta 主界面一起带到前台，看起来像「点插入回到对话页」。
-            .addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
-            )
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pending = PendingIntent.getActivity(
             app,
-            cardId * 10 + 4,
+            cardId * 10 + 3,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
