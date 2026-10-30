@@ -41,7 +41,7 @@ android {
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
         // 跨零点必须换成当天日期、序号归 01，不能接着前一天的号往下加——
         // 之前从 2026102020 起就一直在沿用 10-20 的日期，日期不再反映实际构建日。
-        versionCode = 2026103109
+        versionCode = 2026103110
         versionName = "3.3.4"
         testInstrumentationRunner = "io.github.mangi.eta.validation.DeviceValidationRunner"
 
