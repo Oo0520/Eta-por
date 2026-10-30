@@ -25,13 +25,13 @@ import kotlin.math.sin
  * 也比每帧 recomposition 省电（浮窗本身已经在跑 60fps 的帧循环）。
  *
  * 触摸纪律：只有按钮区域消费事件，其余一律返回 false，
- * 让 ViewGroup 继续派发给下层的 VirtualScreenSurfaceView（手指直通虚拟屏）。
+ * 让 ViewGroup 继续派发给下层的 VirtualScreenSurfaceView（手指直通灵屏）。
  */
 internal class AgentDashboardView(context: Context) : View(context) {
 
     /** 接管态顶栏 ←：退出接管，交还给 AI。 */
     var onExit: (() -> Unit)? = null
-    /** 普通态顶栏 ✕：结束虚拟屏会话。 */
+    /** 普通态顶栏 ✕：结束灵屏会话。 */
     var onClose: (() -> Unit)? = null
 
     private val density = resources.displayMetrics.density

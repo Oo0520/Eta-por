@@ -7,7 +7,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 虚拟屏现场记录：只写状态与错误原因，不写画面、不解码帧数据。
+ * 灵屏现场记录：只写状态与错误原因，不写画面、不解码帧数据。
  * 独立形态没有主进程 traces 目录，出问题时只能靠这份文件定位。
  */
 internal object VscrDiag {

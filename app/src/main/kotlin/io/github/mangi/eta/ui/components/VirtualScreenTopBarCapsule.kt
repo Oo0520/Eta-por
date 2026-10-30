@@ -25,7 +25,7 @@ import org.json.JSONObject
 import kotlin.math.roundToInt
 
 /**
- * 顶栏溢出菜单里的「虚拟屏」条目：打开虚拟屏，或直达某个收藏应用。
+ * 顶栏溢出菜单里的「灵屏」条目：打开灵屏，或直达某个收藏应用。
  * 全程走 display 隔离路由，不会碰主屏任务。
  */
 internal data class VirtualScreenMenuEntry(
@@ -34,7 +34,7 @@ internal data class VirtualScreenMenuEntry(
     val icon: android.graphics.Bitmap?,
 )
 
-/** 收集收藏应用并生成菜单条目；首项固定是「打开虚拟屏」。 */
+/** 收集收藏应用并生成菜单条目；首项固定是「打开灵屏」。 */
 @Composable
 internal fun rememberVirtualScreenMenuEntries(): List<VirtualScreenMenuEntry> {
     val context = LocalContext.current

@@ -17,8 +17,8 @@ import org.json.JSONObject
 import kotlin.math.hypot
 
 /**
- * 虚拟屏画面宿主。两种出帧方式共用同一个控件：
- * - 直通（direct）：TextureView 的 Surface 交给 root helper 当虚拟屏输出面，合成器直接画进来，零拷贝。
+ * 灵屏画面宿主。两种出帧方式共用同一个控件：
+ * - 直通（direct）：TextureView 的 Surface 交给 root helper 当灵屏输出面，合成器直接画进来，零拷贝。
  * - 回落（fallback）：沿用截屏→JPEG→base64 的整帧管线，画到 ImageView 上。
  * TextureView 用普通 View 合成，不挖窗口空洞，手势指示器可以正常叠在上面。
  */
@@ -28,7 +28,7 @@ internal class VirtualScreenSurfaceView(context: Context) : FrameLayout(context)
         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
                 texture = st
-                // 直通时缓冲尺寸必须等于虚拟屏尺寸：合成端按虚拟屏尺寸入队、消费端按控件尺寸出队会错位甚至崩 native。
+                // 直通时缓冲尺寸必须等于灵屏尺寸：合成端按灵屏尺寸入队、消费端按控件尺寸出队会错位甚至崩 native。
                 info?.let { runCatching { st.setDefaultBufferSize(it.width, it.height) } }
                 val next = Surface(st)
                 hostSurface = next
@@ -258,7 +258,7 @@ internal class VirtualScreenSurfaceView(context: Context) : FrameLayout(context)
         VirtualScreenViewport((vw - w * scale) / 2f, (vh - h * scale) / 2f, scale, w, h)
     }
 
-    /** 控件坐标 -> 虚拟屏像素（触控直通用）。 */
+    /** 控件坐标 -> 灵屏像素（触控直通用）。 */
     fun toDisplay(x: Float, y: Float, clamp: Boolean = false): VirtualScreenViewport.Point? =
         viewport()?.toDisplay(x, y, clamp)
 
