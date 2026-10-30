@@ -262,7 +262,8 @@ internal class AgentRuntimeRunExecutor(
                 request.config.subagentTools && currentPermissions().subagentTools
             }
             val subagentExecutor = SubagentExecutor(
-                conversationKey = browserKey,
+                // 子代理会话按「对话」隔离；无对话（外部入口）时退回 runId。
+                conversationKey = conversationId ?: request.runId,
                 parentController = runController,
                 configProvider = {
                     val rawSubagentConfig = runBlocking {

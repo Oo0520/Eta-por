@@ -169,7 +169,14 @@ internal class SubagentExecutor(
                 memoryContext = memoryContext,
                 additionalTools = profile.filterTools(mcpTools),
                 executionContext = executionContext,
-                capabilitiesProvider = capabilitiesProvider,
+                // 子代理不参与灵屏路由：即使父任务开着灵屏，子代理也按「无灵屏」运行，
+                // 避免它把 GUI 操作打到父任务的独立 display 上。
+                capabilitiesProvider = {
+                    capabilitiesProvider().copy(
+                        virtualScreenEnabled = false,
+                        virtualScreenFallbackEnabled = false,
+                    )
+                },
                 sessionId = "$conversationKey-$subagentId",
                 operationId = "${toolCall.id}-$subagentId",
                 toolFilter = profile::filterTools,
