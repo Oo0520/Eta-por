@@ -20,6 +20,8 @@ internal data class SubagentProfile(
     val toolHighlights: List<String>,
     val roleInstruction: String,
     private val allowWriteFilesAndTerminal: Boolean = false,
+    /** 是否允许屏幕/浏览器/灵屏工具（目前只有 screen 这类专用 Subagent 打开）。 */
+    val allowScreenTools: Boolean = false,
     val builtin: Boolean = true,
     val override: Boolean = false,
     val explicitTools: Set<String>? = null,
@@ -40,9 +42,14 @@ internal data class SubagentProfile(
     }
 
     fun isToolAllowed(toolName: String): Boolean {
-        if (toolName.isBlank() || toolName in FORBIDDEN_TOOLS || toolName in disallowedTools) {
+        if (toolName.isBlank() || toolName in RECURSION_TOOLS || toolName in ALWAYS_FORBIDDEN ||
+            toolName in disallowedTools
+        ) {
             return false
         }
+        // screen 这类专用 Subagent 可以使用屏幕/灵屏工具，并可把成功流程沉淀成技能。
+        if (allowScreenTools && (toolName in GUI_TOOLS || toolName == "skills_manage")) return true
+        if (!allowScreenTools && toolName in GUI_TOOLS) return false
         val customAllowlist = explicitTools
         if (customAllowlist != null) {
             if ("*" in customAllowlist) return true
@@ -60,6 +67,7 @@ internal data class SubagentProfile(
         const val TYPE_EXPLORE = "explore"
         const val TYPE_CODER = "coder"
         const val TYPE_PLAN = "plan"
+        const val TYPE_SCREEN = "screen"
         const val DEFAULT_TYPE = TYPE_EXPLORE
 
         private const val SUBAGENT_ROLE_PREFIX =
@@ -67,10 +75,14 @@ internal data class SubagentProfile(
                 "主 Agent 看不到你的中间思考与工具调用过程，只能看到你结束时的最后一条回复（final message）。" +
                 "不要向终端用户直接提问；如果任务存在歧义或缺少前置条件，请在最终回复中向主 Agent 清晰说明。"
 
-        val FORBIDDEN_TOOLS = setOf(
+        /** 任何 Subagent 都不能用：递归派发与自修改。 */
+        private val RECURSION_TOOLS = setOf(
             AgentSubagentToolCatalog.TOOL_NAME,
             AgentSubagentToolCatalog.PROFILE_TOOL_NAME,
-            // 灵屏是父任务的独占资源：子代理既不能建屏，也不能接管屏幕。
+        )
+
+        /** 屏幕/浏览器/灵屏工具：默认禁，只有 screen 这类专用 Subagent 才放开。 */
+        private val GUI_TOOLS = setOf(
             "virtual_screen",
             "observe_screen",
             "release_gui",
@@ -96,11 +108,18 @@ internal data class SubagentProfile(
             "launch_app",
             "open_uri",
             "browser_use",
+        )
+
+        /** 任何 Subagent 都不能用：改记忆、装技能、常驻后台。 */
+        private val ALWAYS_FORBIDDEN = setOf(
             "memory_write",
             "character_memory_write",
             "skills_install_from_github",
             "terminal_daemon",
         )
+
+        /** 默认禁用集合（递归 + GUI + 恒定禁用），供 coder 这类 profile 做差集。 */
+        val FORBIDDEN_TOOLS = RECURSION_TOOLS + GUI_TOOLS + ALWAYS_FORBIDDEN
 
         val READ_ONLY_TOOLS = setOf(
             "read_file",
@@ -198,7 +217,51 @@ internal data class SubagentProfile(
             builtin = true,
         )
 
-        val BUILTIN_PROFILES: List<SubagentProfile> = listOf(EXPLORE, CODER, PLAN)
+        /**
+         * 灵屏操作专用 Subagent。
+         *
+         * 与 explore/coder/plan 不同，它允许屏幕与灵屏工具，因为职责就是在灵屏里完成多步界面操作；
+         * 但仍禁用递归派发、改记忆、装技能与常驻后台。操作纪律写在 roleInstruction：
+         * 先观察、优先无障碍节点操作、每步验证、失败再退坐标，并把跑通的流程沉淀成技能。
+         */
+        val SCREEN = SubagentProfile(
+            name = TYPE_SCREEN,
+            summary = "灵屏界面操作：无障碍优先、逐动验证、成功流程沉淀技能",
+            whenToUse = "GUI operator running inside the virtual screen. Use it for multi-step UI tasks in third-party apps: " +
+                "open app, navigate pages, fill forms, toggle switches, verify results. It prefers accessibility node actions " +
+                "and falls back to coordinate taps only when node actions fail, then records proven flows as skills.",
+            toolHighlights = listOf(
+                "virtual_screen", "observe_screen", "tap_element", "scroll_element",
+                "tap_area", "scroll", "type_text", "press_key", "wait_for_text", "skills_manage",
+            ),
+            roleInstruction = "你是灵屏操作 Subagent（screen）。你负责在灵屏（独立 display）里完成多步界面任务，" +
+                "并把真正跑通的流程沉淀成技能。\n\n" +
+                "操作纪律（必须按顺序）：\n" +
+                "1. 动手前先 observe_screen 读取当前界面节点，确认目标在哪里；不清楚就多观察一次，不要盲点。\n" +
+                "2. 优先无障碍：能用 tap_element / long_press_element / scroll_element / wait_for_text 就用它们，" +
+                "这类操作按节点执行，不依赖坐标、失败率低。\n" +
+                "3. 每一步动作后必须 observe_screen 验证结果（页面变化、文本出现、开关状态），不要连续盲点。\n" +
+                "4. 无障碍路径不可用（节点缺失、点击后界面无变化、控件不可点击）时，才退回坐标操作：" +
+                "tap_area / tap / swipe；坐标以同一次观察的截图与节点 bounds 为准。\n" +
+                "5. 输入文本优先 type_text 并指定 index；输入前先确认输入框已聚焦。\n" +
+                "6. 遇到弹窗、权限页、广告先按正常路径关闭或授权，不要绕过系统权限界面。\n" +
+                "7. 同一处连续三次尝试仍无进展就停止，在最终回复里说明卡在哪一步、当前界面状态、建议的下一步。\n\n" +
+                "技能沉淀（越用越快）：\n" +
+                "- 只在任务确实完成并验证后，才用 skills_manage(action=create) 写技能；\n" +
+                "- 技能内容写清：适用 App、前置条件、关键节点的定位方式（文本/描述/层级）、步骤序列、" +
+                "每步验证点、常见失败与回退方式；\n" +
+                "- 已有同名技能时用 update 补充差异，不要重复创建；\n" +
+                "- 不要在失败任务上写技能，也不要把临时猜测写成步骤。\n\n" +
+                "最终回复：成功时给出操作序列摘要、最终界面状态、是否已沉淀技能（技能名）；" +
+                "失败时给出卡住的位置、已尝试的路径与当前界面证据。",
+            allowWriteFilesAndTerminal = false,
+            allowScreenTools = true,
+            // 只用灵屏：不放开内置浏览器，避免子代理绕开灵屏直接用离屏 WebView。
+            disallowedTools = setOf("browser_use"),
+            builtin = true,
+        )
+
+        val BUILTIN_PROFILES: List<SubagentProfile> = listOf(EXPLORE, CODER, PLAN, SCREEN)
         val BUILTIN_NAMES: Set<String> = BUILTIN_PROFILES.mapTo(linkedSetOf()) { it.name }
 
         fun resolve(
