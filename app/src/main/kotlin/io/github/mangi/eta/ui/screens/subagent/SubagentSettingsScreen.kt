@@ -600,7 +600,11 @@ private fun SubagentModelMultiPickerContent(
     onToggle: (String) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val groups = remember(pickerState.providerGroups, query) { pickerState.filterGroups(query) }
+    var providerFilter by remember { mutableStateOf<String?>(null) }
+    val groups = remember(pickerState.providerGroups, query, providerFilter) {
+        pickerState.filterGroups(query)
+            .filter { providerFilter == null || it.providerId == providerFilter }
+    }
     val density = LocalDensity.current
     val sheetHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.68f
     Column(
@@ -615,6 +619,32 @@ private fun SubagentModelMultiPickerContent(
             label = "搜索模型或服务商",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         )
+        if (pickerState.providerGroups.size > 1) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "filter:all") {
+                    EtaChoiceChip(
+                        text = "全部",
+                        selected = providerFilter == null,
+                        onClick = { providerFilter = null },
+                    )
+                }
+                items(
+                    items = pickerState.providerGroups,
+                    key = { "filter:${it.providerId}" },
+                ) { group ->
+                    EtaChoiceChip(
+                        text = group.providerName,
+                        selected = providerFilter == group.providerId,
+                        onClick = {
+                            providerFilter = if (providerFilter == group.providerId) null else group.providerId
+                        },
+                    )
+                }
+            }
+        }
         Text(
             text = "勾选后，主 Agent 只能从这些模型里为子智能体挑模型；全部不勾表示不限制。",
             style = MiuixTheme.textStyles.footnote2,
@@ -626,7 +656,7 @@ private fun SubagentModelMultiPickerContent(
             contentPadding = PaddingValues(bottom = 16.dp),
         ) {
             groups.forEach { group ->
-                item(key = "h:${group.providerId}") {
+                if (providerFilter == null) item(key = "h:${group.providerId}") {
                     Text(
                         text = group.providerName,
                         style = MiuixTheme.textStyles.footnote1,
