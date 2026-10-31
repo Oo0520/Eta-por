@@ -84,6 +84,8 @@ import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.github.mangi.eta.agent.subagent.SubagentRunRegistry
+import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.sp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.ReasoningEffort
@@ -459,6 +461,25 @@ internal fun AgentChatInputBar(
             )
         }
 
+        // 有子智能体在跑时，输入框上方出现「发给」目标；选中后发送只投给它，不进父对话流。
+        var liveSubagentIds by remember { mutableStateOf<List<String>>(emptyList()) }
+        var selectedSubagent by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                liveSubagentIds = SubagentRunRegistry.liveIds()
+                delay(1000)
+            }
+        }
+
+        fun submitToTarget(text: String) {
+            val target = selectedSubagent?.takeIf { it in liveSubagentIds }
+            if (target != null) {
+                SubagentRunRegistry.steer(target, text)
+            } else {
+                onSubmit(text)
+            }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -488,6 +509,47 @@ internal fun AgentChatInputBar(
                     )
                     .padding(horizontal = 10.dp, vertical = 8.dp),
             ) {
+                if (liveSubagentIds.isNotEmpty()) {
+                    val current = selectedSubagent?.takeIf { it in liveSubagentIds }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 4.dp, bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val options = buildList {
+                            add(null to "父 Agent")
+                            liveSubagentIds.take(3).forEach { id -> add(id to id.takeLast(6)) }
+                        }
+                        options.forEach { (id, label) ->
+                            val active = current == id
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(
+                                        if (active) {
+                                            MiuixTheme.colorScheme.primary
+                                        } else {
+                                            MiuixTheme.colorScheme.surfaceContainerHigh
+                                        },
+                                    )
+                                    .clickable { selectedSubagent = id }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    color = if (active) {
+                                        MiuixTheme.colorScheme.onPrimary
+                                    } else {
+                                        MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
                 // @ 引用面板 / 命令面板打开时收起这行状态，别让它压住输入内容。
                 val mentionPanelOpen = mentionQuery != null && referenceCandidates.isNotEmpty()
                 if (!mentionPanelOpen && !paletteVisible) {
@@ -709,7 +771,7 @@ internal fun AgentChatInputBar(
                                                 dictation.cancel()
                                                 val submittedText = textFieldState.text.toString()
                                                 textFieldState.clearText()
-                                                onSubmit(submittedText)
+                                                submitToTarget(submittedText)
                                             }
                                         },
                                         onLongClick = {
@@ -745,7 +807,7 @@ internal fun AgentChatInputBar(
                                         dictation.cancel()
                                         val submittedText = textFieldState.text.toString()
                                         textFieldState.clearText()
-                                        onSubmit(submittedText)
+                                        submitToTarget(submittedText)
                                     }
                                 },
                                 enabled = canSend,
