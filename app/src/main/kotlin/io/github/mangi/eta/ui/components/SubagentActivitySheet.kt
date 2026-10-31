@@ -274,8 +274,9 @@ private fun SubagentInspectorContent(
                                 pausedLocal = !pausedLocal
                                 pauseNotice = if (pausedLocal) "已暂停，检查完点「继续执行」" else "已继续执行"
                             } else {
+                                // 注册表里找不到，不代表面板里的状态就是准的：快照可能已经过期。
                                 pausedLocal = false
-                                pauseNotice = "它已经结束了"
+                                pauseNotice = "这条子代理已结束，或面板状态已过期；关掉重新点开可刷新"
                             }
                         },
                     )
