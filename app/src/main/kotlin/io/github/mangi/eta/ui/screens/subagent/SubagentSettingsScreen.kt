@@ -178,6 +178,10 @@ internal fun SubagentSettingsScreen(
     var showAuthorizedSheet by remember { mutableStateOf(false) }
     var authorizedDraft by remember { mutableStateOf<Set<String>>(emptySet()) }
     var parallelDraft by remember { mutableStateOf("8") }
+    var showRoundsDialog by remember { mutableStateOf(false) }
+    var roundsDraft by remember { mutableStateOf("12") }
+    var showRepeatDialog by remember { mutableStateOf(false) }
+    var repeatDraft by remember { mutableStateOf("3") }
     var inspectedProfile by remember { mutableStateOf<SubagentProfile?>(null) }
     var editorDraft by remember { mutableStateOf<CustomSubagentDraft?>(null) }
     var editorError by remember { mutableStateOf<String?>(null) }
@@ -333,6 +337,94 @@ internal fun SubagentSettingsScreen(
                 }
             }
 
+            EtaWindowDialog(
+                show = showRoundsDialog,
+                title = "单次轮次上限",
+                onDismissRequest = { showRoundsDialog = false },
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    TextField(
+                        value = roundsDraft,
+                        onValueChange = { input -> roundsDraft = input.filter(Char::isDigit).take(3) },
+                        label = "最大思考轮次（1–200）",
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "子智能体每经历一次「思考 + 调工具」算一轮。到达上限后自动中止，并把" +
+                            "已完成的进度与中止原因回报给主 Agent，避免在失败循环里空转。",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    EtaTextButton(
+                        text = "保存",
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColorsPrimary(),
+                        onClick = {
+                            val chosen = roundsDraft.toIntOrNull()?.coerceIn(1, 200)
+                                ?: subagentSettings.maxRounds
+                            scope.launch {
+                                RuntimeConfigRepository.setSubagentSettings(
+                                    subagentSettings.copy(maxRounds = chosen),
+                                )
+                            }
+                            showRoundsDialog = false
+                        },
+                    )
+                    EtaTextButton(
+                        text = "取消",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showRoundsDialog = false },
+                    )
+                }
+            }
+
+            EtaWindowDialog(
+                show = showRepeatDialog,
+                title = "重复动作中止",
+                onDismissRequest = { showRepeatDialog = false },
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    TextField(
+                        value = repeatDraft,
+                        onValueChange = { input -> repeatDraft = input.filter(Char::isDigit).take(2) },
+                        label = "连续重复次数（0–50，0 为关闭）",
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "同一个工具连着用同样的参数调用，通常说明它已经卡住了（比如反复搜同一个" +
+                            "关键词、反复点同一个按钮）。达到次数就中止并回报，把问题交回给主 Agent。",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    EtaTextButton(
+                        text = "保存",
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColorsPrimary(),
+                        onClick = {
+                            val chosen = repeatDraft.toIntOrNull()?.coerceIn(0, 50)
+                                ?: subagentSettings.repeatAbortThreshold
+                            scope.launch {
+                                RuntimeConfigRepository.setSubagentSettings(
+                                    subagentSettings.copy(repeatAbortThreshold = chosen),
+                                )
+                            }
+                            showRepeatDialog = false
+                        },
+                    )
+                    EtaTextButton(
+                        text = "取消",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showRepeatDialog = false },
+                    )
+                }
+            }
+
             val activeDraft = editorDraft
             EtaWindowDialog(
                 show = activeDraft != null,
@@ -468,6 +560,43 @@ internal fun SubagentSettingsScreen(
                     onClick = {
                         parallelDraft = subagentSettings.maxParallel.toString()
                         showParallelDialog = true
+                    },
+                )
+                EtaPreferenceDivider()
+                EtaArrowPreference(
+                    title = "单次轮次上限",
+                    summary = "单个子智能体最多思考 ${subagentSettings.maxRounds} 轮，" +
+                        "超过就自动中止并向主 Agent 回报原因",
+                    enabled = subagentEnabled,
+                    startAction = {
+                        EtaPreferenceIcon(
+                            icon = Icons.Rounded.Psychology,
+                            tint = EtaPreferenceColors.Yellow,
+                        )
+                    },
+                    onClick = {
+                        roundsDraft = subagentSettings.maxRounds.toString()
+                        showRoundsDialog = true
+                    },
+                )
+                EtaPreferenceDivider()
+                EtaArrowPreference(
+                    title = "重复动作中止",
+                    summary = if (subagentSettings.repeatAbortThreshold <= 0) {
+                        "已关闭：不会因为重复动作自动中止"
+                    } else {
+                        "同一动作连续重复 ${subagentSettings.repeatAbortThreshold} 次就中止并回报"
+                    },
+                    enabled = subagentEnabled,
+                    startAction = {
+                        EtaPreferenceIcon(
+                            icon = Icons.Rounded.Route,
+                            tint = EtaPreferenceColors.Orange,
+                        )
+                    },
+                    onClick = {
+                        repeatDraft = subagentSettings.repeatAbortThreshold.toString()
+                        showRepeatDialog = true
                     },
                 )
                 EtaPreferenceDivider()
