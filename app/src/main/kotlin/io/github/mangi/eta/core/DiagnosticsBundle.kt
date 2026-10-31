@@ -26,6 +26,9 @@ import kotlinx.coroutines.withContext
  */
 internal object DiagnosticsBundle {
 
+    /** 手动诊断包的默认落盘目录；自动导出在它的「自动」子目录，互不覆盖。 */
+    const val DEFAULT_DIR = "/storage/emulated/0/ai共享文件夹/诊断包备份"
+
     suspend fun collect(context: Context): ByteArray = withContext(Dispatchers.IO) {
         val root = runCatching { RootAccess.isGranted }.getOrDefault(false)
         val entries = linkedMapOf<String, String>()
@@ -72,7 +75,7 @@ internal object DiagnosticsBundle {
         }
         val systemLog = runCatching { command(systemArgs, 60) }
             .getOrElse { "读取失败：" + it.javaClass.simpleName }
-        return buildString {
+        val text = buildString {
             appendLine("== Eta 进程日志（pid=$pid，-t 20000）==")
             appendLine("实际覆盖：${window(etaLog)}")
             appendLine(etaLog.ifBlank { "（空）日志缓冲区可能已被刷掉。" })
@@ -80,13 +83,22 @@ internal object DiagnosticsBundle {
             appendLine("== 系统日志样本 ==")
             appendLine("实际覆盖：${window(systemLog)}")
             appendLine(systemLog.ifBlank { "（空）" })
-        }.take(MAX_LOG_BYTES)
+        }
+        // 截断只留尾部：排查看的是崩溃前后那几百行，不是两小时前的开头。
+        return if (text.length <= MAX_LOG_BYTES) {
+            text
+        } else {
+            "[日志过长，已保留尾部 ${MAX_LOG_BYTES} 字符]\n" + text.takeLast(MAX_LOG_BYTES)
+        }
     }
 
     /** 从 threadtime 行取首末时间戳，如实标注实际覆盖的窗口，不再写死「最近 10 分钟」。 */
     private fun window(text: String): String {
-        val stamps = Regex("^(\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d\\.\\d\\d\\d)")
-            .findAll(text)
+        // ^ 必须带 MULTILINE：threadtime 每行都有时间戳，缺了它只会去匹配全文开头。
+        val stamps = Regex(
+            "^(\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d\\.\\d\\d\\d)",
+            RegexOption.MULTILINE,
+        ).findAll(text)
             .map { it.groupValues[1] }
             .toList()
         return if (stamps.isEmpty()) "无时间戳（可能为空）" else "${stamps.first()} → ${stamps.last()}"

@@ -119,7 +119,12 @@ internal object DiagnosticsPatrol {
         fun oneLine(): String = "等级 ${level.label}｜异常 $abnormalCount 项｜注意 $noticeCount 项"
     }
 
-    private data class Baseline(val at: Long, val crashCount: Int, val oversized: Int)
+    private data class Baseline(
+        val at: Long,
+        val crashCount: Int,
+        val crashLatestAt: Long,
+        val oversized: Int,
+    )
 
     // ── 对外入口 ────────────────────────────────────────────────────────────
 
@@ -149,10 +154,13 @@ internal object DiagnosticsPatrol {
                     extra.appendLine()
                 }
                 val latestStamp = latest?.let { file -> stamp(file.lastModified()) }.orEmpty()
-                if (crashes.isNotEmpty() && baseline != null && crashes.size > baseline.crashCount) {
+                // 保留份数有上限（10 份）：满仓后新崩溃会顶掉最旧的，份数不变，只能比时间。
+                val latestMs = latest?.lastModified() ?: 0L
+                metrics["最近崩溃毫秒"] = latestMs.toString()
+                if (crashes.isNotEmpty() && baseline != null && latestMs > baseline.crashLatestAt) {
                     findings += Finding(
                         Level.ABNORMAL, "崩溃",
-                        "发现新崩溃记录（${baseline.crashCount} → ${crashes.size}）",
+                        "发现新崩溃记录（${baseline.crashCount} → ${crashes.size} 份，最近一份 $latestStamp）",
                         "最近一份：${latest?.name.orEmpty()}（$latestStamp）",
                         "已把这份崩溃现场写进报告附录；把结论贴给 Eta 可以直接做归因。",
                     )
@@ -259,7 +267,9 @@ internal object DiagnosticsPatrol {
                     app.contentResolver,
                     android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
                 ).orEmpty()
-                val on = enabled.split(':').any { it.startsWith(app.packageName) }
+                val on = enabled.split(':').any {
+                    android.content.ComponentName.unflattenFromString(it.trim())?.packageName == app.packageName
+                }
                 metrics["无障碍服务"] = if (on) "已开启" else "未开启"
                 findings += if (on) {
                     Finding(Level.OK, "无障碍", "无障碍服务在线", "GUI 工具与触发器可用", "无需处理")
@@ -335,8 +345,10 @@ internal object DiagnosticsPatrol {
 
             // 9) 日志关键字（导出这一刻抓一次，事后是抓不到的）
             runCatching {
-                val lines = shellCapture(600).also { logLines = it }
-                val crashLines = shellCapture(400, "crash")
+                // 只看上次巡检之后的新日志：否则同一次崩溃会在后面每一轮里被重复报成「异常」。
+                val sinceMs = baseline?.at ?: (now - 6 * 3_600_000L)
+                val lines = filterSince(shellCapture(600), sinceMs).also { logLines = it }
+                val crashLines = filterSince(shellCapture(400, "crash"), sinceMs)
                 val tomb = tombstones()
                 val fatal = lines.count { it.contains("FATAL EXCEPTION") } +
                     crashLines.count { it.contains("FATAL EXCEPTION") }
@@ -353,7 +365,7 @@ internal object DiagnosticsPatrol {
                 metrics["native 崩溃行数"] = native.toString()
                 if (lines.isNotEmpty()) {
                     extra.appendLine("── 日志尾部（最多 120 行）──")
-                    extra.append(lines.takeLast(120)).appendLine()
+                    extra.appendLine(lines.takeLast(120).joinToString("\n"))
                     extra.appendLine()
                 }
                 if (crashLines.isNotEmpty()) {
@@ -418,13 +430,7 @@ internal object DiagnosticsPatrol {
                     extra.appendLine(audit)
                     extra.appendLine()
                 }
-                if (zeros > 0) {
-                    findings += Finding(
-                        Level.NOTICE, "账目", "有 $zeros 项记账为 0 次",
-                        "这些功能本周期没有被触发过",
-                        "如果确实用过却没记账，说明埋点没生效，值得查。",
-                    )
-                }
+                // 0 次大多是「本周期没用过」，不是问题：留指标、不占告警。
             }.onFailure { metrics["账目检查"] = "失败：${it.safeLogType()}" }
 
             // 11) EtaTrace 摘要
@@ -505,6 +511,7 @@ internal object DiagnosticsPatrol {
         return Baseline(
             at = number(text, "at") ?: latest.lastModified(),
             crashCount = (number(text, "crashCount") ?: 0L).toInt(),
+            crashLatestAt = number(text, "crashLatestAt") ?: 0L,
             oversized = (number(text, "oversizedFields") ?: 0L).toInt(),
         )
     }
@@ -574,6 +581,7 @@ internal object DiagnosticsPatrol {
         appendLine("  \"abnormal\": ${findings.count { it.level == Level.ABNORMAL }},")
         appendLine("  \"notice\": ${findings.count { it.level == Level.NOTICE }},")
         appendLine("  \"crashCount\": ${metrics["崩溃记录份数"] ?: 0},")
+        appendLine("  \"crashLatestAt\": ${metrics["最近崩溃毫秒"] ?: 0},")
         appendLine("  \"oversizedFields\": ${metrics["越线字段数"] ?: 0},")
         appendLine("  \"deltas\": [")
         deltas.forEachIndexed { index, d -> appendLine("    \"${escape(d)}\"${if (index == deltas.lastIndex) "" else ","}") }
@@ -630,6 +638,28 @@ internal object DiagnosticsPatrol {
                 .setAutoCancel(true)
                 .build()
             manager.notify(NOTIFICATION_ID, notification)
+        }
+    }
+
+    /** `logcat -v time` 行首形如 `10-27 15:56:50.680 D/Tag(...)`；只留 sinceMs 之后的行。 */
+    private fun filterSince(lines: List<String>, sinceMs: Long): List<String> {
+        if (sinceMs <= 0L) return lines
+        val pattern = Regex("""^(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\.(\d{3})""")
+        val calendar = java.util.Calendar.getInstance()
+        val year = calendar.get(java.util.Calendar.YEAR)
+        return lines.filter { line ->
+            val groups = pattern.find(line)?.groupValues ?: return@filter true
+            calendar.clear()
+            calendar.set(
+                year,
+                groups[1].toInt() - 1,
+                groups[2].toInt(),
+                groups[3].toInt(),
+                groups[4].toInt(),
+                groups[5].toInt(),
+            )
+            calendar.set(java.util.Calendar.MILLISECOND, groups[6].toInt())
+            calendar.timeInMillis >= sinceMs
         }
     }
 
