@@ -21,8 +21,11 @@ internal data class SubagentModelOption(
         append(modelId)
         val facts = buildList {
             contextWindow?.let { add("上下文 " + humanTokens(it)) }
-            if (supportsThinking) add("支持思考")
-            if (efforts.isNotEmpty()) add("档位 " + efforts.joinToString("/"))
+            when {
+                efforts.isNotEmpty() -> add("档位 " + efforts.joinToString("/"))
+                // 只有 reasoning=true 但没有档位声明：思考固定开/关，传档位会被拒。
+                supportsThinking -> add("思考固定，无档位")
+            }
         }
         if (facts.isNotEmpty()) append("（").append(facts.joinToString("，")).append("）")
     }
@@ -63,8 +66,9 @@ internal object AgentSubagentToolCatalog {
                 authorizedModels.joinToString("；") { it.describe() } +
                 ". 选择规则（主动执行，不必等用户提醒）：" +
                 "① 先看上下文：要读大量材料、多文件或长日志时，只选上下文够大的（192K 装不下 1M 级别的材料）；" +
-                "② 再看能否自动验证：能靠测试/格式校验判定对错的机械任务，用支持思考的模型但给低档位（low）省成本；" +
-                "多步且出错不可回滚（写库、发消息、改动代码）的，给较高档位（high）；" +
+                "② 再看能否自动验证：能靠测试/格式校验判定对错的机械任务，用便宜模型或低档位省成本；" +
+                "多步且出错不可回滚（写库、发消息、改动代码）的，给更稳的模型或更高档位；" +
+                "注意：标了「思考固定，无档位」的模型不要传 reasoning_effort，会被拒绝；" +
                 "③ 一次派多个子代理时，主动分散到不同模型，别全部堆在同一个上；" +
                 "④ 想省成本就复用同一个模型 + 低档位，而不是每个子任务换一个。" +
                 "Pick model + reasoning_effort for each subagent based on these constraints. " +
