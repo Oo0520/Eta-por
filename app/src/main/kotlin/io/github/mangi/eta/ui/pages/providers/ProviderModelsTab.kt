@@ -1055,7 +1055,11 @@ private fun ModelEditDialog(
                                 if (geminiCapabilities.mandatory) "该模型必须思考，不支持 Off；Default 使用模型默认档位。"
                                 else "尚未确认该模型的思考档位；仅使用 Default，不发送自定义思考档位。"
                             } else if (reasoningOverrideActive) {
-                                stringResource(R.string.page_covered_model_automatic_capabilities_3fa7d4)
+                                if (inferredCapabilities != null) {
+                                    "档位按模型名推断（非官方元数据）；请按网关实际能力核对后再保存。"
+                                } else {
+                                    stringResource(R.string.page_covered_model_automatic_capabilities_3fa7d4)
+                                }
                             } else {
                                 stringResource(
                                     if (model.reasoning == true) {

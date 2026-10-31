@@ -302,21 +302,26 @@ internal class AgentRuntimeRunExecutor(
                     }.getOrNull()
                     val authorized = if (subagentCfg?.allowModelSelection == true) {
                         subagentCfg.effectiveGrants.mapNotNull { grant ->
-                            val selectable = runCatching {
+                            val resolved = runCatching {
                                 runBlocking {
                                     io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
                                     io.github.mangi.eta.data.repository.ProviderRepository
                                         .allProviders()
                                         .enabledModel(grant.modelId)
                                 }
-                            }.getOrNull()?.model?.reasoningCapabilities?.selectableEfforts
-                                ?.map { it.wireValue }.orEmpty()
+                            }.getOrNull() ?: return@mapNotNull null
+                            val selectable = resolved.model.reasoningCapabilities
+                                ?.selectableEfforts?.map { it.wireValue }.orEmpty()
                             val efforts = if (grant.allowedEfforts.isEmpty()) {
                                 selectable
                             } else {
                                 selectable.filter { it in grant.allowedEfforts }
                             }
-                            io.github.mangi.eta.agent.subagent.SubagentModelOption(grant.modelId, efforts)
+                            // 主 Agent 只认得对外 modelId（如 cn:hy3），不能给它内部 UUID。
+                            io.github.mangi.eta.agent.subagent.SubagentModelOption(
+                                modelId = resolved.model.modelId,
+                                efforts = efforts,
+                            )
                         }
                     } else {
                         emptyList()

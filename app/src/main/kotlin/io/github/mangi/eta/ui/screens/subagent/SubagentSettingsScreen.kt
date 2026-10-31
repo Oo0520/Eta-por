@@ -186,6 +186,10 @@ internal fun SubagentSettingsScreen(
     var grantDraft by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
     // 每个授权模型真实支持的档位；空表示未知，退回通用全集。
     var modelEfforts by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    // 内部 UUID → 显示名：授权列表与类型默认都按 UUID 存，展示时必须换成名字。
+    val providerModelNames = remember(providers) {
+        providers.flatMap { it.models }.associate { it.id to it.displayName }
+    }
     var showProfileDefaults by remember { mutableStateOf(false) }
     var expandedProfile by remember { mutableStateOf<String?>(null) }
     var parallelDraft by remember { mutableStateOf("8") }
@@ -260,8 +264,8 @@ internal fun SubagentSettingsScreen(
                                 val picked = grantDraft[modelId].orEmpty()
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
-                                        text = modelId,
-                                        style = MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace),
+                                        text = providerModelNames[modelId] ?: modelId,
+                                        style = MiuixTheme.textStyles.footnote2,
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                     )
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -384,7 +388,7 @@ internal fun SubagentSettingsScreen(
                                 Text(
                                     text = buildString {
                                         val m = current?.modelId.orEmpty()
-                                        append(if (m.isBlank()) "未设置" else m)
+                                        append(if (m.isBlank()) "未设置" else providerModelNames[m] ?: m)
                                         val e = current?.effort.orEmpty()
                                         if (e.isNotBlank()) append(" · ").append(e)
                                     },
@@ -416,7 +420,7 @@ internal fun SubagentSettingsScreen(
                                                 .padding(horizontal = 10.dp, vertical = 4.dp),
                                         ) {
                                             Text(
-                                                text = id,
+                                                text = providerModelNames[id] ?: id,
                                                 style = MiuixTheme.textStyles.footnote2,
                                                 color = if (active) MiuixTheme.colorScheme.onPrimary
                                                 else MiuixTheme.colorScheme.onSurfaceVariantSummary,

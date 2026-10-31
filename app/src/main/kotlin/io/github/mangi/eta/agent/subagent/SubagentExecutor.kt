@@ -19,6 +19,18 @@ import org.json.JSONObject
 /**
  * 执行单次 `subagent` 工具调用：管理独立子上下文、过滤工具目录、实时镜像内部步骤，并向父 Agent 返回结构化摘要。
  */
+/**
+ * 授权模型解析结果：内部 id（UUID，存储用）↔ 对外 modelId（主 Agent 看到并传回的）↔ 显示名。
+ *
+ * 两者混用是之前「授权了却选不中」「面板显示一串 UUID」的根因，这里统一收口。
+ */
+private data class GrantedModel(
+    val uuid: String,
+    val apiId: String,
+    val displayName: String,
+    val allowedEfforts: List<String>,
+)
+
 internal class SubagentExecutor(
     private val conversationKey: String,
     private val parentController: AgentRunController,
@@ -148,73 +160,80 @@ internal class SubagentExecutor(
         }.getOrNull()
         val allowModelPick = subagentSettings?.allowModelSelection == true
         val grants = if (allowModelPick) subagentSettings?.effectiveGrants.orEmpty() else emptyList()
-        val allowed = grants.map { it.modelId }
+
+        // 授权里存的是模型内部 id（UUID），主 Agent 看到并传回来的是对外 modelId（如 cn:hy3）。
+        // 这里解析一次，后续统一用 GrantedModel，避免两套 id 混用。
+        val providerModels = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                io.github.mangi.eta.data.repository.ProviderRepository.allProviders()
+            }
+        }.getOrDefault(emptyList())
+        val granted = grants.mapNotNull { grant ->
+            val resolved = providerModels.enabledModel(grant.modelId) ?: return@mapNotNull null
+            val selectable = resolved.model.reasoningCapabilities
+                ?.selectableEfforts?.map { it.wireValue }.orEmpty()
+            GrantedModel(
+                uuid = grant.modelId,
+                apiId = resolved.model.modelId,
+                displayName = resolved.model.displayName.ifBlank { resolved.model.modelId },
+                allowedEfforts = if (grant.allowedEfforts.isEmpty()) {
+                    selectable
+                } else {
+                    selectable.filter { it in grant.allowedEfforts }
+                },
+            )
+        }
+
+        val requestedGrant = requestedModel?.let { raw ->
+            val target = normalizeModelId(raw)
+            granted.firstOrNull { normalizeModelId(it.apiId) == target || it.uuid == raw }
+        }
         if (allowModelPick && requestedModel != null) {
-            // 模型 id 可能带服务商前缀（cn: / openai: …），比较时去掉前缀再比，避免勾选后仍被判未授权。
-            val target = normalizeModelId(requestedModel)
-            val matched = allowed.isEmpty() || allowed.any { normalizeModelId(it) == target }
-            if (!matched) {
+            if (granted.isNotEmpty() && requestedGrant == null) {
                 SubagentSessionStore.releaseRunning(conversationKey, subagentId)
                 controllerBinding.close()
                 return errorResult(
                     "MODEL_NOT_AUTHORIZED",
-                    "模型 $requestedModel 没有在子智能体设置里授权；请让用户在「授权模型」里勾选后再派发。",
+                    "模型 $requestedModel 没有在子智能体设置里授权；只能从这些里挑：" +
+                        granted.joinToString(", ") { it.apiId } + "。",
                 )
             }
-            // 思考强度必须落在「该模型支持的档位 ∩ 用户授权给它的档位」里；否则明确报错，
-            // 不要像以前那样静默钳到相邻档——用户会以为设了 high 其实跑了 medium。
+            // 思考强度必须落在「该模型支持的档位 ∩ 用户授权给它的档位」里；否则明确报错。
             if (requestedEffort != null) {
-                val grant = grants.firstOrNull { normalizeModelId(it.modelId) == target }
-                val selectable = runCatching {
-                    kotlinx.coroutines.runBlocking {
-                        io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
-                        io.github.mangi.eta.data.repository.ProviderRepository
-                            .allProviders()
-                            .enabledModel(grant!!.modelId)
-                    }
-                }.getOrNull()?.model?.reasoningCapabilities?.selectableEfforts?.map { it.wireValue }
-                    ?: emptyList()
-                val grantEfforts = grant?.allowedEfforts.orEmpty()
-                val allowedEfforts = if (grantEfforts.isEmpty()) {
-                    selectable
-                } else {
-                    selectable.filter { it in grantEfforts }
-                }
+                val options = requestedGrant?.allowedEfforts.orEmpty()
                 val wire = ReasoningEffort.fromWireValue(requestedEffort)?.wireValue ?: requestedEffort
-                if (allowedEfforts.isEmpty()) {
+                val label = requestedGrant?.apiId ?: requestedModel
+                if (options.isEmpty()) {
                     SubagentSessionStore.releaseRunning(conversationKey, subagentId)
                     controllerBinding.close()
                     return errorResult(
                         "SUBAGENT_EFFORT_UNSUPPORTED",
-                        "模型 ${grant?.modelId ?: requestedModel} 没有可用的思考强度档位；" +
-                            "本次请省略 reasoning_effort，或换一个支持思考强度的模型。",
+                        "模型 $label 没有可用的思考强度档位；本次请省略 reasoning_effort，或换一个支持思考强度的模型。",
                     )
                 }
-                if (wire !in allowedEfforts) {
+                if (wire !in options) {
                     SubagentSessionStore.releaseRunning(conversationKey, subagentId)
                     controllerBinding.close()
                     return errorResult(
                         "SUBAGENT_EFFORT_UNSUPPORTED",
-                        "模型 ${grant?.modelId ?: requestedModel} 不支持思考强度 $requestedEffort；" +
-                            "可选：${allowedEfforts.joinToString(", ")}。",
+                        "模型 $label 不支持思考强度 $requestedEffort；可选：${options.joinToString(", ")}。",
                     )
                 }
             }
         }
-        // 未指定模型时不报错，按「该类型的默认模型 → 授权列表第一个」兜底，
-        // 并在结果里标明「自动选择」，用户仍能看到用了什么。
+        // 未指定模型时不报错，按「该类型的默认模型 → 授权列表第一个」兜底。
         val profileDefault = subagentSettings?.profileDefaults?.get(profile.name)
-        val profileDefaultModel = profileDefault?.modelId
-            ?.takeIf { it.isNotBlank() && (allowed.isEmpty() || it in allowed) }
-        val autoPickedModel = if (allowModelPick && requestedModel == null) {
-            profileDefaultModel ?: allowed.firstOrNull()
+        val profileGrant = profileDefault?.modelId?.takeIf { it.isNotBlank() }?.let { uuid ->
+            granted.firstOrNull { it.uuid == uuid }
+        }
+        val autoGrant = if (allowModelPick && requestedModel == null) {
+            profileGrant ?: granted.firstOrNull()
         } else {
             null
         }
-        // 类型默认强度只在主 Agent 没指定时生效，且必须是该模型允许的档位。
-        val effectiveEffort = requestedEffort
-            ?: profileDefault?.effort?.takeIf { it.isNotBlank() }
-        val effectiveModelId = requestedModel ?: autoPickedModel
+        val effectiveModelId = requestedGrant?.uuid ?: autoGrant?.uuid
+        val effectiveEffort = requestedEffort ?: profileDefault?.effort?.takeIf { it.isNotBlank() }
         val useOverride = allowModelPick && configForOverride != null &&
             (effectiveModelId != null || effectiveEffort != null)
         val resolvedConfig = runCatching {
@@ -366,7 +385,7 @@ internal class SubagentExecutor(
                     .put("description", description)
                     .put("model", modelLabel)
                     .put("effort", effortLabel)
-                    .put("model_auto_selected", autoPickedModel != null)
+                    .put("model_auto_selected", autoGrant != null)
                     .put("status", SubagentActivitySnapshot.STATUS_COMPLETED)
                     .put("tool_calls", tracker.toolCount())
                     .put("summary", response.content)
