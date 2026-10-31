@@ -2,6 +2,7 @@ package io.github.mangi.eta.data.repository
 
 import android.content.Context
 import androidx.room.withTransaction
+import io.github.mangi.eta.data.db.ConversationCategoryEntity
 import io.github.mangi.eta.data.db.ConversationContextCheckpointEntity
 import io.github.mangi.eta.data.db.ConversationEntity
 import io.github.mangi.eta.data.db.ConversationMessageEntity
@@ -41,6 +42,8 @@ internal data class EtaBackupDocument(
     val conversations: List<ConversationEntity> = emptyList(),
     val messages: List<ConversationMessageEntity> = emptyList(),
     val contextCheckpoints: List<ConversationContextCheckpointEntity> = emptyList(),
+    /** #002：分类表与会话归属一起备份，避免恢复后会话指向不存在的分类而显示未分类。 */
+    val conversationCategories: List<ConversationCategoryEntity> = emptyList(),
     val conversationState: ConversationStateEntity? = null,
     val memoryMd: String = "",
     val roleplay: CharacterBackupData? = null,
@@ -97,6 +100,12 @@ internal object EtaBackupRepository {
                     writer.value("selectedModelId", String.serializer().nullable, settings.selectedModelId)
                     writer.value("conversationState", ConversationStateEntity.serializer().nullable, dao.state())
                     writer.value("memoryMd", String.serializer(), memory)
+                    // #002：分类数量很小，直接放 header，不进记录流。
+                    writer.value(
+                        "conversationCategories",
+                        ListSerializer(ConversationCategoryEntity.serializer()),
+                        dao.categories(),
+                    )
                     val boundAvatars = linkedMapOf<String, String?>()
                     var conversationCount = 0
                     var messageCount = 0
@@ -178,6 +187,15 @@ internal object EtaBackupRepository {
                             dao.deleteContextCheckpoints()
                             dao.deleteConversations()
                             dao.deleteState()
+                            phase = "restore_categories"
+                            // 旧备份没有分类字段时保留设备现有分类，不做清空。
+                            if (document.conversationCategories.isNotEmpty()) {
+                                dao.deleteAllCategories()
+                                document.conversationCategories.forEach { category ->
+                                    cancellation.ensureActive()
+                                    dao.upsertCategory(category)
+                                }
+                            }
                             phase = "restore_conversations"
                             staged.conversations { row ->
                                 cancellation.ensureActive()

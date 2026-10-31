@@ -8,6 +8,7 @@ import io.github.mangi.eta.agent.roleplay.RoleplayBinding
 import io.github.mangi.eta.agent.roleplay.RoleplayMessageState
 import io.github.mangi.eta.data.db.ConversationCategoryEntity
 import io.github.mangi.eta.data.db.ConversationContextCheckpointEntity
+import io.github.mangi.eta.data.db.ConversationDao
 import io.github.mangi.eta.data.db.ConversationEntity
 import io.github.mangi.eta.data.db.ConversationMetadata
 import io.github.mangi.eta.data.db.ConversationMessageEntity
@@ -60,6 +61,13 @@ internal object AgentConversationStore {
          * 重启后列表被压紧；增量保存按下标截断后缀，这些会话必须先整段重写一次。
          */
         val unalignedConversationIds: Set<String> = emptySet(),
+        /**
+         * 只有元数据、没把消息与上下文读进内存的会话。
+         * 保存路径必须跳过这些会话的 messages / checkpoint，否则内存里的空列表会覆盖库内历史。
+         */
+        val partiallyLoadedConversationIds: Set<String> = emptySet(),
+        /** 会话列表预览（库里最新一条消息的首块，≤256 字符）；占位会话靠它显示摘要。 */
+        val previews: Map<String, String> = emptyMap(),
     )
 
     private val saveMutex = Mutex()
@@ -75,8 +83,9 @@ internal object AgentConversationStore {
         conversationsById: Map<String, AgentChatHomeUiState>,
         titles: Map<String, String>,
         updatedAt: Map<String, Long>,
+        categoryIds: Map<String, String>? = null,
     ) = AgentConversationPersistence().save(
-        context, Snapshot(selectedConversationId, conversationsById, titles, updatedAt),
+        context, Snapshot(selectedConversationId, conversationsById, titles, updatedAt), categoryIds,
     )
 
     /** 收藏置顶写入：直写数据库单列，独立事务，与整段会话保存互不覆盖。 */
@@ -119,6 +128,16 @@ internal object AgentConversationStore {
         selectedConversationId: String?,
         current: Map<String, AgentConversationPersistence.Content>,
         previous: Map<String, AgentConversationPersistence.Content>,
+        /** 只加载了元数据的会话：这里只写元数据，不碰 messages / checkpoint。 */
+        partiallyLoadedConversationIds: Set<String> = emptySet(),
+        /**
+         * 会话分类归属的权威映射（会话 id → 分类 id）。null 表示本次不参与归属（沿用库内值）。
+         *
+         * #002：归属必须跟着「会话行落库」一起写。旧实现是新建会话时立刻
+         * `UPDATE conversations SET category_id = ? WHERE id = ?`，可那一刻行还没插入，
+         * UPDATE 作用在 0 行上，接着持久化又把 null 写进这一列 —— 新会话就掉进未分类。
+         */
+        categoryIds: Map<String, String>? = null,
     ) {
         val appContext = context.applicationContext
         saveMutex.withLock {
@@ -130,9 +149,12 @@ internal object AgentConversationStore {
                     database.withTransaction {
                         val stored = dao.conversationMetadataRows().associateBy { it.id }
                         phase = "delete_conversations"
-                        (stored.keys - current.keys).forEach { dao.deleteConversation(it) }
+                        // 未加载的会话靠占位状态留在 current 里；真正被删掉的才会从 current 消失。
+                        (stored.keys - current.keys - partiallyLoadedConversationIds)
+                            .forEach { dao.deleteConversation(it) }
                         for ((id, state) in current) {
                             val old = previous[id].takeIf { id in stored }
+                            val isPlaceholder = id in partiallyLoadedConversationIds
                             if (old == null || !state.sameMetadata(old)) {
                                 phase = "encode_metadata"
                                 val row = ConversationEntity(
@@ -147,11 +169,13 @@ internal object AgentConversationStore {
                                     updatedAt = state.updatedAt.takeIf { it != 0L } ?: System.currentTimeMillis(),
                                     modelId = state.modelId,
                                     pinned = stored[id]?.pinned ?: false,
-                                    categoryId = stored[id]?.categoryId,
+                                    categoryId = if (categoryIds != null) categoryIds[id] else stored[id]?.categoryId,
                                 )
                                 phase = "write_metadata"
                                 dao.insertConversations(listOf(row))
                             }
+                            // 占位会话的消息与上下文不在内存里，写回等于清空库内历史（#006）。
+                            if (isPlaceholder) continue
                             if (old == null || state.history != old.history || state.journal != old.journal) {
                                 val missing = dao.contextCheckpointRow(id) == null
                                 phase = "encode_history"
@@ -202,6 +226,13 @@ internal object AgentConversationStore {
         }
     }
 
+    /**
+     * 启动快照：只把**选中会话**的消息与上下文读进内存，其余会话留占位状态。
+     *
+     * #006：旧实现把 46 个会话的 19963 条消息与全部 checkpoint 一次性还原（实测 96M 字符，
+     * 常驻堆 192MB 并持续爬升），进程跑 40 分钟后任意一次大分配就 OOM。
+     * 占位会话在用户切过去时由 [loadConversation] 按需补齐。
+     */
     private suspend fun loadSnapshot(context: Context): Snapshot {
         val dao = EtaDatabase.get(context).conversationDao()
         val conversations = dao.conversations()
@@ -214,65 +245,39 @@ internal object AgentConversationStore {
             )
         }
 
+        val selected = dao.state()?.selectedConversationId
+            ?.takeIf { id -> conversations.any { it.id == id } }
+            ?: conversations.first().id
+        // 空洞会话（流式占位留下的 sort_index 不连续）必须整段读：保存时才会整段重写修好。
+        val misalignedIds = runCatching { dao.misalignedConversationIds() }.getOrDefault(emptyList()).toSet()
+        val fullyLoadedIds = misalignedIds + selected
+
         val states = linkedMapOf<String, AgentChatHomeUiState>()
         val titles = mutableMapOf<String, String>()
         val updatedAt = mutableMapOf<String, Long>()
         val pinned = mutableMapOf<String, Boolean>()
         val categoryIds = mutableMapOf<String, String>()
         val unaligned = mutableSetOf<String>()
+        val partiallyLoaded = mutableSetOf<String>()
+        // 占位会话没有 messages，会话列表的预览改取库里最新一条消息的首块（≤256 字符）。
+        val previews = dao.conversationIndex()
+            .mapNotNull { row ->
+                row.messagePreview?.takeIf(String::isNotBlank)?.let { preview -> row.id to preview }
+            }
+            .toMap()
 
         conversations.forEach { conversation ->
-            val messages = buildList {
-                var offset = 0
-                while (true) {
-                    val page = dao.messagesPage(conversation.id, MESSAGE_LOAD_PAGE_SIZE, offset)
-                    addAll(page)
-                    if (page.size < MESSAGE_LOAD_PAGE_SIZE) break
-                    offset += page.size
-                }
+            if (conversation.id in fullyLoadedIds) {
+                states[conversation.id] = buildLoadedState(dao, conversation, unaligned)
+            } else {
+                states[conversation.id] = buildPlaceholderState(conversation)
+                partiallyLoaded += conversation.id
             }
-            val restored = messages.mapNotNull { it.toMessageOrNull() }
-            if (restored.size != messages.size || messages.withIndex().any { (index, row) -> row.sortIndex != index }) {
-                unaligned += conversation.id
-            }
-            val checkpoint = dao.contextCheckpoint(conversation.id)
-            states[conversation.id] = AgentChatHomeUiState(
-                roleplay = conversation.roleplayJson.takeIf(String::isNotBlank)?.let { json.decodeFromString<RoleplayBinding>(it) },
-                roleplayMessages = conversation.revisionsJson.takeIf(String::isNotBlank)?.let {
-                    json.decodeFromString<RoleplayMessageState>(it)
-                } ?: RoleplayMessageState(),
-                journal = AgentConversationCodec.decodeTranscript(checkpoint?.journalJson),
-                lastModelUsage = conversation.lastModelUsageJson.takeIf(String::isNotBlank)?.let {
-                    runCatching { json.decodeFromString<TokenUsageUi>(it) }.getOrNull()
-                },
-                messages = restored,
-                history = AgentConversationCodec.decodeTranscript(
-                    checkpoint?.historyJson
-                )
-                    .ifEmpty {
-                        messages.toLegacyHistory()
-                    },
-                appliedRuntimeRunIds = conversation.appliedRuntimeRunIdsJson.toStringList(),
-                input = "",
-                isStreaming = false,
-                thinkingEnabled = conversation.reasoningEffortValue.enablesReasoning,
-                reasoningEffort = conversation.reasoningEffortValue,
-                modelId = conversation.modelId,
-            ).let { original ->
-                ExternalConversationHistory.repair(conversation.id, original).also { repaired ->
-                    if (repaired.history != original.history || repaired.journal != original.journal) unaligned += conversation.id
-                }
-            }
-                .let(RoleplayConversationReducer::decorate)
             titles[conversation.id] = conversation.title.takeUnless { it == LEGACY_UNNAMED_TITLE }.orEmpty()
             updatedAt[conversation.id] = conversation.updatedAt
             if (conversation.pinned) pinned[conversation.id] = true
             conversation.categoryId?.let { cid -> categoryIds[conversation.id] = cid }
         }
-
-        val selected = dao.state()?.selectedConversationId
-            ?.takeIf { it in states }
-            ?: states.keys.first()
 
         return Snapshot(
             selectedConversationId = selected,
@@ -283,8 +288,84 @@ internal object AgentConversationStore {
             categories = dao.categories(),
             categoryIds = categoryIds,
             unalignedConversationIds = unaligned,
+            partiallyLoadedConversationIds = partiallyLoaded,
+            previews = previews,
         )
     }
+
+    /** 把一个会话的消息与上下文完整读进内存；口径与原启动加载完全一致。 */
+    suspend fun loadConversation(context: Context, conversationId: String): AgentChatHomeUiState? =
+        withContext(Dispatchers.IO) {
+            val dao = EtaDatabase.get(context.applicationContext).conversationDao()
+            val conversation = dao.conversation(conversationId) ?: return@withContext null
+            buildLoadedState(dao, conversation, mutableSetOf())
+        }
+
+    private suspend fun buildLoadedState(
+        dao: ConversationDao,
+        conversation: ConversationMetadata,
+        unaligned: MutableSet<String>,
+    ): AgentChatHomeUiState {
+        val messages = buildList {
+            var offset = 0
+            while (true) {
+                val page = dao.messagesPage(conversation.id, MESSAGE_LOAD_PAGE_SIZE, offset)
+                addAll(page)
+                if (page.size < MESSAGE_LOAD_PAGE_SIZE) break
+                offset += page.size
+            }
+        }
+        val restored = messages.mapNotNull { it.toMessageOrNull() }
+        if (restored.size != messages.size || messages.withIndex().any { (index, row) -> row.sortIndex != index }) {
+            unaligned += conversation.id
+        }
+        val checkpoint = dao.contextCheckpoint(conversation.id)
+        return AgentChatHomeUiState(
+            roleplay = conversation.roleplayJson.takeIf(String::isNotBlank)?.let { json.decodeFromString<RoleplayBinding>(it) },
+            roleplayMessages = conversation.revisionsJson.takeIf(String::isNotBlank)?.let {
+                json.decodeFromString<RoleplayMessageState>(it)
+            } ?: RoleplayMessageState(),
+            journal = AgentConversationCodec.decodeTranscript(checkpoint?.journalJson),
+            lastModelUsage = conversation.lastModelUsageJson.takeIf(String::isNotBlank)?.let {
+                runCatching { json.decodeFromString<TokenUsageUi>(it) }.getOrNull()
+            },
+            messages = restored,
+            history = AgentConversationCodec.decodeTranscript(checkpoint?.historyJson)
+                .ifEmpty {
+                    messages.toLegacyHistory()
+                },
+            appliedRuntimeRunIds = conversation.appliedRuntimeRunIdsJson.toStringList(),
+            input = "",
+            isStreaming = false,
+            thinkingEnabled = conversation.reasoningEffortValue.enablesReasoning,
+            reasoningEffort = conversation.reasoningEffortValue,
+            modelId = conversation.modelId,
+        ).let { original ->
+            ExternalConversationHistory.repair(conversation.id, original).also { repaired ->
+                if (repaired.history != original.history || repaired.journal != original.journal) unaligned += conversation.id
+            }
+        }.let(RoleplayConversationReducer::decorate)
+    }
+
+    /** 未加载会话的占位状态：只有元数据，messages / journal / history 为空，列表摘要靠 previews。 */
+    private fun buildPlaceholderState(conversation: ConversationMetadata) = AgentChatHomeUiState(
+        roleplay = conversation.roleplayJson.takeIf(String::isNotBlank)?.let { json.decodeFromString<RoleplayBinding>(it) },
+        roleplayMessages = conversation.revisionsJson.takeIf(String::isNotBlank)?.let {
+            json.decodeFromString<RoleplayMessageState>(it)
+        } ?: RoleplayMessageState(),
+        journal = emptyList(),
+        lastModelUsage = conversation.lastModelUsageJson.takeIf(String::isNotBlank)?.let {
+            runCatching { json.decodeFromString<TokenUsageUi>(it) }.getOrNull()
+        },
+        messages = emptyList(),
+        history = emptyList(),
+        appliedRuntimeRunIds = conversation.appliedRuntimeRunIdsJson.toStringList(),
+        input = "",
+        isStreaming = false,
+        thinkingEnabled = conversation.reasoningEffortValue.enablesReasoning,
+        reasoningEffort = conversation.reasoningEffortValue,
+        modelId = conversation.modelId,
+    )
 
 
     private val ConversationMetadata.reasoningEffortValue: ReasoningEffort
