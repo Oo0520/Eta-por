@@ -105,7 +105,12 @@ internal object SettingsDataStore {
     private val AUTO_BACKUP_LAST_AT = longPreferencesKey("auto_backup_last_at")
     private val AUTO_BACKUP_FINGERPRINT = stringPreferencesKey("auto_backup_fingerprint")
     private val AUTO_BACKUP_LAST_FILE = stringPreferencesKey("auto_backup_last_file")
+    /** 上一次自动备份的失败原因与时间：成功时清空，供界面直接显示「为什么没备份」。 */
+    private val AUTO_BACKUP_LAST_ERROR = stringPreferencesKey("auto_backup_last_error")
+    private val AUTO_BACKUP_LAST_ERROR_AT = longPreferencesKey("auto_backup_last_error_at")
     private val AUTO_BACKUP_DIRECTORY = stringPreferencesKey("auto_backup_directory")
+    /** 自动备份格式：json / full（全量压缩包）。 */
+    private val AUTO_BACKUP_FORMAT = stringPreferencesKey("auto_backup_format")
     private val DIAG_PATROL_ENABLED = booleanPreferencesKey("diag_patrol_enabled")
     private val DIAG_PATROL_INTERVAL = intPreferencesKey("diag_patrol_interval_minutes")
     private val DIAG_PATROL_KEEP = intPreferencesKey("diag_patrol_keep_count")
@@ -230,10 +235,10 @@ internal object SettingsDataStore {
             prefs[AUTO_BACKUP_INTERVAL_MINUTES] =
                 io.github.mangi.eta.data.model.AutoBackupInterval.normalize(updated.autoBackupIntervalMinutes)
             prefs[AUTO_BACKUP_KEEP] = io.github.mangi.eta.data.model.AutoBackupKeepCount.normalize(updated.autoBackupKeepCount)
-            prefs[AUTO_BACKUP_LAST_AT] = updated.autoBackupLastAt
-            prefs.putOrRemove(AUTO_BACKUP_FINGERPRINT, updated.autoBackupFingerprint)
-            prefs.putOrRemove(AUTO_BACKUP_LAST_FILE, updated.autoBackupLastFileName)
+            // 备份的运行态（上次时间 / 指纹 / 文件名 / 失败原因）只由 setAutoBackupState 单独写，
+            // 这里不再回写：设置页的快照通常早于本次备份完成，回写会把刚跑完的状态又冲成旧值。
             prefs.putOrRemove(AUTO_BACKUP_DIRECTORY, updated.autoBackupDirectory)
+            prefs[AUTO_BACKUP_FORMAT] = io.github.mangi.eta.data.model.AutoBackupFormat.normalize(updated.autoBackupFormat)
             prefs[DIAG_PATROL_ENABLED] = updated.diagPatrolEnabled
             prefs[DIAG_PATROL_INTERVAL] = io.github.mangi.eta.core.DiagnosticsPatrolInterval
                 .normalize(updated.diagPatrolIntervalMinutes)
@@ -251,7 +256,13 @@ internal object SettingsDataStore {
     suspend fun autoBackupLastAt(): Long = settings().autoBackupLastAt
 
     /** 备份状态单独写，走独立 edit，避免与设置页的表单改动互相覆盖。 */
-    suspend fun setAutoBackupState(lastAt: Long, fingerprint: String, fileName: String) {
+    suspend fun setAutoBackupState(
+        lastAt: Long,
+        fingerprint: String,
+        fileName: String,
+        error: String = "",
+        errorAt: Long = 0L,
+    ) {
         ensureInitialized()
         dataStore.edit { prefs ->
             prefs[AUTO_BACKUP_LAST_AT] = lastAt
@@ -259,6 +270,13 @@ internal object SettingsDataStore {
             else prefs[AUTO_BACKUP_FINGERPRINT] = fingerprint
             if (fileName.isBlank()) prefs.remove(AUTO_BACKUP_LAST_FILE)
             else prefs[AUTO_BACKUP_LAST_FILE] = fileName
+            if (error.isBlank()) {
+                prefs.remove(AUTO_BACKUP_LAST_ERROR)
+                prefs.remove(AUTO_BACKUP_LAST_ERROR_AT)
+            } else {
+                prefs[AUTO_BACKUP_LAST_ERROR] = error
+                prefs[AUTO_BACKUP_LAST_ERROR_AT] = errorAt
+            }
         }
     }
 
@@ -425,7 +443,12 @@ internal object SettingsDataStore {
         autoBackupLastAt = this[AUTO_BACKUP_LAST_AT] ?: 0L,
         autoBackupFingerprint = this[AUTO_BACKUP_FINGERPRINT].orEmpty(),
         autoBackupLastFileName = this[AUTO_BACKUP_LAST_FILE].orEmpty(),
+        autoBackupLastError = this[AUTO_BACKUP_LAST_ERROR].orEmpty(),
+        autoBackupLastErrorAt = this[AUTO_BACKUP_LAST_ERROR_AT] ?: 0L,
         autoBackupDirectory = this[AUTO_BACKUP_DIRECTORY].orEmpty(),
+        autoBackupFormat = io.github.mangi.eta.data.model.AutoBackupFormat.normalize(
+            this[AUTO_BACKUP_FORMAT].orEmpty(),
+        ),
         diagPatrolEnabled = this[DIAG_PATROL_ENABLED] ?: false,
         diagPatrolIntervalMinutes = io.github.mangi.eta.core.DiagnosticsPatrolInterval.normalize(
             this[DIAG_PATROL_INTERVAL] ?: io.github.mangi.eta.core.DiagnosticsPatrolInterval.DEFAULT_MINUTES,

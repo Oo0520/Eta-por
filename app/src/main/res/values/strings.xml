@@ -1726,6 +1726,14 @@
   <string name="data_backup_auto_run_now">立即备份一次</string>
   <string name="data_backup_auto_never">还没有自动备份过</string>
   <string name="data_backup_auto_last_file">最近备份：%1$s</string>
+  <string name="data_backup_auto_error">上次备份失败：%1$s（点「立即备份一次」可重试）</string>
+  <string name="data_backup_auto_format">备份格式</string>
+  <string name="data_backup_auto_format_json">轻量 JSON</string>
+  <string name="data_backup_auto_format_full">全量压缩包</string>
+  <string name="data_backup_auto_format_json_summary">轻量 JSON：会话、消息、记忆、角色卡、模型配置，单份一百多 MB，导出快</string>
+  <string name="data_backup_auto_format_full_summary">全量压缩包：JSON ＋ 私有目录（数据库、设置、草稿、技能、快照），压缩后更小，导出更慢</string>
+  <string name="data_backup_auto_format_saved">已切换为 %1$s</string>
+  <string name="data_backup_full_restore_ready">全量包已展开：重启 Eta 后私有目录（数据库、设置、文件）才会生效</string>
   <string name="data_backup_auto_last">上次备份：%1$s</string>
   <string name="data_backup_restore_title">从整机备份还原</string>
   <string name="data_backup_restore_summary">选一个全量备份包，把聊天记录、设置与私有数据整体回滚；还原后需要重启 Eta</string>

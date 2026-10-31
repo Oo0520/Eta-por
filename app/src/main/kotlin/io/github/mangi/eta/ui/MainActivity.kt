@@ -20,6 +20,8 @@ import io.github.mangi.eta.agent.display.VirtualScreenSession
 import io.github.mangi.eta.agent.display.VirtualScreenViewerActivity
 import io.github.mangi.eta.agent.runtime.AgentRuntimeService
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
+import io.github.mangi.eta.agent.automation.AutoBackupAlarm
+import io.github.mangi.eta.data.repository.AutoBackupRunner
 import io.github.mangi.eta.hook.vivo.VivoHandoff
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
@@ -29,6 +31,7 @@ import io.github.mangi.eta.ui.app.ArchivedConversationRequest
 import io.github.mangi.eta.ui.app.AgentAppTheme
 import io.github.mangi.eta.ui.app.PredictiveBackController
 import io.github.mangi.eta.ui.app.installStartupSplash
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -39,6 +42,8 @@ class MainActivity : ComponentActivity() {
     private var appliedPredictiveBackEnabled = true
     private var speechSettingsRequested by mutableStateOf(false)
     private var terminalRequested by mutableStateOf(false)
+    /** 上次前台补查自动备份的时间，用来节流 onResume。 */
+    private var lastAutoBackupCheckAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,6 +102,24 @@ class MainActivity : ComponentActivity() {
                 }
             }
             contentReady = true
+        }
+    }
+
+    /**
+     * 每次回到前台顺带做一次「到期检查」。
+     *
+     * 自动备份的闹钟在国产 ROM 上可能被省电策略推迟甚至清掉；只靠 Application.onCreate 又只在
+     * 进程第一次启动时跑一次，应用常驻后台后就再没有第二次机会。这里做带节流的前台补偿：
+     * 到点没备份的，用户一打开 Eta 就补上，已经备份过的会被周期判断直接跳过。
+     */
+    override fun onResume() {
+        super.onResume()
+        val now = System.currentTimeMillis()
+        if (now - lastAutoBackupCheckAt < AUTO_BACKUP_CHECK_INTERVAL_MS) return
+        lastAutoBackupCheckAt = now
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { AutoBackupAlarm.refresh(applicationContext) }
+            runCatching { AutoBackupRunner.maybeRun(applicationContext) }
         }
     }
 
@@ -276,6 +299,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** 前台补查自动备份的最小间隔。 */
+        private const val AUTO_BACKUP_CHECK_INTERVAL_MS = 5 * 60 * 1000L
         const val ACTION_OPEN_TERMINAL = "io.github.mangi.eta.action.OPEN_TERMINAL"
         const val ACTION_VIEW_EXECUTION = "io.github.mangi.eta.action.VIEW_EXECUTION"
         const val EXTRA_EXECUTION_SOURCE = "io.github.mangi.eta.extra.EXECUTION_SOURCE"
