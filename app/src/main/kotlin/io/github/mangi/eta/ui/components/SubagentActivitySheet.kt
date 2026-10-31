@@ -251,10 +251,52 @@ private fun SubagentInspectorContent(
         if (running) {
             var steerText by rememberSaveable(snapshot.subagentId) { mutableStateOf("") }
             var steerNotice by rememberSaveable(snapshot.subagentId) { mutableStateOf<String?>(null) }
+            var pausedLocal by rememberSaveable(snapshot.subagentId) { mutableStateOf(false) }
+            var pauseNotice by rememberSaveable(snapshot.subagentId) { mutableStateOf<String?>(null) }
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    EtaTextButton(
+                        text = if (pausedLocal) "继续执行" else "暂停",
+                        onClick = {
+                            val ok = if (pausedLocal) {
+                                SubagentRunRegistry.resume(snapshot.subagentId)
+                            } else {
+                                SubagentRunRegistry.pause(snapshot.subagentId)
+                            }
+                            if (ok) {
+                                pausedLocal = !pausedLocal
+                                pauseNotice = if (pausedLocal) "已暂停，检查完点「继续执行」" else "已继续执行"
+                            } else {
+                                pausedLocal = false
+                                pauseNotice = "它已经结束了"
+                            }
+                        },
+                    )
+                    Text(
+                        text = if (pausedLocal) {
+                            "已暂停：它停在检查点，不会自己往下走"
+                        } else {
+                            "暂停后在下一个检查点停住，进度不丢"
+                        },
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                pauseNotice?.let { notice ->
+                    Text(
+                        text = notice,
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.primary,
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,

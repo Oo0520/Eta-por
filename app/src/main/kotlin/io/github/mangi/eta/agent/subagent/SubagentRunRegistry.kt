@@ -13,6 +13,10 @@ internal object SubagentRunRegistry {
 
     private val controllers = ConcurrentHashMap<String, AgentRunController>()
 
+    /** 处于暂停态的子智能体 id（只用于界面回显，真正的挂起由控制器内部完成）。 */
+    private val pausedIds: MutableSet<String> =
+        java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
     /** 当前占用灵屏的子智能体 id；同一时刻只可能有一个（灵屏是单例）。 */
     @Volatile
     private var screenOwnerId: String? = null
@@ -24,8 +28,31 @@ internal object SubagentRunRegistry {
 
     fun unregister(subagentId: String) {
         controllers.remove(subagentId)
+        pausedIds.remove(subagentId)
         if (screenOwnerId == subagentId) screenOwnerId = null
     }
+
+    /**
+     * 暂停指定子智能体：它在下一个检查点（下一轮开始 / 下一步之前）挂起，进度不丢。
+     *
+     * @return false 表示它已经结束。
+     */
+    fun pause(subagentId: String): Boolean {
+        val controller = controllers[subagentId] ?: return false
+        controller.pause()
+        pausedIds.add(subagentId)
+        return true
+    }
+
+    /** 继续执行被暂停的子智能体；返回 false 表示它已经结束。 */
+    fun resume(subagentId: String): Boolean {
+        val controller = controllers[subagentId] ?: return false
+        controller.resume()
+        pausedIds.remove(subagentId)
+        return true
+    }
+
+    fun isPaused(subagentId: String): Boolean = pausedIds.contains(subagentId)
 
     fun screenOwner(): String? = screenOwnerId
 
