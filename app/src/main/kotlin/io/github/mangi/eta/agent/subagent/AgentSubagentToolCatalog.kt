@@ -7,6 +7,12 @@ import org.json.JSONObject
 /**
  * 声明给主 Agent 的 `subagent` 与 `subagent_profile` 工具 Schema。
  */
+/** 披露给主 Agent 的单个授权模型：id + 可用档位。 */
+internal data class SubagentModelOption(
+    val modelId: String,
+    val efforts: List<String> = emptyList(),
+)
+
 internal object AgentSubagentToolCatalog {
     const val TOOL_NAME = "subagent"
     const val PROFILE_TOOL_NAME = "subagent_profile"
@@ -16,7 +22,7 @@ internal object AgentSubagentToolCatalog {
     fun appendSchemas(
         tools: JSONArray,
         profiles: List<SubagentProfile> = SubagentProfileCatalog.listAll(),
-        authorizedModels: List<String> = emptyList(),
+        authorizedModels: List<SubagentModelOption> = emptyList(),
     ) {
         tools.put(schema(profiles, authorizedModels))
         tools.put(profileToolSchema())
@@ -24,7 +30,7 @@ internal object AgentSubagentToolCatalog {
 
     fun schema(
         profiles: List<SubagentProfile> = SubagentProfileCatalog.listAll(),
-        authorizedModels: List<String> = emptyList(),
+        authorizedModels: List<SubagentModelOption> = emptyList(),
     ): JSONObject {
         // 只告诉模型「必须是被授权的模型」而不给 id，它只能猜或者干脆不传——
         // 实测就是这个原因导致「允许主 Agent 选模型」看着没生效。
@@ -32,10 +38,17 @@ internal object AgentSubagentToolCatalog {
             "Optional model id for THIS subagent; must be one of the models the user authorized in Subagent settings. " +
                 "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings."
         } else {
-            "Optional model id for THIS subagent. Authorized models: " +
-                authorizedModels.joinToString(", ") +
-                ". Pick one for each subagent based on the task (cheaper/faster for simple lookups, stronger for reasoning), " +
-                "and say which one you picked when it matters."
+            "Optional model id for THIS subagent. Authorized models and their allowed reasoning efforts: " +
+                authorizedModels.joinToString("; ") { option ->
+                    if (option.efforts.isEmpty()) {
+                        option.modelId
+                    } else {
+                        "${option.modelId} (efforts: ${option.efforts.joinToString("/")})"
+                    }
+                } +
+                ". Pick model + reasoning_effort for each subagent based on the task " +
+                "(cheaper/faster for simple lookups, stronger for reasoning). " +
+                "Omit reasoning_effort to use the model default; an unsupported value is rejected with the allowed list."
         }
         val profileLines = profiles.joinToString("\n") { profile ->
             val tag = if (profile.builtin) "" else " [custom]"

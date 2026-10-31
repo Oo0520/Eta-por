@@ -17,6 +17,7 @@ import io.github.mangi.eta.agent.roleplay.CharacterMemoryTools
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
 import io.github.mangi.eta.agent.subagent.SubagentExecutor
+import io.github.mangi.eta.data.model.enabledModel
 import io.github.mangi.eta.agent.mcp.McpRunSnapshot
 import io.github.mangi.eta.agent.mcp.McpToolExecutor
 import io.github.mangi.eta.agent.mcp.RoutingToolExecutor
@@ -300,7 +301,23 @@ internal class AgentRuntimeRunExecutor(
                         runBlocking { io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings() }
                     }.getOrNull()
                     val authorized = if (subagentCfg?.allowModelSelection == true) {
-                        subagentCfg.allowedModelIds
+                        subagentCfg.effectiveGrants.mapNotNull { grant ->
+                            val selectable = runCatching {
+                                runBlocking {
+                                    io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                                    io.github.mangi.eta.data.repository.ProviderRepository
+                                        .allProviders()
+                                        .enabledModel(grant.modelId)
+                                }
+                            }.getOrNull()?.model?.reasoningCapabilities?.selectableEfforts
+                                ?.map { it.wireValue }.orEmpty()
+                            val efforts = if (grant.allowedEfforts.isEmpty()) {
+                                selectable
+                            } else {
+                                selectable.filter { it in grant.allowedEfforts }
+                            }
+                            io.github.mangi.eta.agent.subagent.SubagentModelOption(grant.modelId, efforts)
+                        }
                     } else {
                         emptyList()
                     }

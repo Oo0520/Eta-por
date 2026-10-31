@@ -8,6 +8,8 @@ import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.skill.SkillContext
+import io.github.mangi.eta.data.model.ReasoningEffort
+import io.github.mangi.eta.data.model.enabledModel
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
 import java.util.concurrent.ConcurrentHashMap
@@ -139,20 +141,14 @@ internal class SubagentExecutor(
             it.isNotBlank() && it.lowercase() !in setOf("default", "primary", "inherit", "auto")
         }
         val requestedEffort = args.optString("reasoning_effort").trim().takeIf { it.isNotBlank() }
-        val allowModelPick = runCatching {
+        val subagentSettings = runCatching {
             kotlinx.coroutines.runBlocking {
                 io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
-            }.allowModelSelection
-        }.getOrDefault(false)
-        val allowed = if (allowModelPick) {
-            runCatching {
-                kotlinx.coroutines.runBlocking {
-                    io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
-                }.allowedModelIds
-            }.getOrDefault(emptyList())
-        } else {
-            emptyList()
-        }
+            }
+        }.getOrNull()
+        val allowModelPick = subagentSettings?.allowModelSelection == true
+        val grants = if (allowModelPick) subagentSettings?.effectiveGrants.orEmpty() else emptyList()
+        val allowed = grants.map { it.modelId }
         if (allowModelPick && requestedModel != null) {
             // 模型 id 可能带服务商前缀（cn: / openai: …），比较时去掉前缀再比，避免勾选后仍被判未授权。
             val target = normalizeModelId(requestedModel)
@@ -164,6 +160,45 @@ internal class SubagentExecutor(
                     "MODEL_NOT_AUTHORIZED",
                     "模型 $requestedModel 没有在子智能体设置里授权；请让用户在「授权模型」里勾选后再派发。",
                 )
+            }
+            // 思考强度必须落在「该模型支持的档位 ∩ 用户授权给它的档位」里；否则明确报错，
+            // 不要像以前那样静默钳到相邻档——用户会以为设了 high 其实跑了 medium。
+            if (requestedEffort != null) {
+                val grant = grants.firstOrNull { normalizeModelId(it.modelId) == target }
+                val selectable = runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                        io.github.mangi.eta.data.repository.ProviderRepository
+                            .allProviders()
+                            .enabledModel(grant!!.modelId)
+                    }
+                }.getOrNull()?.model?.reasoningCapabilities?.selectableEfforts?.map { it.wireValue }
+                    ?: emptyList()
+                val grantEfforts = grant?.allowedEfforts.orEmpty()
+                val allowedEfforts = if (grantEfforts.isEmpty()) {
+                    selectable
+                } else {
+                    selectable.filter { it in grantEfforts }
+                }
+                val wire = ReasoningEffort.fromWireValue(requestedEffort)?.wireValue ?: requestedEffort
+                if (allowedEfforts.isEmpty()) {
+                    SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+                    controllerBinding.close()
+                    return errorResult(
+                        "SUBAGENT_EFFORT_UNSUPPORTED",
+                        "模型 ${grant?.modelId ?: requestedModel} 没有可用的思考强度档位；" +
+                            "本次请省略 reasoning_effort，或换一个支持思考强度的模型。",
+                    )
+                }
+                if (wire !in allowedEfforts) {
+                    SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+                    controllerBinding.close()
+                    return errorResult(
+                        "SUBAGENT_EFFORT_UNSUPPORTED",
+                        "模型 ${grant?.modelId ?: requestedModel} 不支持思考强度 $requestedEffort；" +
+                            "可选：${allowedEfforts.joinToString(", ")}。",
+                    )
+                }
             }
         }
         if (allowModelPick && allowed.isNotEmpty() && requestedModel == null) {
@@ -189,12 +224,14 @@ internal class SubagentExecutor(
             return errorResult("SUBAGENT_CONFIG_ERROR", throwable.message ?: "无法加载 Subagent 模型配置")
         }
         val modelLabel = resolvedConfig.modelDisplayName.ifBlank { resolvedConfig.model }
+        val effortLabel = resolvedConfig.effectiveReasoningEffort.wireValue
         val tracker = StepTracker(
             subagentId = subagentId,
             subagentType = profile.name,
             description = description,
             prompt = prompt,
             model = modelLabel,
+            effort = effortLabel,
             resumed = isResume,
         )
 
@@ -323,6 +360,7 @@ internal class SubagentExecutor(
                     .put("subagent_type", profile.name)
                     .put("description", description)
                     .put("model", modelLabel)
+                    .put("effort", effortLabel)
                     .put("status", SubagentActivitySnapshot.STATUS_COMPLETED)
                     .put("tool_calls", tracker.toolCount())
                     .put("summary", response.content)
@@ -545,6 +583,7 @@ internal class SubagentExecutor(
         private val description: String,
         private val prompt: String,
         private val model: String,
+        private val effort: String,
         private val resumed: Boolean,
     ) {
         private val lock = Any()
@@ -715,6 +754,7 @@ internal class SubagentExecutor(
                 description = description,
                 prompt = prompt,
                 model = model,
+                effort = effort,
                 resumed = resumed,
                 status = status,
                 currentAction = currentAction,

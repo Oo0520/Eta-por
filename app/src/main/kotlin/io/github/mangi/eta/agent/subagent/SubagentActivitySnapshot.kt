@@ -37,6 +37,8 @@ internal data class SubagentActivitySnapshot(
     val description: String = "",
     val prompt: String = "",
     val model: String = "",
+    /** 实际使用的思考强度（wire 值）；空表示该模型未启用或用了默认。 */
+    val effort: String = "",
     val resumed: Boolean = false,
     val status: String = STATUS_RUNNING,
     val currentAction: String = "",
