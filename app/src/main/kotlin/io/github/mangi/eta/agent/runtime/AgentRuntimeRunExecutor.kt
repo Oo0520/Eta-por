@@ -294,7 +294,18 @@ internal class AgentRuntimeRunExecutor(
                 },
             )
             val runTools = JSONArray(mcpTools.toString()).also { tools ->
-                if (subagentAllowed()) AgentSubagentToolCatalog.appendSchemas(tools)
+                if (subagentAllowed()) {
+                    // 把用户勾选的授权模型写进工具描述，否则主 Agent 根本不知道有哪些可选。
+                    val subagentCfg = runCatching {
+                        runBlocking { io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings() }
+                    }.getOrNull()
+                    val authorized = if (subagentCfg?.allowModelSelection == true) {
+                        subagentCfg.allowedModelIds
+                    } else {
+                        emptyList()
+                    }
+                    AgentSubagentToolCatalog.appendSchemas(tools, authorizedModels = authorized)
+                }
                 if (historyTool != null) tools.put(AgentConversationToolCatalog.schema())
                 if (characterMemoryTools != null && memoryEnabled) CharacterMemoryTools.appendSchemas(tools)
             }

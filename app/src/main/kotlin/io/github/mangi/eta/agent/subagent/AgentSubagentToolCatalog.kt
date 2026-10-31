@@ -16,14 +16,27 @@ internal object AgentSubagentToolCatalog {
     fun appendSchemas(
         tools: JSONArray,
         profiles: List<SubagentProfile> = SubagentProfileCatalog.listAll(),
+        authorizedModels: List<String> = emptyList(),
     ) {
-        tools.put(schema(profiles))
+        tools.put(schema(profiles, authorizedModels))
         tools.put(profileToolSchema())
     }
 
     fun schema(
         profiles: List<SubagentProfile> = SubagentProfileCatalog.listAll(),
+        authorizedModels: List<String> = emptyList(),
     ): JSONObject {
+        // 只告诉模型「必须是被授权的模型」而不给 id，它只能猜或者干脆不传——
+        // 实测就是这个原因导致「允许主 Agent 选模型」看着没生效。
+        val modelHint = if (authorizedModels.isEmpty()) {
+            "Optional model id for THIS subagent; must be one of the models the user authorized in Subagent settings. " +
+                "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings."
+        } else {
+            "Optional model id for THIS subagent. Authorized models: " +
+                authorizedModels.joinToString(", ") +
+                ". Pick one for each subagent based on the task (cheaper/faster for simple lookups, stronger for reasoning), " +
+                "and say which one you picked when it matters."
+        }
         val profileLines = profiles.joinToString("\n") { profile ->
             val tag = if (profile.builtin) "" else " [custom]"
             "- ${profile.name}$tag: ${profile.whenToUse} (Tools: ${profile.toolHighlights.joinToString(", ")})"
@@ -93,11 +106,7 @@ internal object AgentSubagentToolCatalog {
                 JSONObject()
                     .put("type", "string")
                     .put("maxLength", 120)
-                    .put(
-                        "description",
-                        "Optional model id for THIS subagent; must be one of the models the user authorized in Subagent settings. " +
-                            "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings.",
-                    ),
+                    .put("description", modelHint),
             )
             .put(
                 "reasoning_effort",
