@@ -1189,7 +1189,7 @@ private val SETTINGS_SEARCH_INDEX = listOf(
             R.string.route_mcp_servers,
         ),
         labelsRaw = listOf("GitHub 账号", "角色"),
-        keywords = "上下文 扩展 自动压缩 压缩 记忆 memory 记忆注入 自动任务 定时 计划 触发 automation 灵屏 虚拟屏 屏幕 小窗 skills 技能 mcp 服务器 server github 账号 仓库 pr 角色 人设 角色卡",
+        keywords = "上下文 扩展 自动压缩 压缩 记忆 memory 记忆注入 自动任务 定时 计划 触发 automation 灵屏 灵屏 屏幕 小窗 skills 技能 mcp 服务器 server github 账号 仓库 pr 角色 人设 角色卡",
     ),
     SettingsSearchEntry(
         sectionKey = "section_tools",
