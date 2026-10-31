@@ -50,7 +50,7 @@ android {
         // 跨零点必须换成当天日期、序号归 01，不能接着前一天的号往下加——
         // 之前从 2026102020 起就一直在沿用 10-20 的日期，日期不再反映实际构建日。
         // 两条线各自计号：正式线沿用主干号段，测试线独立递增（beta.8）。
-        versionCode = if (isBetaBuild) 2026103114 else 2026103131
+        versionCode = if (isBetaBuild) 2026103114 else 2026103132
         versionName = if (isBetaBuild) "3.4.0-beta.9" else "3.3.4"
         // 桌面名与包名一起区分，避免志愿者装错包；正式版继续用 @string/app_name。
         manifestPlaceholders["applicationLabel"] =
