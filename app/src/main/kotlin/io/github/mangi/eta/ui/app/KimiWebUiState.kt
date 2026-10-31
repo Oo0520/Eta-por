@@ -11,14 +11,17 @@ internal data class KimiWebUiState(
 ) {
     val canStop: Boolean get() = phase == KimiWebPhase.STARTING || phase == KimiWebPhase.RUNNING
 
-    fun actionLabel(context: Context): String = context.getString(when (phase) {
-        KimiWebPhase.CHECKING -> R.string.capability_kimi_checking
-        KimiWebPhase.NOT_INSTALLED -> R.string.capability_kimi_install
-        KimiWebPhase.READY -> R.string.action_launch_kimi_web
-        KimiWebPhase.STARTING -> R.string.capability_kimi_preparing
-        KimiWebPhase.RUNNING -> R.string.capability_kimi_open
-        KimiWebPhase.FAILED -> R.string.capability_kimi_retry
-    })
+    /**
+     * 顶栏菜单文案。只有本机确实装了 Kimi Code（READY/RUNNING/STARTING/FAILED）才返回文案，
+     * 未安装或仍在检测时返回 null：菜单里就不出现这一项，安装入口由「Linux 环境」页承担。
+     */
+    fun menuLabel(context: Context): String? = when (phase) {
+        KimiWebPhase.CHECKING, KimiWebPhase.NOT_INSTALLED -> null
+        KimiWebPhase.READY -> context.getString(R.string.action_launch_kimi_web)
+        KimiWebPhase.STARTING -> context.getString(R.string.capability_kimi_preparing)
+        KimiWebPhase.RUNNING -> context.getString(R.string.capability_kimi_open)
+        KimiWebPhase.FAILED -> context.getString(R.string.capability_kimi_retry)
+    }
 }
 
 internal fun KimiWebLaunchResult.Failed.message(context: Context): String = context.getString(when (code) {

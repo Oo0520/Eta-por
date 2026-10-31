@@ -129,6 +129,10 @@
         <activity android:name=".agent.display.TakeoverActivity" android:exported="false"
             android:theme="@style/Theme.EtaTakeover" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".agent.runtime.SupplementActivity" android:exported="false"
+            android:theme="@style/Theme.EtaTakeover" android:excludeFromRecents="true"
+            android:taskAffinity="" android:launchMode="singleInstance"
+            android:noHistory="true" android:windowSoftInputMode="adjustResize|stateVisible" />
         <activity android:name=".agent.display.dashboard.AgentConfirmActivity" android:exported="false"
             android:theme="@style/Theme.Eta" android:windowSoftInputMode="adjustResize" />
 <activity android:name=".agent.display.VirtualScreenHomeActivity" android:exported="false"

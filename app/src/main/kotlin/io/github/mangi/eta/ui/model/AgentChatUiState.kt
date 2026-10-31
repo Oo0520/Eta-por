@@ -123,6 +123,8 @@ data class UserMessageUi(
     val content: String,
     val images: List<String> = emptyList(),
     val isEdited: Boolean = false,
+    /** 消息时间（毫秒）；0 表示旧数据没有时间，界面不显示时间戳。 */
+    val createdAt: Long = 0L,
 ) : AgentChatMessageUi
 
 @Immutable
@@ -137,6 +139,8 @@ data class AgentMessageUi(
     val selectedCandidate: Int = 0,
     /** 仅当前内存会话展示，不进入消息存储、归档与导出。 */
     val searchSuggestionsHtml: List<String> = emptyList(),
+    /** 消息时间（毫秒）；0 表示旧数据没有时间，界面不显示时间戳。 */
+    val createdAt: Long = 0L,
 ) : AgentChatMessageUi
 
 enum class SystemNoticeCode(val wireValue: String) {

@@ -272,6 +272,30 @@ internal object RunProgressNotifier {
         }
     }
 
+    /**
+     * 设置里切换「流体云通知降级」时立即生效。
+     *
+     * 系统对已经在流体云里的卡不会因为「下次 notify 不带提升标记」就立刻撤下去，
+     * 所以这里先撤掉旧通知，再按新策略重画一次：降级后就是普通通知，
+     * 关掉降级则重新申请提升。
+     */
+    fun refreshFluidPolicy(context: Context, pinned: Boolean) {
+        if (!isMainThread()) {
+            handler.post { refreshFluidPolicy(context, pinned) }
+            return
+        }
+        val app = context.applicationContext
+        appContext = app
+        if (active && cards.isNotEmpty()) {
+            cards.keys.toList().forEach { key ->
+                runCatching { manager(app).cancel(SessionNotificationIds.idFor(key)) }
+            }
+            post()
+            return
+        }
+        refreshIdle(app, pinned)
+    }
+
     private fun publishIdle(app: Context) {
         idle = true
         runCatching {
@@ -283,7 +307,8 @@ internal object RunProgressNotifier {
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setContentIntent(launchIntent(app, "", SessionNotificationIds.IDLE_NOTIFICATION_ID))
-            if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
+            // 降级开关打开时不再申请提升：这张卡就只当普通常驻通知留着。
+            if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK && FluidNotificationPolicy.allowsFluid()) {
                 builder.setShortCriticalText("空闲")
                 builder.setRequestPromotedOngoing(true)
             }
@@ -343,6 +368,7 @@ internal object RunProgressNotifier {
                     cardId,
                 ),
             )
+        builder.addAction(insertAction(app, card, cardId))
         if (open != null) {
             builder.addAction(
                 Notification.Action.Builder(
@@ -352,11 +378,32 @@ internal object RunProgressNotifier {
                 ).build(),
             )
         }
-        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
+        // 降级开关打开时，进度卡只做普通通知：标题、正文、按钮照旧，不进流体云。
+        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK && FluidNotificationPolicy.allowsFluid()) {
             builder.setShortCriticalText(if (paused) "已暂停" else card.actionShort)
             builder.setRequestPromotedOngoing(true)
         }
         return builder.build()
+    }
+
+    /** 「插入」：拉起轻量输入弹层，提交后走 supplement 通道按对话精确投递。 */
+    private fun insertAction(app: Context, card: RunCard, cardId: Int): Notification.Action {
+        val intent = Intent(app, SupplementActivity::class.java)
+            .putExtra(AgentRuntimeService.EXTRA_SUPPLEMENT_CONVERSATION_ID, card.conversationKey)
+            .putExtra(SupplementActivity.EXTRA_TITLE, card.title)
+            // 独立任务：否则会把 Eta 主界面一起带到前台，看起来像「点插入回到对话页」。
+            .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
+        val pending = PendingIntent.getActivity(
+            app,
+            cardId * 10 + 4,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(null, "插入", pending).build()
     }
 
     private fun action(

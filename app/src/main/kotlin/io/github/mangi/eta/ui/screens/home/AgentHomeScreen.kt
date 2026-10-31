@@ -87,6 +87,7 @@ internal fun AgentHomeScreen(
             onDeleteMessage = { id -> onAction(AgentHomeAction.DeleteMessage(id)) },
             onRegenerateMessage = { id -> onAction(AgentHomeAction.RegenerateMessage(id)) },
             onSelectReplyCandidate = { id, index -> onAction(AgentHomeAction.SelectReplyCandidate(id, index)) },
+            onForkMessage = { id -> onAction(AgentHomeAction.ForkMessage(id)) },
             onOpenNavigator = { onAction(AgentHomeAction.OpenConversationNavigator) },
             commands = commands,
             commandResult = commandResult,

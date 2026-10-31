@@ -72,8 +72,6 @@
     <string name="capability_workspace_public_granted">已授权，终端可访问公共目录</string>
     <string name="capability_workspace_parent">返回上级目录</string>
     <string name="capability_workspace_directory">文件夹</string>
-    <string name="capability_kimi_checking">检查 Kimi Web…</string>
-    <string name="capability_kimi_install">安装 Kimi Web</string>
     <string name="capability_kimi_preparing">Kimi Web 准备中…</string>
     <string name="capability_kimi_open">打开 Kimi Web · 运行中</string>
     <string name="capability_kimi_retry">Kimi Web 启动失败 · 重试</string>

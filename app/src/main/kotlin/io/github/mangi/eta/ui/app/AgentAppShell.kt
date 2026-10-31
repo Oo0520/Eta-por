@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ShortText
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.AddComment
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Folder
@@ -103,11 +104,13 @@ internal fun AgentAppShell(
     onNewConversationInCategory: (String?) -> Unit = { _ -> onNewConversation() },
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
-    kimiWebLabel: String,
+    kimiWebLabel: String?,
     canStopKimiWeb: Boolean,
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
     onOpenBrowser: () -> Unit,
+    /** 打开分支图：会话页 ⋯ 菜单里的入口。 */
+    onOpenBranchGraph: () -> Unit = {},
     onSelectConversation: (String) -> Unit,
     onConversationRename: (ConversationSummaryUi) -> Unit,
     onMoveToCategory: (ConversationSummaryUi) -> Unit,
@@ -169,6 +172,7 @@ internal fun AgentAppShell(
                             onStopKimiWeb = onStopKimiWeb,
                             onRefreshKimiWeb = onRefreshKimiWeb,
                             onOpenBrowser = onOpenBrowser,
+                            onOpenBranchGraph = onOpenBranchGraph,
                             homeCharacter = homeCharacter,
                             onOpenCharacter = onOpenCharacter,
                             conversationStatus = conversationStatus,
@@ -259,11 +263,12 @@ private fun AgentTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
-    kimiWebLabel: String,
+    kimiWebLabel: String?,
     canStopKimiWeb: Boolean,
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenBranchGraph: () -> Unit,
     homeCharacter: RoleplayChatUi?,
     onOpenCharacter: () -> Unit,
     conversationStatus: (@Composable () -> Unit)?,
@@ -310,6 +315,7 @@ private fun AgentTopBar(
                 onStopKimiWeb = onStopKimiWeb,
                 onRefreshKimiWeb = onRefreshKimiWeb,
                 onOpenBrowser = onOpenBrowser,
+                onOpenBranchGraph = onOpenBranchGraph,
                 conversationTrimmed = conversationTrimmed,
             )
         }
@@ -317,7 +323,8 @@ private fun AgentTopBar(
 
     // 首页聊天舞台与浏览器、终端这类整屏工具页没有可驱动折叠的滚动列表，大标题会一直展开、
     // 白占一屏顶部；它们使用紧凑标题，其余二级内容页统一使用可折叠大标题。
-    val compactTitle = isHome || route is AppRoute.Browser || route is AppRoute.Terminal
+    val compactTitle = isHome || route is AppRoute.Browser || route is AppRoute.Terminal ||
+        route is AppRoute.ConversationBranches
     if (isHome) {
         // 首页自绘一行：pump 两侧等权留白，胶囊才真正居中；SmallTopAppBar 的 title 只收 String，
         // 塞不进去 Composable。
@@ -350,6 +357,7 @@ private fun AgentTopBar(
                 onStopKimiWeb = onStopKimiWeb,
                 onRefreshKimiWeb = onRefreshKimiWeb,
                 onOpenBrowser = onOpenBrowser,
+                onOpenBranchGraph = onOpenBranchGraph,
                 conversationTrimmed = conversationTrimmed,
             )
         }
@@ -391,11 +399,12 @@ private fun TopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
-    kimiWebLabel: String,
+    kimiWebLabel: String?,
     canStopKimiWeb: Boolean,
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenBranchGraph: () -> Unit,
     conversationTrimmed: Pair<Int, Int>?,
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -465,7 +474,20 @@ private fun TopBarOverflowMenu(
                         },
                     ) to onOpenBrowser,
                 )
-                // Kimi Code 只占一个位置：没跑给启动（未装则跳去安装页），跑着给停止。
+                add(
+                    DropdownItem(
+                        text = stringResource(R.string.action_branch_graph),
+                        icon = { modifier ->
+                            Icon(
+                                imageVector = Icons.Rounded.AccountTree,
+                                contentDescription = null,
+                                modifier = modifier.size(TopBarMenuIconSize),
+                            )
+                        },
+                    ) to onOpenBranchGraph,
+                )
+                // Kimi Code 只有本机已安装时才占一个位置：没跑给「启动 Kimi Web」，跑着给「停止」。
+                // 未安装或还在检测（label 为 null）时菜单里不出现，安装入口留在「Linux 环境」页。
                 if (canStopKimiWeb) {
                     add(
                         DropdownItem(
@@ -480,18 +502,20 @@ private fun TopBarOverflowMenu(
                         ) to onStopKimiWeb,
                     )
                 } else {
-                    add(
-                        DropdownItem(
-                            text = kimiWebLabel,
-                            icon = { modifier ->
-                                Icon(
-                                    imageVector = kimiMenuIcon,
-                                    contentDescription = null,
-                                    modifier = modifier.size(TopBarMenuIconSize),
-                                )
-                            },
-                        ) to onLaunchKimiWeb,
-                    )
+                    kimiWebLabel?.let { label ->
+                        add(
+                            DropdownItem(
+                                text = label,
+                                icon = { modifier ->
+                                    Icon(
+                                        imageVector = kimiMenuIcon,
+                                        contentDescription = null,
+                                        modifier = modifier.size(TopBarMenuIconSize),
+                                    )
+                                },
+                            ) to onLaunchKimiWeb,
+                        )
+                    }
                 }
                 // 以下两类只展示状态，点了只关菜单。
                 conversationTrimmed?.let { (_, count) ->
@@ -532,6 +556,7 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.CharacterMemory -> "剧情记忆"
     is AppRoute.Permissions -> stringResource(R.string.route_permissions)
     is AppRoute.ConversationCategories -> stringResource(R.string.conversation_categories_title)
+    is AppRoute.ConversationBranches -> stringResource(R.string.branch_graph_title)
     is AppRoute.SystemEnhance -> stringResource(R.string.route_system_enhancements)
     is AppRoute.Settings -> stringResource(R.string.route_settings)
     is AppRoute.TokenUsage -> stringResource(R.string.usage_stats_title)

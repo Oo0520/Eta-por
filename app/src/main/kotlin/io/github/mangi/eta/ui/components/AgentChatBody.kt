@@ -186,6 +186,8 @@ internal fun AgentChatBody(
     onDeleteMessage: (String) -> Unit,
     onRegenerateMessage: (String) -> Unit,
     onSelectReplyCandidate: (String, Int) -> Unit,
+    /** 从这条消息分出新会话；null 表示当前场景不给入口。 */
+    onForkMessage: ((String) -> Unit)? = null,
     onSuggestionClick: (String) -> Unit,
     onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
@@ -361,6 +363,7 @@ internal fun AgentChatBody(
             onDeleteMessage = onDeleteMessage,
             onRegenerateMessage = onRegenerateMessage,
             onSelectReplyCandidate = onSelectReplyCandidate,
+            onForkMessage = onForkMessage,
             onSuggestionClick = onSuggestionClick,
             onRunTraceClick = onRunTraceClick,
             onOpenBrowser = onOpenBrowser,
@@ -441,6 +444,7 @@ private fun AgentChatScaffold(
     onDeleteMessage: (String) -> Unit,
     onRegenerateMessage: (String) -> Unit,
     onSelectReplyCandidate: (String, Int) -> Unit,
+    onForkMessage: ((String) -> Unit)? = null,
     onSuggestionClick: (String) -> Unit,
     onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
@@ -583,6 +587,7 @@ private fun AgentChatScaffold(
                     onDeleteMessage = onDeleteMessage,
                     onRegenerateMessage = onRegenerateMessage,
                     onSelectReplyCandidate = onSelectReplyCandidate,
+                    onForkMessage = onForkMessage,
                     messageActionsEnabled = !isStreaming && messageEdit == null,
                     editTargetMessageId = messageEdit?.targetMessageId,
                     currentBrowserMessageId = currentBrowserMessageId,
@@ -615,6 +620,7 @@ internal fun AgentConversationMessages(
     onDeleteMessage: (String) -> Unit = {},
     onRegenerateMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
+    onForkMessage: ((String) -> Unit)? = null,
     messageActionsEnabled: Boolean = false,
     editTargetMessageId: String? = null,
     currentBrowserMessageId: String? = null,
@@ -918,6 +924,7 @@ internal fun AgentConversationMessages(
                             onDeleteMessage = onDeleteMessage,
                             onRegenerateMessage = onRegenerateMessage,
                             onSelectReplyCandidate = onSelectReplyCandidate,
+                            onForkMessage = onForkMessage,
                             modifier = entryModifier,
                         )
                     }

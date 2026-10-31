@@ -66,8 +66,10 @@ import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
 import io.github.mangi.eta.ui.SettingsScreen
 import io.github.mangi.eta.ui.components.ConversationNavigatorSheet
+import io.github.mangi.eta.ui.screens.branches.ConversationBranchScreen
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.model.AgentHomeAction
+import io.github.mangi.eta.ui.model.BranchNodeUi
 import io.github.mangi.eta.ui.model.AgentMemoryAction
 import io.github.mangi.eta.ui.model.AgentSkillsAction
 import io.github.mangi.eta.ui.model.AgentSystemEnhanceAction
@@ -455,11 +457,12 @@ fun AgentAppRoot(
                     pushRoute(AppRoute.LinuxEnvironment)
                 }
             },
-            kimiWebLabel = appViewModel.kimiWebState.actionLabel(context),
+            kimiWebLabel = appViewModel.kimiWebState.menuLabel(context),
             canStopKimiWeb = appViewModel.kimiWebState.canStop,
             onStopKimiWeb = appViewModel::stopKimiWeb,
             onRefreshKimiWeb = appViewModel::refreshKimiWeb,
             onOpenBrowser = { pushRoute(AppRoute.Browser) },
+            onOpenBranchGraph = { pushRoute(AppRoute.ConversationBranches) },
             onSelectConversation = { conversationId -> selectConversation(conversationId) },
             onConversationRename = { conversation ->
                 conversationRenameTarget = conversation
@@ -614,6 +617,7 @@ fun AgentAppRoot(
                                     }
                                 }
                                 is AgentHomeAction.SelectReplyCandidate -> agentState.selectReplyCandidate(action.id, action.index)
+                                is AgentHomeAction.ForkMessage -> agentState.forkConversationFromMessage(action.id)
                                 AgentHomeAction.OpenTools -> pushRoute(AppRoute.Tools)
                                 AgentHomeAction.OpenSkills -> pushRoute(AppRoute.Skills)
                                 AgentHomeAction.OpenPermissions -> pushRoute(AppRoute.Permissions)
@@ -660,6 +664,25 @@ fun AgentAppRoot(
                             agentState.jumpToMessage(messageId)
                         },
                         entriesFor = { query -> agentState.conversationNavEntries(query) },
+                    )
+                }
+            }
+            entry<AppRoute.ConversationBranches>(swipeDismiss = swipeDismiss) {
+                RoutedShell(route = AppRoute.ConversationBranches) {
+                    var branchNodes by remember { mutableStateOf<List<BranchNodeUi>>(emptyList()) }
+                    var branchLoading by remember { mutableStateOf(true) }
+                    LaunchedEffect(Unit) {
+                        branchNodes = agentState.loadBranchNodes()
+                        branchLoading = false
+                    }
+                    ConversationBranchScreen(
+                        nodes = branchNodes,
+                        currentConversationId = agentState.homeConversationId,
+                        loading = branchLoading,
+                        onOpenConversation = { conversationId ->
+                            agentState.selectConversation(conversationId)
+                            navigator.popToHome()
+                        },
                     )
                 }
             }

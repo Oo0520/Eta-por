@@ -64,6 +64,12 @@ data class Settings(
     /** 流体云常驻：没有任务时也在流体云保留一条 Eta 入口。 */
     val overlayFluidPinned: Boolean = false,
 
+    /**
+     * 流体云通知降级：开启后进度卡、锁屏胶囊这类通知不再申请「持续提升」，
+     * 只做普通通知留在通知栏，不再占流体云/状态栏胶囊位。
+     */
+    val overlayFluidDowngrade: Boolean = false,
+
     /** 最近打开过的会话 id（逗号分隔，最新在前）：重启后侧栏那一栏还在。 */
     val recentOpenedConversationIds: String = "",
     val appearance: AppearanceSettings = AppearanceSettings(),

@@ -93,6 +93,8 @@ internal object SettingsDataStore {
     private val VIRTUAL_SCREEN_FLOAT_POS_Y = intPreferencesKey("virtual_screen_float_pos_y")
     private val AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
     private val OVERLAY_FLUID_PINNED = booleanPreferencesKey("overlay_fluid_pinned")
+    /** 流体云降级：通知不再申请持续提升，退化为普通通知。 */
+    private val OVERLAY_FLUID_DOWNGRADE = booleanPreferencesKey("overlay_fluid_downgrade")
     private val RECENT_OPENED_IDS = stringPreferencesKey("recent_opened_conversation_ids")
     private val AUTO_BACKUP_INTERVAL = intPreferencesKey("auto_backup_interval_hours")
     /** 周期（分钟）：与老的小时键并存，分钟 > 0 时优先。 */
@@ -221,6 +223,7 @@ internal object SettingsDataStore {
             prefs[VIRTUAL_SCREEN_FLOAT_POS_Y] = updated.virtualScreenFloatWindowPosY
             prefs[AUTO_BACKUP_ENABLED] = updated.autoBackupEnabled
             prefs[OVERLAY_FLUID_PINNED] = updated.overlayFluidPinned
+            prefs[OVERLAY_FLUID_DOWNGRADE] = updated.overlayFluidDowngrade
             prefs[RECENT_OPENED_IDS] = updated.recentOpenedConversationIds
             prefs[AUTO_BACKUP_INTERVAL] = updated.autoBackupIntervalHours
                 .coerceIn(1, io.github.mangi.eta.data.model.AutoBackupInterval.MAX_MINUTES / 60)
@@ -419,6 +422,7 @@ internal object SettingsDataStore {
         virtualScreenFloatWindowPosY = this[VIRTUAL_SCREEN_FLOAT_POS_Y] ?: 120,
         autoBackupEnabled = this[AUTO_BACKUP_ENABLED] ?: false,
         overlayFluidPinned = this[OVERLAY_FLUID_PINNED] ?: false,
+        overlayFluidDowngrade = this[OVERLAY_FLUID_DOWNGRADE] ?: false,
         recentOpenedConversationIds = this[RECENT_OPENED_IDS] ?: "",
         autoBackupIntervalMinutes = io.github.mangi.eta.data.model.AutoBackupInterval.effectiveMinutes(
             this[AUTO_BACKUP_INTERVAL_MINUTES] ?: 0,

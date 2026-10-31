@@ -9,6 +9,7 @@ import io.github.mangi.eta.agent.roleplay.RoleplayMessageState
 import io.github.mangi.eta.data.db.ConversationCategoryEntity
 import io.github.mangi.eta.data.db.ConversationContextCheckpointEntity
 import io.github.mangi.eta.data.db.ConversationDao
+import io.github.mangi.eta.data.db.ConversationBranchNodeRow
 import io.github.mangi.eta.data.db.ConversationEntity
 import io.github.mangi.eta.data.db.ConversationMetadata
 import io.github.mangi.eta.data.db.ConversationMessageEntity
@@ -170,6 +171,12 @@ internal object AgentConversationStore {
                                     modelId = state.modelId,
                                     pinned = stored[id]?.pinned ?: false,
                                     categoryId = if (categoryIds != null) categoryIds[id] else stored[id]?.categoryId,
+                                    // 分叉归属只在创建时由 setConversationBranch 写入，普通保存必须沿用库内值，
+                                    // 否则一次标题/历史变更就会把「从哪条消息分出」清空。
+                                    parentConversationId = stored[id]?.parentConversationId,
+                                    parentMessageId = stored[id]?.parentMessageId,
+                                    // 新会话（stored 里还没有）默认自己就是一棵树的根，与迁移回填口径一致。
+                                    branchRootId = stored[id]?.branchRootId ?: id,
                                 )
                                 phase = "write_metadata"
                                 dao.insertConversations(listOf(row))
@@ -384,6 +391,7 @@ internal object AgentConversationStore {
                 content = content,
                 imagesJson = images.toJsonArrayString(),
                 isEdited = isEdited,
+                createdAt = createdAt,
             )
 
             is AgentMessageUi -> {
@@ -403,6 +411,7 @@ internal object AgentConversationStore {
                         reasoningTokens = usage?.reasoningTokens,
                         cachedTokens = usage?.cachedTokens,
                         requestDurationMs = usage?.requestDurationMs,
+                        createdAt = createdAt,
                     )
                 }
             }
@@ -459,6 +468,7 @@ internal object AgentConversationStore {
                 content = content,
                 images = imagesJson.toStringList(),
                 isEdited = isEdited,
+                createdAt = createdAt,
             )
 
             TYPE_ASSISTANT -> AgentMessageUi(
@@ -474,6 +484,7 @@ internal object AgentConversationStore {
                     cachedTokens = cachedTokens,
                     requestDurationMs = requestDurationMs,
                 ).takeUnless { it.isEmpty },
+                createdAt = createdAt,
             )
 
             TYPE_SYSTEM_NOTICE -> SystemNoticeCode.fromWireValue(content)?.let { code ->
@@ -550,6 +561,30 @@ internal object AgentConversationStore {
                     }
                 else -> null
             }
+        }
+
+    /**
+     * 分支归属落库：会话行已经写完（persist 落地）之后调用。
+     * 树根取父会话的 `branch_root_id`，父会话若是老数据（null）就退回父会话自身 id。
+     */
+    suspend fun attachBranch(
+        context: Context,
+        childConversationId: String,
+        parentConversationId: String,
+        parentMessageId: String,
+    ): String = withContext(Dispatchers.IO) {
+        val dao = EtaDatabase.get(context.applicationContext).conversationDao()
+        val root = dao.branchRootOf(parentConversationId)?.takeIf(String::isNotBlank) ?: parentConversationId
+        dao.setConversationBranch(childConversationId, parentConversationId, parentMessageId, root)
+        root
+    }
+
+    /** 分支画布：一次取出当前会话所在的整棵树，不递归。 */
+    suspend fun branchNodes(context: Context, conversationId: String): List<ConversationBranchNodeRow> =
+        withContext(Dispatchers.IO) {
+            val dao = EtaDatabase.get(context.applicationContext).conversationDao()
+            val root = dao.branchRootOf(conversationId)?.takeIf(String::isNotBlank) ?: conversationId
+            dao.conversationBranchNodes(root)
         }
 
     private const val TYPE_USER = "user"

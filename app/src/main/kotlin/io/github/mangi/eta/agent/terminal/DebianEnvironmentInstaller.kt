@@ -319,7 +319,8 @@ internal class DebianEnvironmentInstaller(
             DebianAptMirror(
                 id = "tuna",
                 archiveBaseUrl = "https://mirrors.tuna.tsinghua.edu.cn/debian",
-                securityBaseUrl = "https://security.debian.org/debian-security",
+                // 国内镜像同步 security 仓；security.debian.org 单连接常只有几十 KB/s，会把安装拖过超时。
+                securityBaseUrl = "https://mirrors.tuna.tsinghua.edu.cn/debian-security",
             ),
             DebianAptMirror(
                 id = "official",
@@ -335,8 +336,9 @@ internal class DebianEnvironmentInstaller(
             append("set -u; ")
             append("eta_apt_write_sources() { ")
             append("case \"${'$'}1\" in ")
-            append("tuna) eta_apt_archive=https://mirrors.tuna.tsinghua.edu.cn/debian; eta_apt_security=https://security.debian.org/debian-security;; ")
-            append("official) eta_apt_archive=https://deb.debian.org/debian; eta_apt_security=https://security.debian.org/debian-security;; ")
+            APT_MIRRORS.forEach { mirror ->
+                append("${mirror.id}) eta_apt_archive=${mirror.archiveBaseUrl}; eta_apt_security=${mirror.securityBaseUrl};; ")
+            }
             append("*) return 64;; esac; ")
             append("printf '%s\\n' \"deb ${'$'}eta_apt_archive trixie main\" \"deb ${'$'}eta_apt_archive trixie-updates main\" \"deb ${'$'}eta_apt_security trixie-security main\" > /etc/apt/sources.list; ")
             append("}; ")

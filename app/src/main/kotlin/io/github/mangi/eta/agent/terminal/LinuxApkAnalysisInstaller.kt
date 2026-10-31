@@ -243,6 +243,12 @@ internal class LinuxApkAnalysisInstaller(
     }
 
     private suspend fun installJava(rootfs: File): Boolean {
+        if (hasUsableJava(rootfs)) {
+            AndroidAgentLogger.info(
+                "APK analysis profile action=install_java outcome=skipped reason=java_present",
+            )
+            return true
+        }
         val result = InstallerShellRunner.run(
             command = linuxApkJavaInstallCommand(distribution),
             timeoutSeconds = 900,
@@ -253,6 +259,20 @@ internal class LinuxApkAnalysisInstaller(
             "APK analysis profile action=install_java " +
                 "outcome=${if (result.exitCode == 0) "succeeded" else "failed"} " +
                 "exitCode=${result.exitCode} outputChars=${result.output.length}",
+        )
+        return result.exitCode == 0
+    }
+
+    /**
+     * 环境里已有可用的 OpenJDK 25 时直接复用，不再走 apt：
+     * 源里的小版本升级包动辄上百 MB，慢网下会把安装拖过超时并让整次安装失败。
+     */
+    private suspend fun hasUsableJava(rootfs: File): Boolean {
+        val result = InstallerShellRunner.run(
+            command = "/usr/bin/java -version 2>&1 | grep -q 'version \"25' && /usr/bin/javac -version",
+            timeoutSeconds = 30,
+            environment = distribution.terminalEnvironment,
+            linuxRootfsPath = rootfs.absolutePath,
         )
         return result.exitCode == 0
     }

@@ -9,7 +9,10 @@ import io.github.mangi.eta.data.model.ReasoningEffort
 import kotlinx.serialization.Serializable
 
 @Serializable
-@Entity(tableName = "conversations")
+@Entity(
+    tableName = "conversations",
+    indices = [Index("branch_root_id")],
+)
 internal data class ConversationEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -29,6 +32,12 @@ internal data class ConversationEntity(
     @ColumnInfo(name = "pinned", defaultValue = "0") val pinned: Boolean = false,
     /** 所属会话分类；null 表示未分类，分类被删除后回落到未分类。 */
     @ColumnInfo(name = "category_id") val categoryId: String? = null,
+    /** 分叉来源会话；null 表示这是一棵分支树的根（或从未分叉过）。 */
+    @ColumnInfo(name = "parent_conversation_id") val parentConversationId: String? = null,
+    /** 分叉点消息 id：分支从这条消息处分出，画布用它显示分叉位置。 */
+    @ColumnInfo(name = "parent_message_id") val parentMessageId: String? = null,
+    /** 整棵分支树共享的根会话 id；根会话自身填自己的 id，老数据由迁移回填。 */
+    @ColumnInfo(name = "branch_root_id") val branchRootId: String? = null,
 )
 
 internal data class ConversationMetadata(
@@ -46,6 +55,9 @@ internal data class ConversationMetadata(
     @ColumnInfo(name = "pinned") val pinned: Boolean = false,
     /** 所属会话分类；null 表示未分类，分类被删除后回落到未分类。 */
     @ColumnInfo(name = "category_id") val categoryId: String? = null,
+    @ColumnInfo(name = "parent_conversation_id") val parentConversationId: String? = null,
+    @ColumnInfo(name = "parent_message_id") val parentMessageId: String? = null,
+    @ColumnInfo(name = "branch_root_id") val branchRootId: String? = null,
 )
 
 /** 会话侧栏只读取定长预览，不读取上下文、角色卡与修订正文。 */
@@ -140,4 +152,17 @@ internal data class ConversationMessageEntity(
     @ColumnInfo(name = "result_summary") val resultSummary: String? = null,
     @ColumnInfo(name = "image_count") val imageCount: Int = 0,
     @ColumnInfo(name = "tools_json") val toolsJson: String = "[]",
+    /** 消息写入时刻（毫秒）；0 表示这条消息来自没有该列的旧版本，界面按「不显示时间」处理。 */
+    @ColumnInfo(name = "created_at", defaultValue = "0") val createdAt: Long = 0L,
+)
+
+/** 分支树画布节点：一次查询取出整棵树，不需要递归。 */
+internal data class ConversationBranchNodeRow(
+    val id: String,
+    val title: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+    @ColumnInfo(name = "parent_conversation_id") val parentConversationId: String?,
+    @ColumnInfo(name = "parent_message_id") val parentMessageId: String?,
+    @ColumnInfo(name = "message_count") val messageCount: Int,
+    @ColumnInfo(name = "fork_preview") val forkPreview: String?,
 )

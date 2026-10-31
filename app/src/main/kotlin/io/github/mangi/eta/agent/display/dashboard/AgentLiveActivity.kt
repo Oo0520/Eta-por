@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.runtime.AgentRuntimeClient
+import io.github.mangi.eta.agent.runtime.FluidNotificationPolicy
 import kotlinx.coroutines.launch
 import io.github.mangi.eta.agent.runtime.AgentRuntimeService
 import io.github.mangi.eta.agent.runtime.SessionNotificationIds
@@ -155,7 +156,8 @@ internal object AgentLiveActivityBridge {
             .setContentIntent(openPendingIntent(app, spec))
             .setDeleteIntent(dismissIntent(app, spec))
         actionsFor(spec).forEach { builder.addAction(action(app, spec, it)) }
-        if (Build.VERSION.SDK_INT >= LIVE_SDK) {
+        // 降级开关打开时，仪表盘这张也只做普通通知，不进流体云。
+        if (Build.VERSION.SDK_INT >= LIVE_SDK && FluidNotificationPolicy.allowsFluid()) {
             builder.setShortCriticalText(capsule(spec))
             builder.setRequestPromotedOngoing(true)
         }
