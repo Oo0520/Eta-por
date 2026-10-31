@@ -233,7 +233,7 @@ internal fun SubagentSettingsScreen(
                 onDismissRequest = { showAuthorizedSheet = false },
                 insideMargin = DpSize(0.dp, 0.dp),
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
                     LaunchedEffect(authorizedDraft) {
                         val ids = authorizedDraft.toList()
                         modelEfforts = if (ids.isEmpty()) {
@@ -250,6 +250,21 @@ internal fun SubagentSettingsScreen(
                                 }.getOrDefault(emptyMap())
                             }
                         }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                    val invalidGrants = authorizedDraft.filter {
+                        it !in nameByApiId && apiIdByUuid[it] == null
+                    }
+                    if (invalidGrants.isNotEmpty()) {
+                        EtaTextButton(
+                            text = "清理 ${invalidGrants.size} 个失效授权",
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { authorizedDraft = authorizedDraft - invalidGrants.toSet() },
+                        )
                     }
                     SubagentModelMultiPickerContent(
                         pickerState = pickerState,
@@ -318,6 +333,7 @@ internal fun SubagentSettingsScreen(
                                 }
                             }
                         }
+                    }
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
