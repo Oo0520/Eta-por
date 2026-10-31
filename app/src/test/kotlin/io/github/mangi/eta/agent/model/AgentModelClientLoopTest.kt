@@ -147,7 +147,7 @@ class AgentModelClientLoopTest {
         assertEquals(listOf("skills_list"), executed)
         assertEquals(listOf(listOf("skills_list"), listOf("skills_list")), publishedTools)
         val result = provider.requests.last().toString()
-        assertTrue(result.contains("INVALID_TOOL_ARGUMENTS"))
+        assertTrue(result.contains("TOOL_NOT_AVAILABLE"))
     }
 
     @Test
@@ -640,10 +640,10 @@ class AgentModelClientLoopTest {
     }
 
     @Test
-    fun toolArgumentsReachExecutorWithoutSchemaPreflight() {
+    fun toolArgumentsReachExecutorAfterSchemaPreflight() {
         val calls = listOf(
-            toolCall("write", "write_file", """{"path":"note.md","content":"内容","identity":"USER","extra":true}"""),
-            toolCall("read", "read_file", """{"path":"note.md","start_line":1,"offset_bytes":0,"max_bytes":1000000}"""),
+            toolCall("write", "write_file", """{"path":"note.md","content":"内容"}"""),
+            toolCall("read", "read_file", """{"path":"note.md","start_line":1,"offset_bytes":0,"max_bytes":16000}"""),
             toolCall("missing", "tap", "{}"),
         )
         val provider = ScriptedProvider(
@@ -663,13 +663,14 @@ class AgentModelClientLoopTest {
             },
             provider = provider,
         )
-        assertEquals(calls.map { call ->
+        // 参数合法的两条原样到达执行器；缺必填参数的 tap 在预检阶段被拦下，不会执行。
+        assertEquals(calls.take(2).map { call ->
             val function = call.getJSONObject("function")
             AgentModelClient.ToolCall(call.getString("id"), function.getString("name"), function.getString("arguments"))
         }, executed)
         val messages = provider.requests[1].toString()
-        assertTrue(messages.contains("缺少坐标"))
-        assertFalse(messages.contains("INVALID_TOOL_ARGUMENTS"))
+        assertTrue(messages.contains("INVALID_TOOL_ARGUMENTS"))
+        assertFalse(messages.contains("TOOL_NOT_AVAILABLE"))
     }
 
     @Test

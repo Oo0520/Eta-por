@@ -10,10 +10,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class)
 class FileToolDispatcherTest {
     @get:Rule val temporary = TemporaryFolder()

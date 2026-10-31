@@ -10,12 +10,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(sdk = [36])
 class AppInspectionToolTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()

@@ -12,7 +12,7 @@ class SpeechSettingsTest {
     @Test fun oldSettingsPreserveSystemRecognitionAndSilentOutput() {
         val config = json.decodeFromString<SpeechSettings>("{}")
         assertEquals(AsrProvider.SYSTEM, config.asr)
-        assertEquals(TtsProvider.NONE, config.tts)
+        assertEquals(TtsProvider.SYSTEM, config.tts)
         assertFalse(config.autoSpeak)
         assertTrue(config.recognitionEnabled)
         validateSpeechSettings(config, SpeechCredentials(), synthesis = false)

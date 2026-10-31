@@ -29,12 +29,12 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import io.github.mangi.eta.data.db.EtaDatabase
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(sdk = [36])
 class AgentLocalSkillInstallIntegrationTest {
     @get:Rule

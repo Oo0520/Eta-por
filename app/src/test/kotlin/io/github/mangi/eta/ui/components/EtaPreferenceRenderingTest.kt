@@ -27,11 +27,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
-import org.robolectric.RobolectricTestRunner
+import io.github.mangi.eta.testsupport.EtaRobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLooper
 
-@RunWith(RobolectricTestRunner::class)
+@RunWith(EtaRobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [34])
 class EtaPreferenceRenderingTest {
     @Test
