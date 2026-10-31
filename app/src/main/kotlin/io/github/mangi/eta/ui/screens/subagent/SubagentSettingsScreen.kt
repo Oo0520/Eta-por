@@ -274,66 +274,6 @@ internal fun SubagentSettingsScreen(
                             else authorizedDraft + id
                         },
                     )
-                    if (authorizedDraft.isNotEmpty()) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                text = "思考强度（不勾＝该模型全部档位）",
-                                style = MiuixTheme.textStyles.footnote2,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            )
-                            authorizedDraft.sorted().forEach { modelId ->
-                                val picked = grantDraft[modelId].orEmpty()
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(
-                                        text = modelDisplayName(modelId),
-                                        style = MiuixTheme.textStyles.footnote2,
-                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        val supported = modelEfforts[modelId].orEmpty()
-                                        val options = if (supported.isEmpty()) {
-                                            ReasoningEffort.entries.filter { it != ReasoningEffort.DEFAULT }
-                                        } else {
-                                            ReasoningEffort.entries.filter { it.wireValue in supported }
-                                        }
-                                        options.forEach { effort ->
-                                                val active = effort.wireValue in picked
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(50))
-                                                        .background(
-                                                            if (active) {
-                                                                MiuixTheme.colorScheme.primary
-                                                            } else {
-                                                                MiuixTheme.colorScheme.surfaceContainerHigh
-                                                            },
-                                                        )
-                                                        .clickable {
-                                                            val next = if (active) picked - effort.wireValue
-                                                            else picked + effort.wireValue
-                                                            grantDraft = grantDraft + (modelId to next)
-                                                        }
-                                                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                                                ) {
-                                                    Text(
-                                                        text = effort.wireValue,
-                                                        style = MiuixTheme.textStyles.footnote2,
-                                                        color = if (active) {
-                                                            MiuixTheme.colorScheme.onPrimary
-                                                        } else {
-                                                            MiuixTheme.colorScheme.onSurfaceVariantSummary
-                                                        },
-                                                    )
-                                                }
-                                            }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -350,12 +290,9 @@ internal fun SubagentSettingsScreen(
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = {
                                 val snapshot = authorizedDraft.toList()
-                                val grants = snapshot.map { id ->
-                                    SubagentModelGrant(
-                                        modelId = id,
-                                        allowedEfforts = grantDraft[id].orEmpty().toList(),
-                                    )
-                                }
+                                // 档位不再由用户逐项配置：留空＝该模型支持的全部档位，
+                                // 具体用哪一档交给主 Agent 按任务决定。
+                                val grants = snapshot.map { id -> SubagentModelGrant(modelId = id) }
                                 scope.launch {
                                     RuntimeConfigRepository.setSubagentSettings(
                                         subagentSettings.copy(
