@@ -424,17 +424,24 @@ internal object AgentLiveCoordinator {
      * 两条都失败也不影响交还本身。
      */
     fun endTakeover(context: Context) {
-        val current = store ?: return
-        current.dispatch(DashboardEvent.HandBackRequested)
-        current.dispatch(DashboardEvent.HandBackCompleted)
+        store?.let { current ->
+            current.dispatch(DashboardEvent.HandBackRequested)
+            current.dispatch(DashboardEvent.HandBackCompleted)
+        }
         val app = context.applicationContext
+        val notice = "【人工接管结束】用户刚在灵屏里手动操作过，页面状态可能已变化。" +
+            "请先 observe_screen 重新读屏，再决定下一步，不要沿用接管前的页面记忆。"
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             runCatching { io.github.mangi.eta.agent.display.VirtualScreenSession.observeForViewer(app) }
-            runCatching {
-                AgentRuntimeClient(app, io.github.mangi.eta.core.AndroidAgentLogger).steerRun(
-                    "【人工接管结束】用户刚在灵屏里手动操作过，页面状态可能已变化。" +
-                        "请先 observe_screen 重新读屏，再决定下一步，不要沿用接管前的页面记忆。"
-                )
+            // 灵屏可能正被某个子智能体占着。这种情况下消息必须投给它：父 Agent 收到也改变不了
+            // 正在跑的子循环，等于没说。没有子智能体占用时，才回退到父运行。
+            val deliveredToSubagent = runCatching {
+                io.github.mangi.eta.agent.subagent.SubagentRunRegistry.steerScreenOwner(notice)
+            }.getOrDefault(false)
+            if (!deliveredToSubagent) {
+                runCatching {
+                    AgentRuntimeClient(app, io.github.mangi.eta.core.AndroidAgentLogger).steerRun(notice)
+                }
             }
         }
     }
