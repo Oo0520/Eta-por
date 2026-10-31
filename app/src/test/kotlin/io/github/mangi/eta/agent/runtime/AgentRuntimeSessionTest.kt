@@ -162,7 +162,8 @@ class AgentRuntimeSessionTest {
         session.emit(privateToolDelta)
 
         assertTrue(session.attach(replacementEvents::add, replacementResults::add))
-        assertEquals(listOf(visibleDelta), replacementEvents)
+        // 文本增量不回放：文字已经画在界面上，再补一遍就是重复；结构事件才补齐。
+        assertEquals(emptyList<AgentEvent>(), replacementEvents)
 
         val liveEvent = AgentEvent.ToolFinished(
             round = 1,
@@ -181,8 +182,9 @@ class AgentRuntimeSessionTest {
         )
         session.complete(result)
 
-        assertEquals(listOf(visibleDelta, privateToolDelta, liveEvent), firstEvents)
-        assertEquals(listOf(visibleDelta, liveEvent), replacementEvents)
+        // attach 会把旧订阅者置为不再接收：接管之后的事件只投给新订阅者。
+        assertEquals(listOf(visibleDelta, privateToolDelta), firstEvents)
+        assertEquals(listOf(liveEvent), replacementEvents)
         assertEquals(listOf(result), firstResults)
         assertEquals(listOf(result), replacementResults)
         assertFalse(session.attach({}, {}))

@@ -19,6 +19,7 @@ import io.github.mangi.eta.data.model.AppearanceSettings
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.model.AppearanceTopBarBlurStyle
 import io.github.mangi.eta.data.model.SpeechSettings
+import io.github.mangi.eta.data.model.SubagentSettings
 import io.github.mangi.eta.data.model.WebToolsSettings
 import kotlinx.serialization.json.Json
 import io.github.mangi.eta.data.model.Settings
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.map
 internal object SettingsDataStore {
     private val SPEECH_SETTINGS = stringPreferencesKey("speech_settings_v1")
     private val WEB_TOOLS_SETTINGS = stringPreferencesKey("web_tools_settings_v1")
+    private val SUBAGENT_SETTINGS = stringPreferencesKey("subagent_settings_v1")
     private val speechJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun speechSettingsFlow(): Flow<SpeechSettings> {
@@ -68,6 +70,26 @@ internal object SettingsDataStore {
         dataStore.edit { it[WEB_TOOLS_SETTINGS] = speechJson.encodeToString(settings) }
     }
 
+    fun subagentSettingsFlow(): Flow<SubagentSettings> {
+        ensureInitialized()
+        return dataStore.data
+            .catch { cause ->
+                if (cause is IOException) emit(emptyPreferences()) else throw cause
+            }
+            .map { prefs ->
+                prefs[SUBAGENT_SETTINGS]?.let { raw ->
+                    runCatching { speechJson.decodeFromString<SubagentSettings>(raw) }.getOrNull()
+                } ?: SubagentSettings()
+            }
+    }
+
+    suspend fun subagentSettings(): SubagentSettings = subagentSettingsFlow().first()
+
+    suspend fun setSubagentSettings(settings: SubagentSettings) {
+        ensureInitialized()
+        dataStore.edit { it[SUBAGENT_SETTINGS] = speechJson.encodeToString(settings) }
+    }
+
     private const val STORE_NAME = "eta_settings"
 
     private val SELECTED_PROVIDER_ID = stringPreferencesKey("selected_provider_id")
@@ -92,11 +114,7 @@ internal object SettingsDataStore {
     private val VIRTUAL_SCREEN_FLOAT_POS_X = intPreferencesKey("virtual_screen_float_pos_x")
     private val VIRTUAL_SCREEN_FLOAT_POS_Y = intPreferencesKey("virtual_screen_float_pos_y")
     private val AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
-    private val OVERLAY_CAPSULE_PINNED = booleanPreferencesKey("overlay_capsule_pinned")
-    private val OVERLAY_CAPSULE_HIDDEN = booleanPreferencesKey("overlay_capsule_hidden")
     private val OVERLAY_FLUID_PINNED = booleanPreferencesKey("overlay_fluid_pinned")
-    private val OVERLAY_CAPSULE_POS_X = intPreferencesKey("overlay_capsule_pos_x")
-    private val OVERLAY_CAPSULE_POS_Y = intPreferencesKey("overlay_capsule_pos_y")
     private val RECENT_OPENED_IDS = stringPreferencesKey("recent_opened_conversation_ids")
     private val AUTO_BACKUP_INTERVAL = intPreferencesKey("auto_backup_interval_hours")
     /** 周期（分钟）：与老的小时键并存，分钟 > 0 时优先。 */
@@ -105,7 +123,12 @@ internal object SettingsDataStore {
     private val AUTO_BACKUP_LAST_AT = longPreferencesKey("auto_backup_last_at")
     private val AUTO_BACKUP_FINGERPRINT = stringPreferencesKey("auto_backup_fingerprint")
     private val AUTO_BACKUP_LAST_FILE = stringPreferencesKey("auto_backup_last_file")
+    /** 上一次自动备份的失败原因与时间：成功时清空，供界面直接显示「为什么没备份」。 */
+    private val AUTO_BACKUP_LAST_ERROR = stringPreferencesKey("auto_backup_last_error")
+    private val AUTO_BACKUP_LAST_ERROR_AT = longPreferencesKey("auto_backup_last_error_at")
     private val AUTO_BACKUP_DIRECTORY = stringPreferencesKey("auto_backup_directory")
+    /** 自动备份格式：json / full（全量压缩包）。 */
+    private val AUTO_BACKUP_FORMAT = stringPreferencesKey("auto_backup_format")
     private val DIAG_PATROL_ENABLED = booleanPreferencesKey("diag_patrol_enabled")
     private val DIAG_PATROL_INTERVAL = intPreferencesKey("diag_patrol_interval_minutes")
     private val DIAG_PATROL_KEEP = intPreferencesKey("diag_patrol_keep_count")
@@ -163,7 +186,7 @@ internal object SettingsDataStore {
 
     suspend fun settings(): Settings = settingsFlow().first()
 
-    /** 虚拟屏应用菜单的收藏（按包名保存，跨会话保留）。 */
+    /** 灵屏应用菜单的收藏（按包名保存，跨会话保留）。 */
     suspend fun favoriteApps(): Set<String> {
         ensureInitialized()
         return dataStore.data.first()[VIRTUAL_SCREEN_FAVORITE_APPS] ?: emptySet()
@@ -219,21 +242,17 @@ internal object SettingsDataStore {
             prefs[VIRTUAL_SCREEN_FLOAT_POS_X] = updated.virtualScreenFloatWindowPosX
             prefs[VIRTUAL_SCREEN_FLOAT_POS_Y] = updated.virtualScreenFloatWindowPosY
             prefs[AUTO_BACKUP_ENABLED] = updated.autoBackupEnabled
-            prefs[OVERLAY_CAPSULE_PINNED] = updated.overlayCapsulePinned
-            prefs[OVERLAY_CAPSULE_HIDDEN] = updated.overlayCapsuleHidden
             prefs[OVERLAY_FLUID_PINNED] = updated.overlayFluidPinned
-            prefs[OVERLAY_CAPSULE_POS_X] = updated.overlayCapsulePosX
-            prefs[OVERLAY_CAPSULE_POS_Y] = updated.overlayCapsulePosY
             prefs[RECENT_OPENED_IDS] = updated.recentOpenedConversationIds
             prefs[AUTO_BACKUP_INTERVAL] = updated.autoBackupIntervalHours
                 .coerceIn(1, io.github.mangi.eta.data.model.AutoBackupInterval.MAX_MINUTES / 60)
             prefs[AUTO_BACKUP_INTERVAL_MINUTES] =
                 io.github.mangi.eta.data.model.AutoBackupInterval.normalize(updated.autoBackupIntervalMinutes)
             prefs[AUTO_BACKUP_KEEP] = io.github.mangi.eta.data.model.AutoBackupKeepCount.normalize(updated.autoBackupKeepCount)
-            prefs[AUTO_BACKUP_LAST_AT] = updated.autoBackupLastAt
-            prefs.putOrRemove(AUTO_BACKUP_FINGERPRINT, updated.autoBackupFingerprint)
-            prefs.putOrRemove(AUTO_BACKUP_LAST_FILE, updated.autoBackupLastFileName)
+            // 备份的运行态（上次时间 / 指纹 / 文件名 / 失败原因）只由 setAutoBackupState 单独写，
+            // 这里不再回写：设置页的快照通常早于本次备份完成，回写会把刚跑完的状态又冲成旧值。
             prefs.putOrRemove(AUTO_BACKUP_DIRECTORY, updated.autoBackupDirectory)
+            prefs[AUTO_BACKUP_FORMAT] = io.github.mangi.eta.data.model.AutoBackupFormat.normalize(updated.autoBackupFormat)
             prefs[DIAG_PATROL_ENABLED] = updated.diagPatrolEnabled
             prefs[DIAG_PATROL_INTERVAL] = io.github.mangi.eta.core.DiagnosticsPatrolInterval
                 .normalize(updated.diagPatrolIntervalMinutes)
@@ -251,7 +270,13 @@ internal object SettingsDataStore {
     suspend fun autoBackupLastAt(): Long = settings().autoBackupLastAt
 
     /** 备份状态单独写，走独立 edit，避免与设置页的表单改动互相覆盖。 */
-    suspend fun setAutoBackupState(lastAt: Long, fingerprint: String, fileName: String) {
+    suspend fun setAutoBackupState(
+        lastAt: Long,
+        fingerprint: String,
+        fileName: String,
+        error: String = "",
+        errorAt: Long = 0L,
+    ) {
         ensureInitialized()
         dataStore.edit { prefs ->
             prefs[AUTO_BACKUP_LAST_AT] = lastAt
@@ -259,6 +284,13 @@ internal object SettingsDataStore {
             else prefs[AUTO_BACKUP_FINGERPRINT] = fingerprint
             if (fileName.isBlank()) prefs.remove(AUTO_BACKUP_LAST_FILE)
             else prefs[AUTO_BACKUP_LAST_FILE] = fileName
+            if (error.isBlank()) {
+                prefs.remove(AUTO_BACKUP_LAST_ERROR)
+                prefs.remove(AUTO_BACKUP_LAST_ERROR_AT)
+            } else {
+                prefs[AUTO_BACKUP_LAST_ERROR] = error
+                prefs[AUTO_BACKUP_LAST_ERROR_AT] = errorAt
+            }
         }
     }
 
@@ -408,11 +440,7 @@ internal object SettingsDataStore {
         virtualScreenFloatWindowPosX = this[VIRTUAL_SCREEN_FLOAT_POS_X] ?: 16,
         virtualScreenFloatWindowPosY = this[VIRTUAL_SCREEN_FLOAT_POS_Y] ?: 120,
         autoBackupEnabled = this[AUTO_BACKUP_ENABLED] ?: false,
-        overlayCapsulePinned = this[OVERLAY_CAPSULE_PINNED] ?: false,
-        overlayCapsuleHidden = this[OVERLAY_CAPSULE_HIDDEN] ?: false,
         overlayFluidPinned = this[OVERLAY_FLUID_PINNED] ?: false,
-        overlayCapsulePosX = this[OVERLAY_CAPSULE_POS_X] ?: -1,
-        overlayCapsulePosY = this[OVERLAY_CAPSULE_POS_Y] ?: -1,
         recentOpenedConversationIds = this[RECENT_OPENED_IDS] ?: "",
         autoBackupIntervalMinutes = io.github.mangi.eta.data.model.AutoBackupInterval.effectiveMinutes(
             this[AUTO_BACKUP_INTERVAL_MINUTES] ?: 0,
@@ -425,7 +453,12 @@ internal object SettingsDataStore {
         autoBackupLastAt = this[AUTO_BACKUP_LAST_AT] ?: 0L,
         autoBackupFingerprint = this[AUTO_BACKUP_FINGERPRINT].orEmpty(),
         autoBackupLastFileName = this[AUTO_BACKUP_LAST_FILE].orEmpty(),
+        autoBackupLastError = this[AUTO_BACKUP_LAST_ERROR].orEmpty(),
+        autoBackupLastErrorAt = this[AUTO_BACKUP_LAST_ERROR_AT] ?: 0L,
         autoBackupDirectory = this[AUTO_BACKUP_DIRECTORY].orEmpty(),
+        autoBackupFormat = io.github.mangi.eta.data.model.AutoBackupFormat.normalize(
+            this[AUTO_BACKUP_FORMAT].orEmpty(),
+        ),
         diagPatrolEnabled = this[DIAG_PATROL_ENABLED] ?: false,
         diagPatrolIntervalMinutes = io.github.mangi.eta.core.DiagnosticsPatrolInterval.normalize(
             this[DIAG_PATROL_INTERVAL] ?: io.github.mangi.eta.core.DiagnosticsPatrolInterval.DEFAULT_MINUTES,

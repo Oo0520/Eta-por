@@ -59,6 +59,14 @@ internal object EtaBackupValidation {
     }
 
     private fun validateHeader(document: EtaBackupDocument) {
+        // #002：分类 id 是会话归属的外键（逻辑上），重复或空 id 会让恢复后的归属错乱。
+        val categoryIds = mutableSetOf<String>()
+        document.conversationCategories.forEach { category ->
+            if (category.id.isBlank() || !categoryIds.add(category.id)) {
+                throw EtaBackupException("备份中的会话分类存在重复或无效 ID")
+            }
+            if (category.name.isBlank()) throw EtaBackupException("备份中的会话分类缺少名称")
+        }
         if (document.format != EtaBackupDocument.FORMAT) throw EtaBackupException("这不是 Eta 备份文件")
         if (document.schemaVersion !in 1..EtaBackupDocument.SCHEMA_VERSION) {
             throw EtaBackupException("不支持的 Eta 备份版本：${document.schemaVersion}")

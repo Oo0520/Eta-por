@@ -44,7 +44,6 @@ internal object AgentToolDirectory {
             memoryWritable = memoryWritable,
             capabilities = capabilities,
             localWebSearch = localWebSearch,
-            localProfile = localProfile,
         )
         if (additionalTools != null) {
             for (index in 0 until additionalTools.length()) {

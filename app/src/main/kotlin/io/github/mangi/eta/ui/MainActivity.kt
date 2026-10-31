@@ -17,9 +17,10 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import io.github.mangi.eta.agent.voice.EtaAssistantOverlayService
 import io.github.mangi.eta.agent.display.VirtualScreenSession
-import io.github.mangi.eta.agent.display.VirtualScreenViewerActivity
 import io.github.mangi.eta.agent.runtime.AgentRuntimeService
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
+import io.github.mangi.eta.agent.automation.AutoBackupAlarm
+import io.github.mangi.eta.data.repository.AutoBackupRunner
 import io.github.mangi.eta.hook.vivo.VivoHandoff
 import io.github.mangi.eta.data.model.AppearanceThemeMode
 import io.github.mangi.eta.data.repository.AppearanceSettingsRepository
@@ -29,6 +30,7 @@ import io.github.mangi.eta.ui.app.ArchivedConversationRequest
 import io.github.mangi.eta.ui.app.AgentAppTheme
 import io.github.mangi.eta.ui.app.PredictiveBackController
 import io.github.mangi.eta.ui.app.installStartupSplash
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -39,6 +41,9 @@ class MainActivity : ComponentActivity() {
     private var appliedPredictiveBackEnabled = true
     private var speechSettingsRequested by mutableStateOf(false)
     private var terminalRequested by mutableStateOf(false)
+    private var linuxEnvironmentRequested by mutableStateOf(false)
+    /** 上次前台补查自动备份的时间，用来节流 onResume。 */
+    private var lastAutoBackupCheckAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,6 +89,8 @@ class MainActivity : ComponentActivity() {
                         openSpeechSettings = speechSettingsRequested,
                         openTerminal = terminalRequested,
                         onTerminalOpened = { terminalRequested = false; intent?.action = null },
+                        openLinuxEnvironment = linuxEnvironmentRequested,
+                        onLinuxEnvironmentOpened = { linuxEnvironmentRequested = false; intent?.action = null },
                         onSpeechSettingsOpened = { speechSettingsRequested = false; intent?.action = null },
                         onAssistantConversationOpened = { opened ->
                             assistantConversationKey = null
@@ -100,21 +107,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 每次回到前台顺带做一次「到期检查」。
+     *
+     * 自动备份的闹钟在国产 ROM 上可能被省电策略推迟甚至清掉；只靠 Application.onCreate 又只在
+     * 进程第一次启动时跑一次，应用常驻后台后就再没有第二次机会。这里做带节流的前台补偿：
+     * 到点没备份的，用户一打开 Eta 就补上，已经备份过的会被周期判断直接跳过。
+     */
+    override fun onResume() {
+        super.onResume()
+        val now = System.currentTimeMillis()
+        if (now - lastAutoBackupCheckAt < AUTO_BACKUP_CHECK_INTERVAL_MS) return
+        lastAutoBackupCheckAt = now
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { AutoBackupAlarm.refresh(applicationContext) }
+            runCatching { AutoBackupRunner.maybeRun(applicationContext) }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         updateAssistantHandoff(intent)
         handleShareIntent(intent)
-        // Activity 被复用（栈里已有实例）时 AgentAppRoot 的首帧效应不会重跑；
-        // 除了「打开指定会话」由 updateAssistantHandoff 精确清，其他再次进入都按「回到 Eta」整体清未读。
-        if (intent.action != ACTION_OPEN_CONVERSATION_ID) {
-            runCatching {
-                startService(
-                    Intent(this, AgentRuntimeService::class.java)
-                        .setAction(AgentRuntimeService.ACTION_CLEAR_READ),
-                )
-            }
-        }
     }
 
     /** 系统分享面板送进来的文字／图片，先暂存起来，界面就绪后由 AgentAppRoot 取走。 */
@@ -181,6 +196,10 @@ class MainActivity : ComponentActivity() {
             terminalRequested = true
             return
         }
+        if (intent?.action == ACTION_OPEN_LINUX_ENVIRONMENT) {
+            linuxEnvironmentRequested = true
+            return
+        }
         if (intent?.action == ACTION_VIEW_EXECUTION) {
             assistantConversationSource = intent.getStringExtra(EXTRA_EXECUTION_SOURCE)
                 ?.takeIf { it in setOf(
@@ -191,9 +210,6 @@ class MainActivity : ComponentActivity() {
                 EtaAssistantOverlayService.EXTRA_CONVERSATION_KEY,
             )?.takeIf(String::isNotBlank)
             intent.action = null
-            if (VirtualScreenSession.isActive()) {
-                startActivity(Intent(this, VirtualScreenViewerActivity::class.java))
-            }
             return
         }
         if (intent?.action == ACTION_SPEECH_SETTINGS) {
@@ -276,7 +292,10 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** 前台补查自动备份的最小间隔。 */
+        private const val AUTO_BACKUP_CHECK_INTERVAL_MS = 5 * 60 * 1000L
         const val ACTION_OPEN_TERMINAL = "io.github.mangi.eta.action.OPEN_TERMINAL"
+        const val ACTION_OPEN_LINUX_ENVIRONMENT = "io.github.mangi.eta.action.OPEN_LINUX_ENVIRONMENT"
         const val ACTION_VIEW_EXECUTION = "io.github.mangi.eta.action.VIEW_EXECUTION"
         const val EXTRA_EXECUTION_SOURCE = "io.github.mangi.eta.extra.EXECUTION_SOURCE"
         /** 运行浮层的结果卡片回到本体：App 发起的 run 带会话 ID，直接打开该会话；缺省时只回到首页。 */

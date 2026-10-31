@@ -95,8 +95,13 @@ internal class AgentExecutionService : Service() {
 
     private fun notification(): Notification {
         val status = runStatus
+        // 正在装 Linux 工具时，点击通知直接落到 Linux 工具环境页，而不是停在首页。
+        val openIntent = Intent(this, MainActivity::class.java)
+        if (io.github.mangi.eta.agent.terminal.LinuxInstallRunner.busy) {
+            openIntent.action = MainActivity.ACTION_OPEN_LINUX_ENVIRONMENT
+        }
         val open = PendingIntent.getActivity(
-            this, 0, Intent(this, if (io.github.mangi.eta.agent.display.VirtualScreenSession.isActive()) io.github.mangi.eta.agent.display.VirtualScreenViewerActivity::class.java else MainActivity::class.java),
+            this, if (openIntent.action == null) 0 else 2, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val stop = PendingIntent.getService(
@@ -115,13 +120,15 @@ internal class AgentExecutionService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.execution_stop), stop).build())
-        // 只有 Agent run 在跑时才申请提升为 Live Update；终端会话、Linux 启动等长驻任务不属于"正在进行、需要持续关注"的活动。
-        if (status != null && Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1) {
-            builder
-                .setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
-                .setShortCriticalText(status.shortText())
-                .setRequestPromotedOngoing(true)
-        }
+        // 运行总卡片保持普通前台服务通知：不申请提升为 Live Update / 流体云。
+        // 逐会话的进度由 RunProgressNotifier 的会话卡片承担，避免同一件事在通知栏里出现两张"正在运行"的流体云。
+        // 若要恢复提升，把下面这段解注释即可。
+        // if (status != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+        //     builder
+        //         .setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
+        //         .setShortCriticalText(status.shortText())
+        //     builder.extras.putBoolean("android.requestPromotedOngoing", true)
+        // }
         return builder.build()
     }
 

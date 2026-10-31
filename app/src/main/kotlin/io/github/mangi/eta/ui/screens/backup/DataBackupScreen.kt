@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,11 +33,13 @@ import io.github.mangi.eta.core.safeStackTrace
 import io.github.mangi.eta.agent.automation.AutoBackupAlarm
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.model.AutoBackupInterval
+import io.github.mangi.eta.data.model.AutoBackupFormat
 import io.github.mangi.eta.data.model.AutoBackupKeepCount
 import io.github.mangi.eta.data.model.Settings
 import io.github.mangi.eta.data.repository.AutoBackupResult
 import io.github.mangi.eta.data.repository.AutoBackupRunner
 import io.github.mangi.eta.data.repository.EtaBackupSummary
+import io.github.mangi.eta.data.repository.EtaFullBackupArchive
 import io.github.mangi.eta.ui.components.EtaArrowPreference
 import io.github.mangi.eta.ui.components.EtaCard
 import io.github.mangi.eta.ui.components.EtaPreference
@@ -48,6 +51,8 @@ import io.github.mangi.eta.ui.components.EtaSwitchPreference
 import io.github.mangi.eta.ui.components.EtaWindowDialog
 import io.github.mangi.eta.ui.components.MiuixDialogActions
 import io.github.mangi.eta.ui.components.MiuixScaffoldPage
+import java.io.BufferedInputStream
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
@@ -56,6 +61,7 @@ import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.TextField
@@ -75,6 +81,17 @@ internal fun DataBackupScreen(
     val settings by SettingsDataStore.settingsFlow().collectAsState(initial = Settings())
     var autoBusy by remember { mutableStateOf(false) }
     var autoNote by remember { mutableStateOf<String?>(null) }
+    // 「最近备份」必须以磁盘上的真实文件为准：记录里的文件名可能已被清理掉或换过目录，
+    // 直接显示记录会指向一个根本不存在的文件。
+    var lastBackupName by remember { mutableStateOf("") }
+    LaunchedEffect(settings.autoBackupDirectory, settings.autoBackupLastFileName, settings.autoBackupLastAt) {
+        lastBackupName = withContext(Dispatchers.IO) {
+            AutoBackupRunner.resolveLastBackup(
+                recordedName = settings.autoBackupLastFileName,
+                customDirectory = settings.autoBackupDirectory,
+            )?.name.orEmpty()
+        }
+    }
     var showDirDialog by remember { mutableStateOf(false) }
     var dirInput by remember { mutableStateOf("") }
     var showIntervalDialog by remember { mutableStateOf(false) }
@@ -175,7 +192,7 @@ internal fun DataBackupScreen(
                         )
                     },
                     onClick = {
-                        importLauncher.launch(arrayOf("application/json", "text/plain"))
+                        importLauncher.launch(arrayOf("application/json", "text/plain", "application/zip", "application/octet-stream"))
                     },
                 )
             }
@@ -220,11 +237,49 @@ internal fun DataBackupScreen(
                 )
                 EtaPreferenceDivider(hasLeading = true)
                 EtaArrowPreference(
-                    title = stringResource(R.string.data_backup_auto_run_now),
-                    summary = autoNote ?: if (settings.autoBackupLastFileName.isNotBlank()) {
-                        stringResource(R.string.data_backup_auto_last_file, settings.autoBackupLastFileName)
+                    title = stringResource(R.string.data_backup_auto_format),
+                    summary = if (AutoBackupFormat.isFull(settings.autoBackupFormat)) {
+                        stringResource(R.string.data_backup_auto_format_full_summary)
                     } else {
-                        stringResource(R.string.data_backup_auto_never)
+                        stringResource(R.string.data_backup_auto_format_json_summary)
+                    },
+                    enabled = settings.autoBackupEnabled,
+                    startAction = {
+                        BackupIcon(icon = Icons.Rounded.Description, loading = false)
+                    },
+                    onClick = {
+                        val next = if (AutoBackupFormat.isFull(settings.autoBackupFormat)) {
+                            AutoBackupFormat.JSON
+                        } else {
+                            AutoBackupFormat.FULL
+                        }
+                        scope.launch {
+                            SettingsDataStore.updateSettings { it.copy(autoBackupFormat = next) }
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.data_backup_auto_format_saved,
+                                    if (AutoBackupFormat.isFull(next)) {
+                                        context.getString(R.string.data_backup_auto_format_full)
+                                    } else {
+                                        context.getString(R.string.data_backup_auto_format_json)
+                                    },
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    },
+                )
+                EtaPreferenceDivider(hasLeading = true)
+                EtaArrowPreference(
+                    title = stringResource(R.string.data_backup_auto_run_now),
+                    summary = autoNote ?: when {
+                        settings.autoBackupLastError.isNotBlank() -> stringResource(
+                            R.string.data_backup_auto_error,
+                            settings.autoBackupLastError,
+                        )
+                        lastBackupName.isNotBlank() -> stringResource(R.string.data_backup_auto_last_file, lastBackupName)
+                        else -> stringResource(R.string.data_backup_auto_never)
                     },
                     enabled = !autoBusy && !busy,
                     startAction = {
@@ -250,6 +305,7 @@ internal fun DataBackupScreen(
                                 }
                                 AutoBackupAlarm.refresh(context)
                                 autoBusy = false
+                                if (result is AutoBackupResult.Done) lastBackupName = result.fileName
                                 autoNote = text
                                 Toast.makeText(context, text, Toast.LENGTH_LONG).show()
                             }
@@ -445,9 +501,36 @@ internal fun DataBackupScreen(
                     scope.launch {
                         busy = true
                         try {
-                            val input = context.contentResolver.openInputStream(uri)
-                                ?: error(context.getString(R.string.data_backup_file_open_failed))
-                            val summary = input.use { onImport(it) }
+                            val input = BufferedInputStream(
+                                context.contentResolver.openInputStream(uri)
+                                    ?: error(context.getString(R.string.data_backup_file_open_failed)),
+                            )
+                            val head = ByteArray(4)
+                            input.mark(4)
+                            val headRead = input.read(head)
+                            input.reset()
+                            // 全量包是 zip：先解出 eta-backup.json 走正常导入，再把 private/ 铺到暂存区等重启。
+                            val isZip = headRead == 4 &&
+                                head[0] == 0x50.toByte() && head[1] == 0x4B.toByte() &&
+                                head[2] == 0x03.toByte() && head[3] == 0x04.toByte()
+                            val summary = if (isZip) {
+                                val cache = File(File(context.cacheDir, "fullbackup"), "incoming.zip")
+                                cache.parentFile?.mkdirs()
+                                input.use { source -> cache.outputStream().use { target -> source.copyTo(target) } }
+                                val jsonFile = EtaFullBackupArchive.extractDocument(context, cache.inputStream())
+                                val restored = jsonFile.inputStream().use { onImport(it) }
+                                EtaFullBackupArchive.stage(context, cache.inputStream())
+                                cache.delete()
+                                jsonFile.delete()
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.data_backup_full_restore_ready),
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                                restored
+                            } else {
+                                input.use { onImport(it) }
+                            }
                             Toast.makeText(
                                 context,
                                 context.getString(

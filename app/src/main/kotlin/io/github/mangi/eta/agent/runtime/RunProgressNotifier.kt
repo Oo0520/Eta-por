@@ -18,14 +18,14 @@ import io.github.mangi.eta.core.EtaTrace
 import io.github.mangi.eta.ui.MainActivity
 
 /**
- * 长任务里程碑汇报。
+ * 长任务里程碑汇报——**每个会话一张流体云卡**。
  *
- * 会话在跑的时候挂一条通知，每 10 秒刷新一句「已跑多久 · 当前在做什么」，
- * 编译、爬取这类要等几分钟的活儿不用盯着屏幕；任务结束（成功／失败／取消）立刻撤掉。
+ * 并发的会话各自占一条通知（ID 由 [SessionNotificationIds] 按会话分配）：
+ * 卡片标题是那个会话的标题，正文是它自己的「已跑多久 · 在做什么」，
+ * 三个动作（暂停／继续、停止、阶段进度）都带自己的 runId，互不牵连。
  *
- * Android 16 起同一条通知按「实时活动」（live update）发布，ColorOS 会放进流体云：
- * 卡片 = 会话标题 + 状态正文 + 三个纯图标动作（暂停／继续、停止、阶段进度），
- * 点卡片本体回到发起这次运行的那次会话。开启「流体云常驻」后，空闲时也保留一条。
+ * Android 16 起按「实时活动」（live update）发布，ColorOS 放进流体云；
+ * 系统实测允许多条同时提升。开启「流体云常驻」后，空闲时额外保留一条（ID 4772）。
  */
 internal object RunProgressNotifier {
 
@@ -34,10 +34,9 @@ internal object RunProgressNotifier {
     /** 旧渠道当初建成 LOW，系统不允许应用事后提高重要性，只能弃用。 */
     private const val LEGACY_CHANNEL = "eta_run_progress"
 
-    private const val NOTIFICATION_ID = 4772
     private const val TICK_MS = 10_000L
 
-    /** 兜底：这么久没有任何会话活动，就当这次运行已经结束，把通知撤掉。 */
+    /** 兜底：这么久没有任何事件，就当这个会话已经哑了，撤掉它那一张。 */
     private const val IDLE_STOP_MS = 30 * 60_000L
 
     /** Android 16（API 36）起支持 promoted ongoing 提升。 */
@@ -45,148 +44,231 @@ internal object RunProgressNotifier {
 
     private const val ACTION_PAUSE_REQUEST = 2
     private const val ACTION_STOP_REQUEST = 3
-    private const val ACTION_STAGE_REQUEST = 4
+
+    /** 单个会话的卡片状态：所有字段都是这一张卡自己的。 */
+    private class RunCard(
+        val runId: String,
+        val conversationKey: String,
+        var title: String,
+        val startedAt: Long = System.currentTimeMillis(),
+    ) {
+        var step = "正在处理"
+        var actionShort = "处理中"
+        var stage = 1
+        var lastEventAt = startedAt
+
+        /** 卡片身份：优先会话，没有会话 key（系统入口）时退回 runId。 */
+        val key: String get() = conversationKey.ifBlank { runId }
+    }
 
     private val handler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var appContext: Context? = null
 
-    private var startedAt = 0L
-    private var lastEventAt = 0L
-    private var limitNote = ""
-    private var step = "正在处理"
-    private var actionShort = "处理中"
+    /** 会话 key → 卡片。LinkedHashMap 保持启动顺序，撤卡时不动别人。 */
+    private val cards = LinkedHashMap<String, RunCard>()
+
+    /** 灵屏接管的那几条会话：只有它们让位给仪表盘，其余照常发卡。 */
+    private val delegatedRuns = LinkedHashSet<String>()
+
     private var active = false
     private var idle = false
-    private var runId = ""
-    private var conversationKey = ""
-    private var conversationTitle = ""
-    private var paused = false
     private var runningCount = 0
     private var concurrencyMax = 1
 
-    /** 阶段进度：1 准备 / 2 思考 / 3 工具 / 4 收尾。 */
-    private var stage = 1
+    private fun isMainThread(): Boolean = Looper.myLooper() == Looper.getMainLooper()
 
     private val tick = object : Runnable {
         override fun run() {
             if (!active) return
-            if (System.currentTimeMillis() - lastEventAt > IDLE_STOP_MS) {
-                // 通知一直在刷「已跑 N 分钟」，看着像还在干活；兜底撤掉，避免僵尸通知。
-                stop(appContext ?: return, reason = "超时兜底：30 分钟没有任何会话活动，自动撤销进度通知")
-                return
-            }
+            val now = System.currentTimeMillis()
+            cards.values
+                .filter { now - it.lastEventAt > IDLE_STOP_MS }
+                .forEach { stale -> removeRun(stale.runId, pinned = false) }
             post()
-            handler.postDelayed(this, TICK_MS)
+            if (active) handler.postDelayed(this, TICK_MS)
         }
     }
 
     fun start(context: Context) {
+        if (!isMainThread()) {
+            handler.post { start(context) }
+            return
+        }
         appContext = context.applicationContext
-        startedAt = System.currentTimeMillis()
-        lastEventAt = startedAt
-        step = "正在处理"
-        actionShort = "处理中"
-        stage = 1
-        paused = false
-        idle = false
         active = true
+        idle = false
         handler.removeCallbacks(tick)
         handler.post(tick)
-        EtaTrace.log("run.progress.start", "开始汇报运行进度")
+        // 有任务了：撤掉空闲常驻卡，别让它和会话卡并排挂两条；然后立刻画一次，
+        // 否则第一张卡要等 10 秒 tick 才出现。
+        val app = appContext
+        if (app != null) {
+            runCatching { manager(app).cancel(SessionNotificationIds.IDLE_NOTIFICATION_ID) }
+            post()
+        }
+        EtaTrace.log("run.progress.start", "开始汇报运行进度（多卡）")
     }
 
-    /** 记住这次运行属于哪个会话；流体云／通知被点开时直接落到那次会话。 */
+    /** 灵屏会话在跑时，只让这一张卡让位给仪表盘，其余会话不受影响。 */
+    fun delegateToVirtualScreen(runId: String, value: Boolean) {
+        if (!isMainThread()) {
+            handler.post { delegateToVirtualScreen(runId, value) }
+            return
+        }
+        if (runId.isBlank()) return
+        val changed = if (value) delegatedRuns.add(runId) else delegatedRuns.remove(runId)
+        if (changed && !value) post()
+    }
+
+    /** 记住这次运行属于哪个会话：卡片身份、点击落点、通知 ID 都按它定。 */
     fun noteConversation(runId: String, conversationKey: String, title: String = "") {
-        this.runId = runId
-        this.conversationKey = conversationKey
-        if (title.isNotBlank()) conversationTitle = title
-        if (active) post()
+        if (!isMainThread()) {
+            handler.post { noteConversation(runId, conversationKey, title) }
+            return
+        }
+        if (runId.isBlank()) return
+        val key = conversationKey.ifBlank { runId }
+        val card = cards[key] ?: RunCard(runId, conversationKey, title).also { cards[key] = it }
+        if (title.isNotBlank()) card.title = title
+        card.lastEventAt = System.currentTimeMillis()
+        if (active) postCard(card)
     }
 
-    /** 暂停／继续时改按钮图标与状态行。 */
-    fun setPaused(value: Boolean) {
-        if (paused == value) return
-        paused = value
-        step = if (value) "已暂停" else "正在处理"
-        actionShort = if (value) "已暂停" else "处理中"
-        lastEventAt = System.currentTimeMillis()
-        if (active) post()
+    /** 暂停/恢复后立刻重画：真源在 [RunControl]，这里只负责把新状态画出来。 */
+    fun refresh() {
+        if (!isMainThread()) {
+            handler.post { refresh() }
+            return
+        }
+        if (!active) return
+        val now = System.currentTimeMillis()
+        cards.values.forEach { it.lastEventAt = now }
+        post()
     }
 
-    /** 并发上限被内存压低时，把原因留在trace里；卡片上只留并发数。 */
+    /** 并发上限被内存压低时，把原因留在 trace 里；卡片副标题只留并发数。 */
     fun noteSessionLimit(limit: Int, max: Int) {
+        if (!isMainThread()) {
+            handler.post { noteSessionLimit(limit, max) }
+            return
+        }
         concurrencyMax = max.coerceAtLeast(1)
-        limitNote = if (limit < max) "内存紧张 · 上限 $limit/$max" else ""
+        if (limit < max) {
+            EtaTrace.log("run.progress.limit", "内存紧张 · 并发上限 $limit/$max")
+        }
     }
 
-    /** 当前在跑的会话数，卡片副标题只在多会话时出现。 */
+    /** 当前在跑的会话数：多会话时每张卡副标题都标一下。 */
     fun noteConcurrency(running: Int) {
+        if (!isMainThread()) {
+            handler.post { noteConcurrency(running) }
+            return
+        }
         runningCount = running.coerceAtLeast(0)
         if (active) post()
     }
 
-    /** 由事件流驱动，更新「当前在做什么」与阶段进度。 */
-    fun note(event: AgentEvent) {
+    /**
+     * 事件流驱动：只更新这个 run 自己的卡。
+     * 暂停后不再被在途事件改回「正在执行」。
+     */
+    fun note(runId: String, event: AgentEvent) {
+        if (!isMainThread()) {
+            handler.post { note(runId, event) }
+            return
+        }
         if (!active) return
-        lastEventAt = System.currentTimeMillis()
+        val card = cards.values.firstOrNull { it.runId == runId } ?: return
+        card.lastEventAt = System.currentTimeMillis()
+        if (RunControl.state.value.isPaused(runId)) return
         when (event) {
             is AgentEvent.ToolStarted -> {
                 val name = label(event.name)
-                step = "正在执行：$name"
-                actionShort = shortLabel(name)
-                stage = 3
+                card.step = "正在执行：$name"
+                card.actionShort = shortLabel(name)
+                card.stage = 3
             }
             is AgentEvent.AssistantBlockDelta -> {
-                step = "正在输出回复"
-                actionShort = "输出回复"
-                stage = 4
+                card.step = "正在输出回复"
+                card.actionShort = "输出回复"
+                card.stage = 4
             }
             is AgentEvent.ContextCompaction -> {
-                step = "正在整理上下文"
-                actionShort = "整理上下文"
-                stage = 2
+                card.step = "正在整理上下文"
+                card.actionShort = "整理上下文"
+                card.stage = 2
             }
             is AgentEvent.ModelRetryScheduled -> {
-                step = "模型重试中"
-                actionShort = "重试模型"
-                stage = 2
+                card.step = "模型重试中"
+                card.actionShort = "重试模型"
+                card.stage = 2
             }
             else -> Unit
         }
+        postCard(card)
     }
 
-    /**
-     * 任务结束：默认撤掉通知；开启「流体云常驻」时改为发布空闲条目，让流体云一直留着入口。
-     */
-    fun stop(context: Context, pinned: Boolean = false, reason: String = "已撤销进度通知") {
-        if (!active) return
+    /** 单个会话结束：只撤它那一张，别的会话继续挂着。 */
+    fun removeRun(runId: String, pinned: Boolean) {
+        if (!isMainThread()) {
+            handler.post { removeRun(runId, pinned) }
+            return
+        }
+        val card = cards.values.firstOrNull { it.runId == runId } ?: return
+        cards.remove(card.key)
+        delegatedRuns.remove(runId)
+        // 先算好要撤的 ID 再释放映射：ID 分配器与通知管理器都按同一张卡走。
+        val cardId = SessionNotificationIds.idFor(card.key)
+        SessionNotificationIds.release(card.key)
+        val app = appContext ?: return
+        runCatching { manager(app).cancel(cardId) }
+        if (cards.isNotEmpty()) return
         active = false
-        limitNote = ""
-        runId = ""
-        conversationKey = ""
-        conversationTitle = ""
-        paused = false
-        runningCount = 0
-        stage = 1
         handler.removeCallbacks(tick)
-        val app = (appContext ?: context.applicationContext)
         if (pinned) publishIdle(app) else {
             idle = false
-            runCatching { manager(app).cancel(NOTIFICATION_ID) }
+            runCatching { manager(app).cancel(SessionNotificationIds.IDLE_NOTIFICATION_ID) }
+        }
+    }
+
+    /** 服务整体收尾（没有会话在跑了）：撤掉所有会话卡。 */
+    fun stop(context: Context, pinned: Boolean = false, reason: String = "已撤销进度通知") {
+        if (!isMainThread()) {
+            handler.post { stop(context, pinned, reason) }
+            return
+        }
+        val app = appContext ?: context.applicationContext
+        val keys = cards.keys.toList()
+        cards.clear()
+        delegatedRuns.clear()
+        active = false
+        runningCount = 0
+        handler.removeCallbacks(tick)
+        keys.forEach { key ->
+            runCatching { manager(app).cancel(SessionNotificationIds.idFor(key)) }
+            SessionNotificationIds.release(key)
+        }
+        if (pinned) publishIdle(app) else {
+            idle = false
+            runCatching { manager(app).cancel(SessionNotificationIds.IDLE_NOTIFICATION_ID) }
         }
         EtaTrace.log("run.progress.stop", reason)
     }
 
     /** 设置里切换「流体云常驻」时立即生效：没任务就跑空闲条目，没开就清掉。 */
     fun refreshIdle(context: Context, pinned: Boolean) {
+        if (!isMainThread()) {
+            handler.post { refreshIdle(context, pinned) }
+            return
+        }
         val app = context.applicationContext
         appContext = app
-        if (active) return
+        if (active || cards.isNotEmpty()) return
         if (pinned) publishIdle(app) else {
             idle = false
-            runCatching { manager(app).cancel(NOTIFICATION_ID) }
+            runCatching { manager(app).cancel(SessionNotificationIds.IDLE_NOTIFICATION_ID) }
         }
     }
 
@@ -200,12 +282,12 @@ internal object RunProgressNotifier {
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .setContentIntent(launchIntent(app))
+                .setContentIntent(launchIntent(app, "", SessionNotificationIds.IDLE_NOTIFICATION_ID))
             if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
                 builder.setShortCriticalText("空闲")
                 builder.setRequestPromotedOngoing(true)
             }
-            manager(app).notify(NOTIFICATION_ID, builder.build())
+            manager(app).notify(SessionNotificationIds.IDLE_NOTIFICATION_ID, builder.build())
         }
     }
 
@@ -216,69 +298,114 @@ internal object RunProgressNotifier {
     }
 
     private fun post() {
-        val app = appContext ?: return
-        val minutes = ((System.currentTimeMillis() - startedAt) / 60_000L).coerceAtLeast(0L)
-        runCatching {
-            manager(app).notify(NOTIFICATION_ID, build(app, minutes))
-        }
+        if (!active) return
+        cards.values.toList().forEach { card -> postCard(card) }
     }
 
-    private fun build(app: Context, minutes: Long): Notification {
+    private fun postCard(card: RunCard) {
+        val app = appContext ?: return
+        if (!active || card.runId in delegatedRuns) return
+        runCatching { manager(app).notify(SessionNotificationIds.idFor(card.key), build(app, card)) }
+    }
+
+    private fun build(app: Context, card: RunCard): Notification {
+        val cardId = SessionNotificationIds.idFor(card.key)
+        val paused = RunControl.state.value.isPaused(card.runId)
+        val minutes = ((System.currentTimeMillis() - card.startedAt) / 60_000L).coerceAtLeast(0L)
         val elapsed = if (minutes <= 0L) "刚跑起来" else "已跑 $minutes 分钟"
-        val title = conversationTitle.ifBlank { "Eta 正在运行" }
-        val detail = if (paused) "已暂停 · 点继续恢复" else "$elapsed · $step"
-        val open = launchIntent(app)
+        val open = launchIntent(app, card.conversationKey, cardId)
         val builder = Notification.Builder(app, CHANNEL)
             .setSmallIcon(app.applicationInfo.icon)
-            .setContentTitle(title)
-            .setContentText(detail)
+            .setContentTitle(card.title.ifBlank { "Eta 正在运行" })
+            .setContentText(if (paused) "已暂停 · 点继续恢复" else "$elapsed · ${card.step}")
             .setSubText(if (runningCount > 1) "并发 $runningCount/$concurrencyMax" else null)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setContentIntent(open)
             .addAction(
-                action(
+                textAction(
                     app,
-                    if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
-                    if (paused) AgentRuntimeService.ACTION_RESUME_RUNS else AgentRuntimeService.ACTION_PAUSE_RUNS,
-                    ACTION_PAUSE_REQUEST,
+                    if (paused) "继续" else "暂停",
+                    if (paused) AgentRuntimeService.ACTION_RESUME_RUN else AgentRuntimeService.ACTION_PAUSE_RUN,
+                    1,
+                    card.runId,
+                    cardId,
                 ),
             )
             .addAction(
-                action(
+                textAction(
                     app,
-                    R.drawable.ic_stat_stop,
-                    AgentRuntimeService.ACTION_STOP_RUNS,
-                    ACTION_STOP_REQUEST,
+                    "停止",
+                    AgentRuntimeService.ACTION_STOP_RUN,
+                    2,
+                    card.runId,
+                    cardId,
                 ),
             )
-        if (open != null) {
-            builder.addAction(
-                Notification.Action.Builder(
-                    Icon.createWithResource(app, progressIcon(stage)),
-                    "",
-                    open,
-                ).build(),
-            )
-        }
+            .addAction(insertAction(app, card, cardId))
         if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
-            builder.setShortCriticalText(if (paused) "已暂停" else actionShort)
+            builder.setShortCriticalText(if (paused) "已暂停" else card.actionShort)
             builder.setRequestPromotedOngoing(true)
         }
         return builder.build()
+    }
+
+    /** 文字版按钮：icon 传 null，系统会渲染成文字胶囊。 */
+    private fun textAction(
+        app: Context,
+        label: String,
+        serviceAction: String,
+        requestOffset: Int,
+        runId: String,
+        cardId: Int,
+    ): Notification.Action {
+        val intent = Intent(app, AgentRuntimeService::class.java)
+            .setAction(serviceAction)
+            .putExtra(AgentRuntimeService.EXTRA_RUN_ID, runId)
+        val pending = PendingIntent.getService(
+            app,
+            cardId * 10 + requestOffset,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(null, label, pending).build()
+    }
+
+    /** 「插入」：拉起轻量输入弹层，提交后走 supplement 通道。 */
+    private fun insertAction(app: Context, card: RunCard, cardId: Int): Notification.Action {
+        val intent = Intent(app, SupplementActivity::class.java)
+            .putExtra(AgentRuntimeService.EXTRA_SUPPLEMENT_CONVERSATION_ID, card.conversationKey)
+            .putExtra(SupplementActivity.EXTRA_TITLE, card.title)
+            // 独立任务：否则会把 Eta 主界面一起带到前台，看起来像「点插入回到对话页」。
+            .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
+        val pending = PendingIntent.getActivity(
+            app,
+            cardId * 10 + 3,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(null, "插入", pending).build()
     }
 
     private fun action(
         app: Context,
         iconRes: Int,
         serviceAction: String,
-        requestCode: Int,
+        requestBase: Int,
+        runId: String,
+        cardId: Int,
     ): Notification.Action {
-        val intent = Intent(app, AgentRuntimeService::class.java).setAction(serviceAction)
+        val intent = Intent(app, AgentRuntimeService::class.java)
+            .setAction(serviceAction)
+            .putExtra(AgentRuntimeService.EXTRA_RUN_ID, runId)
         val pending = PendingIntent.getService(
             app,
-            requestCode,
+            cardId * 10 + requestBase,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -310,10 +437,10 @@ internal object RunProgressNotifier {
         return manager
     }
 
-    private fun launchIntent(app: Context): PendingIntent? {
+    private fun launchIntent(app: Context, conversationKey: String, cardId: Int): PendingIntent? {
         val intent = Intent(app, MainActivity::class.java)
             .setAction(MainActivity.ACTION_VIEW_EXECUTION)
-            .setData(Uri.Builder().scheme("eta-run-progress").authority("view").build())
+            .setData(Uri.Builder().scheme("eta-run-progress").authority("view").appendPath(cardId.toString()).build())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         if (conversationKey.isNotBlank()) {
             intent.putExtra(MainActivity.EXTRA_EXECUTION_SOURCE, AgentRuntimeWire.AGENT_UI_HANDOFF_SOURCE)
@@ -321,7 +448,7 @@ internal object RunProgressNotifier {
         }
         return PendingIntent.getActivity(
             app,
-            0,
+            cardId,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

@@ -21,6 +21,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.BasicComponentColors
@@ -76,6 +77,7 @@ internal fun EtaPreference(
     bottomAction: (@Composable () -> Unit)? = null,
     titleColor: BasicComponentColors = BasicComponentDefaults.titleColor(),
     summaryColor: BasicComponentColors = BasicComponentDefaults.summaryColor(),
+    summaryMaxLines: Int = Int.MAX_VALUE,
     enabled: Boolean = true,
     holdDownState: Boolean = false,
     onClick: (() -> Unit)? = null,
@@ -86,7 +88,8 @@ internal fun EtaPreference(
     EtaPreferenceRow(
         title = title, summary = summary, modifier = modifier,
         startAction = startAction, endActions = endActions, bottomAction = bottomAction,
-        titleColor = titleColor, summaryColor = summaryColor, titleContent = content,
+        titleColor = titleColor, summaryColor = summaryColor, summaryMaxLines = summaryMaxLines,
+        titleContent = content,
         enabled = enabled, holdDownState = holdDownState,
         interaction = if (onClick != null) {
             Modifier.clickable(enabled = enabled, onClickLabel = onClickLabel, role = role, onClick = onClick)
@@ -105,6 +108,7 @@ internal fun EtaPreferenceRow(
     holdDownState: Boolean = false,
     titleColor: BasicComponentColors = BasicComponentDefaults.titleColor(),
     summaryColor: BasicComponentColors = BasicComponentDefaults.summaryColor(),
+    summaryMaxLines: Int = Int.MAX_VALUE,
     bottomAction: (@Composable () -> Unit)? = null,
     titleContent: (@Composable ColumnScope.() -> Unit)? = null,
     endActions: (@Composable RowScope.() -> Unit)? = null,
@@ -134,6 +138,8 @@ internal fun EtaPreferenceRow(
                         if (summary != null) Text(
                             text = summary,
                             style = MiuixTheme.textStyles.body2,
+                            maxLines = summaryMaxLines,
+                            overflow = TextOverflow.Ellipsis,
                             color = if (enabled) summaryColor.color else summaryColor.disabledColor,
                         )
                     }

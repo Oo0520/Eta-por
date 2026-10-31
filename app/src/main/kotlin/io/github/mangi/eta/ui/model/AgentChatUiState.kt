@@ -100,6 +100,8 @@ internal data class AgentChatUiState(
     val resumableRun: ResumableRunUiState? = null,
     /** 斜杠命令的确认卡：未知命令、或带副作用的命令执行前问一句；瞬时状态，不落库。 */
     val commandConfirm: CommandConfirmUi? = null,
+    /** 斜杠命令的结果卡：多行信息、停留到用户关掉；瞬时状态，不落库。 */
+    val commandResult: CommandResultUi? = null,
     /** 输入框文本由本地持有，命令消费后靠这个递增令牌让它自己清空。 */
     val inputResetToken: Long = 0,
     /** @ 引用：本次要带进上下文的历史消息（最多 3 条）；发送后清空。 */
@@ -121,6 +123,8 @@ data class UserMessageUi(
     val content: String,
     val images: List<String> = emptyList(),
     val isEdited: Boolean = false,
+    /** 消息时间（毫秒）；0 表示旧数据没有时间，界面不显示时间戳。 */
+    val createdAt: Long = 0L,
 ) : AgentChatMessageUi
 
 @Immutable
@@ -135,6 +139,8 @@ data class AgentMessageUi(
     val selectedCandidate: Int = 0,
     /** 仅当前内存会话展示，不进入消息存储、归档与导出。 */
     val searchSuggestionsHtml: List<String> = emptyList(),
+    /** 消息时间（毫秒）；0 表示旧数据没有时间，界面不显示时间戳。 */
+    val createdAt: Long = 0L,
 ) : AgentChatMessageUi
 
 enum class SystemNoticeCode(val wireValue: String) {
@@ -143,7 +149,10 @@ enum class SystemNoticeCode(val wireValue: String) {
     RuntimeFailed("runtime_failed"),
     ModelRetry("model_retry"),
     ContextCompaction("context_compaction"),
-    Interrupted("interrupted");
+    Interrupted("interrupted"),
+
+    /** 本地命令/技能调用留下的短提示（不参与模型上下文）。 */
+    CommandNote("command_note");
 
     companion object {
         fun fromWireValue(value: String): SystemNoticeCode? = entries.firstOrNull {
@@ -298,3 +307,54 @@ internal data class CommandConfirmUi(
     val commandName: String?,
     val payload: String,
 )
+
+/**
+ * 命令结果卡：替代「2 秒就消失」的 toast。
+ *
+ * @property lines 逐行展示的正文（清单、状态、用法），不做 Markdown 渲染。
+ * @property isError 出错时标题用错误色，正文仍按行给全。
+ */
+@Immutable
+internal data class CommandResultUi(
+    val title: String,
+    val lines: List<String> = emptyList(),
+    val isError: Boolean = false,
+)
+
+/** 命令面板内容：要么来自输入前缀过滤，要么由某条命令主动打开（/help、/skills、/model）。 */
+@Immutable
+internal data class CommandPaletteUi(
+    val title: String,
+    val entries: List<AgentPaletteEntry>,
+)
+
+internal enum class AgentPaletteBadge {
+    Skill,
+    SkillDisabled,
+}
+
+/**
+ * 面板里的一行：命令、技能、模型统一成同一种可点选条目。
+ *
+ * @property section 分组标题；与上一行相同则不重复渲染。
+ * @property current 选中态（当前模型）。
+ */
+@Immutable
+internal data class AgentPaletteEntry(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val payload: AgentPalettePayload,
+    val badge: AgentPaletteBadge? = null,
+    val section: String? = null,
+    val current: Boolean = false,
+)
+
+@Immutable
+internal sealed interface AgentPalettePayload {
+    /** 命令或技能：按命令规则执行、或补全命令名等用户补参数。 */
+    data class Run(val command: AgentCommand) : AgentPalettePayload
+
+    /** 模型：点一下直接切换。 */
+    data class SwitchModel(val modelId: String) : AgentPalettePayload
+}

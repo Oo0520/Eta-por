@@ -1,6 +1,8 @@
 package io.github.mangi.eta.ui.app
 
 import io.github.mangi.eta.ui.model.AgentCommand
+import io.github.mangi.eta.ui.model.AgentCommandKind
+import io.github.mangi.eta.ui.model.SkillItemUi
 
 /**
  * 内置命令表。
@@ -18,6 +20,7 @@ internal object AgentCommands {
     const val RESUME = "resume"
     const val RENAME = "rename"
     const val STATUS = "status"
+    const val SKILLS = "skills"
     const val HELP = "help"
 
     val builtIns: List<AgentCommand> = listOf(
@@ -64,8 +67,47 @@ internal object AgentCommands {
             summary = "查看模型、思考档位与消息数",
         ),
         AgentCommand(
+            name = SKILLS,
+            summary = "列出可用技能命令，选中即注入该技能",
+        ),
+        AgentCommand(
             name = HELP,
             summary = "列出全部命令",
         ),
     )
+
+    /**
+     * 内置命令 + 已启用技能展开成的斜杠命令。
+     *
+     * 技能命令名就是技能 id（如 `self-improving-agent`）；和内置命令撞名时加 `skill-` 前缀，
+     * 保证 `parseAgentCommand` 的解析结果始终唯一。
+     */
+    fun withSkills(skills: List<SkillItemUi>): List<AgentCommand> {
+        val taken = builtIns.mapTo(mutableSetOf()) { it.name.lowercase() }
+        val skillCommands = skills
+            .asSequence()
+            // 只要求「已安装」：开关关掉的技能也能被斜杠命令显式调用，面板里会标「未启用」。
+            .filter { it.installed && it.id.isNotBlank() }
+            .distinctBy { it.id }
+            .sortedBy { it.id.lowercase() }
+            .map { skill ->
+                var name = skill.id.trim()
+                while (name.lowercase() in taken) name = "skill-$name"
+                taken += name.lowercase()
+                AgentCommand(
+                    name = name,
+                    // 描述给全：面板可滚动，靠省略号截断等于让用户猜。
+                    summary = skill.description
+                        .replace(Regex("\\s+"), " ")
+                        .trim()
+                        .ifBlank { skill.name },
+                    kind = AgentCommandKind.Skill,
+                    skillId = skill.id,
+                    waitsForArgs = true,
+                    skillEnabled = skill.enabled,
+                )
+            }
+            .toList()
+        return builtIns + skillCommands
+    }
 }

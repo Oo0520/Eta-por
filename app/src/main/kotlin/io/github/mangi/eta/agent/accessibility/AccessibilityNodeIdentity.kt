@@ -22,10 +22,17 @@ internal data class AccessibilityNodeIdentity(
         if (uniqueId != refreshed.uniqueId) return false
         if (viewId.isNotBlank() && viewId != refreshed.viewId) return false
         // uniqueId 只证明还是同一个虚拟节点，不证明它仍表达模型观察时的动作语义。
-        if (text != refreshed.text) return false
-        if (description != refreshed.description) return false
+        // 但「列表项里只有未读数/时间在跳」这种情况不该判成换了目标：QQ 会话列表、美团商家卡片
+        // 的文本每秒都在变，严格相等会让这些页面的节点动作全部失效。这里只忽略数字差异，
+        // 文字部分必须一致，配合 windowId / class / viewId 已经足够定位。
+        if (text != refreshed.text && text.withoutDigits() != refreshed.text.withoutDigits()) return false
+        if (description != refreshed.description &&
+            description.withoutDigits() != refreshed.description.withoutDigits()
+        ) return false
         return true
     }
+
+    private fun String.withoutDigits(): String = filterNot { it.isDigit() }
 }
 
 /**
@@ -37,6 +44,10 @@ internal object AccessibilityIdentityFreshnessPolicy {
         hasUniqueId: Boolean,
         snapshotTruncated: Boolean,
         identityMatchCount: Int,
+        clickable: Boolean = false,
     ): Boolean =
-        identityMatchCount == 1 && (hasUniqueId || !snapshotTruncated)
+        // 语义唯一就够用：可点击节点（列表项、按钮）即使快照被截断、viewId 为空，
+        // 也不会因为「旁边还有别的行」就判成无法定位 —— 那正是 QQ / 美团这类
+        // 长列表最容易踩的坑。
+        identityMatchCount == 1 && (hasUniqueId || !snapshotTruncated || clickable)
 }

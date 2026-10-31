@@ -50,6 +50,13 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onCreate() {
         super.onCreate()
+        // 全量包还原：必须在 Room / DataStore 打开之前把暂存内容覆盖回 dataDir，
+        // 否则进程会先读到旧库，还原就等于白做。只在主进程执行，hook 进程不碰数据。
+        if (Application.getProcessName() == packageName) {
+            runCatching {
+                io.github.mangi.eta.data.repository.EtaFullBackupArchive.applyPendingRestore(this)
+            }
+        }
         Prefs.initLocal(this)
         // 崩溃留证：任何进程一启动就装好，写入失败也不影响原有崩溃流程。
         runCatching { CrashRecorder.install(this) }
@@ -79,20 +86,6 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         ProviderRepository.init(this)
         McpServerRepository.init(this)
         GitHubAccountManager.init(this)
-        // 悬浮胶囊常驻：上次开着就继续挂上，没有任务时显示空闲。
-        applicationScope.launch(Dispatchers.IO) {
-            val pinned = runCatching { SettingsDataStore.settings().overlayCapsulePinned }.getOrDefault(false)
-            if (pinned) {
-                runCatching {
-                    startService(
-                        android.content.Intent(
-                            this@EtaApp,
-                            io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java,
-                        ).setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_PIN_CAPSULE),
-                    )
-                }
-            }
-        }
         applicationScope.launch(Dispatchers.IO) {
             runCatching {
                 io.github.mangi.eta.data.db.EtaDatabase.get(this@EtaApp).agentTaskDao().recoverInterrupted(System.currentTimeMillis())

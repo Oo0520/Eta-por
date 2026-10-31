@@ -14,8 +14,10 @@ data class Settings(
     val virtualScreenOffEnabled: Boolean = false,
     val virtualScreenFallbackEnabled: Boolean = false,
     val virtualScreenAutoRestartApps: Boolean = false,
-    val virtualScreenIdleTimeoutMinutes: Int = 20,
-    val virtualScreenFrameRate: Int = 60,
+    val virtualScreenIdleTimeoutMinutes: Int = 5,
+    val virtualScreenFrameRate: Int = 3,
+    /** 灵屏运行期间保持屏幕常亮（Agent 操作不因息屏中断）。 */
+    val virtualScreenKeepScreenOn: Boolean = true,
     val virtualScreenFloatWindowEnabled: Boolean = false,
     val virtualScreenFloatEdgeCollapseEnabled: Boolean = true,
     val virtualScreenFloatWindowWidthDp: Int = 0,
@@ -32,8 +34,14 @@ data class Settings(
     val autoBackupLastAt: Long = 0L,
     val autoBackupFingerprint: String = "",
     val autoBackupLastFileName: String = "",
+    /** 上一次自动备份的失败原因；成功后清空。 */
+    val autoBackupLastError: String = "",
+    /** 上一次自动备份失败的时间（毫秒）。 */
+    val autoBackupLastErrorAt: Long = 0L,
     /** 自定义自动备份目录；空串表示默认的「外部存储/Eta备份」。 */
     val autoBackupDirectory: String = "",
+    /** 自动备份格式：json（轻量 JSON）/ full（全量压缩包，含私有目录）。 */
+    val autoBackupFormat: String = AutoBackupFormat.JSON,
     /** 极致自动排查：本地定时巡检，只报异常，异常即留档。 */
     val diagPatrolEnabled: Boolean = false,
 
@@ -53,18 +61,8 @@ data class Settings(
     val diagPatrolLastLevel: String = "",
     val diagPatrolLastSummary: String = "",
 
-    /** 打开 Eta 后悬浮胶囊常驻显示：没有任务时也留在屏幕上，点它看运行中会话。 */
-    val overlayCapsulePinned: Boolean = false,
-
-    /** 任务执行时不显示悬浮胶囊：运行状态只走流体云。 */
-    val overlayCapsuleHidden: Boolean = false,
-
     /** 流体云常驻：没有任务时也在流体云保留一条 Eta 入口。 */
     val overlayFluidPinned: Boolean = false,
-
-    /** 小胶囊上次停的位置（像素，收起态坐标系）；-1 表示还没拖过，按默认居中偏上。 */
-    val overlayCapsulePosX: Int = -1,
-    val overlayCapsulePosY: Int = -1,
 
     /** 最近打开过的会话 id（逗号分隔，最新在前）：重启后侧栏那一栏还在。 */
     val recentOpenedConversationIds: String = "",
@@ -72,8 +70,8 @@ data class Settings(
 )
 
 internal object VirtualScreenIdleTimeout {
-    val options = listOf(10, 20, 60, 0)
-    fun normalize(minutes: Int): Int = minutes.takeIf { it in options } ?: 20
+    val options = listOf(5, 10, 20, 60, 0)
+    fun normalize(minutes: Int): Int = minutes.takeIf { it in options } ?: 5
 }
 
 /** 自动备份周期：统一按分钟存，支持「每 10 分钟一次」这类短周期。 */
@@ -110,6 +108,19 @@ internal object AutoBackupInterval {
     fun millis(storedMinutes: Int, legacyHours: Int): Long = effectiveMinutes(storedMinutes, legacyHours) * 60_000L
 }
 
+/** 自动备份产物格式：轻量 JSON，或「JSON + 私有目录」的全量压缩包。 */
+internal object AutoBackupFormat {
+
+    const val JSON = "json"
+    const val FULL = "full"
+
+    val presets = listOf(JSON, FULL)
+
+    fun normalize(value: String): String = if (value.trim().equals(FULL, ignoreCase = true)) FULL else JSON
+
+    fun isFull(value: String): Boolean = normalize(value) == FULL
+}
+
 /** 自动备份保留份数，超出的删最旧；上限 60 份，够放 20~30 份这种短周期。 */
 internal object AutoBackupKeepCount {
 
@@ -122,12 +133,19 @@ internal object AutoBackupKeepCount {
     fun normalize(count: Int): Int = count.takeIf { it in MIN..MAX } ?: 5
 }
 
-/** 虚拟屏出帧目标帧率；越低越省电，越高越跟手。 */
+/** 灵屏出帧目标帧率；越低越省电，越高越跟手。 */
 internal object VirtualScreenFrameRate {
-    val options = listOf(60, 75, 90)
-    fun normalize(value: Int): Int = value.takeIf { it in options } ?: 60
-    /** Root 进程 JPEG 编码间隔（毫秒）。 */
-    fun intervalMs(value: Int): Int = (1000 / normalize(value)).coerceIn(8, 66)
-    /** 帧率越高，单帧 JPEG 质量略降，避免编码跟不上导致卡顿。 */
-    fun jpegQuality(value: Int): Int = if (normalize(value) >= 75) 60 else 72
+    /**
+     * 极低帧率优先：灵屏主要给 Agent 读屏用，画面不需要流畅；
+     * 人接管走的是直通 Surface（合成器直出），不受这里限制。
+     */
+    val options = listOf(1, 3, 30, 60)
+    fun normalize(value: Int): Int = value.takeIf { it in options } ?: 3
+    /**
+     * 客户端拉帧节奏（毫秒）。真实出帧由 helper 自适应 1–3fps，
+     * 这里只决定浮窗多久去取一次最新帧。
+     */
+    fun intervalMs(value: Int): Int = 66
+    /** 固定不压缩：灵屏的出帧是给 Agent 看的，文字边缘不能糊。 */
+    fun jpegQuality(value: Int): Int = 100
 }

@@ -7,7 +7,7 @@ internal object VirtualScreenFrameGate {
     @Volatile
     var paused: Boolean = false
 
-    /** 最近一次向虚拟屏下发输入的时间：触屏后短时全速追帧，别让操作等下一拍。 */
+    /** 最近一次向灵屏下发输入的时间：触屏后短时全速追帧，别让操作等下一拍。 */
     @Volatile
     var lastInputAt: Long = 0L
 

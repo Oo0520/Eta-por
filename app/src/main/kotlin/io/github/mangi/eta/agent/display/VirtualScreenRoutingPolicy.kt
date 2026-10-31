@@ -31,6 +31,7 @@ internal class VirtualScreenRoutingPolicy(initiallyRouted: Boolean = false) {
             "observe_screen",
             "tap",
             "tap_area",
+            "tap_smart",
             "tap_element",
             "long_press",
             "long_press_element",
@@ -49,15 +50,17 @@ internal class VirtualScreenRoutingPolicy(initiallyRouted: Boolean = false) {
             "wait_for_text",
             "wait_for_package",
             "open_system_panel",
-            "set_alarm",
-            "set_timer",
-            "browser_use",
         )
-        val unavailableTools = setOf("open_system_panel", "set_alarm", "set_timer", "browser_use")
+        // browser_use 操作的是 App 内自有的离屏 WebView，不经灵屏窗口转发，
+        // 因此不应算作 UI 工具，也不能因为灵屏开启而被判为不可用。
+        // 闹钟与计时器走 AlarmClock + EXTRA_SKIP_UI，不产生界面，灵屏会话里照常可用；
+        // 只有真正要把系统面板拉到屏幕上的 open_system_panel 仍然禁用。
+        val unavailableTools = setOf("open_system_panel")
         val coordinateTools = setOf(
             "observe_screen",
             "tap",
             "tap_area",
+            "tap_smart",
             "long_press",
             "swipe",
             "scroll",

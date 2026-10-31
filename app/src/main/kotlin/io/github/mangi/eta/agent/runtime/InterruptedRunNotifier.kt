@@ -17,7 +17,7 @@ import io.github.mangi.eta.core.EtaTrace
 internal object InterruptedRunNotifier {
 
     private const val CHANNEL = "eta_interrupted_runs"
-    private const val NOTIFICATION_ID = 4772
+    private const val NOTIFICATION_ID = 4774
 
     fun notifyIfAny(context: Context) {
         val app = context.applicationContext

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.Hearing
+import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.ImportContacts
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Inventory
@@ -123,8 +124,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 开关默认值由 [Prefs.Keys.BOOLEAN_DEFAULTS] 统一定义。Eta Runtime 自己消费的开关写入
  * App 本地配置；仅 Hook 消费的开关通过 RemotePreferences 提交到 LSPosed。
  */
-/** 诊断包默认落盘目录：共享文件夹里的「诊断包备份」，省得每次挑位置。 */
-private const val DIAGNOSTICS_BACKUP_DIR = "/storage/emulated/0/ai共享文件夹/诊断包备份"
+/** 定制包自己的仓库：关于页的「问题反馈」「源代码」都指这里，不再指上游。 */
+private const val PROJECT_REPO_URL = "https://github.com/Oo0520/Eta-por"
 
 @Composable
 internal fun SettingsScreen(
@@ -173,114 +174,8 @@ private fun SettingsPageContent(
     val openUrl: (String) -> Unit = { url ->
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }
-    // 诊断包：先后台只读采集，再交给系统文件选择器落盘；字节只在内存里留到保存完成。
-    var diagnosticsPending by remember { mutableStateOf(false) }
-    var diagnosticsPayload by remember { mutableStateOf<ByteArray?>(null) }
-    val diagnosticsSaver = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip"),
-    ) { uri ->
-        val payload = diagnosticsPayload
-        diagnosticsPayload = null
-        if (uri == null || payload == null) return@rememberLauncherForActivityResult
-        coroutineScope.launch {
-            val saved = runCatching {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri)?.use { stream ->
-                        stream.write(payload)
-                    } ?: error("诊断包输出流不可用")
-                }
-            }.isSuccess
-            Toast.makeText(
-                context.applicationContext,
-                if (saved) {
-                    context.getString(R.string.ui_about_diagnostics_saved, DiagnosticsBundle.defaultFileName())
-                } else {
-                    context.getString(R.string.ui_about_diagnostics_failed)
-                },
-                Toast.LENGTH_LONG,
-            ).show()
-        }
-    }
-    val exportDiagnostics: () -> Unit = {
-        if (!diagnosticsPending) {
-            diagnosticsPending = true
-            coroutineScope.launch {
-                val bytes = runCatching {
-                    withContext(Dispatchers.IO) { DiagnosticsBundle.collect(context.applicationContext) }
-                }.getOrNull()
-                diagnosticsPending = false
-                if (bytes == null) {
-                    Toast.makeText(
-                        context.applicationContext,
-                        context.getString(R.string.ui_about_diagnostics_failed),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                } else {
-                    val name = DiagnosticsBundle.defaultFileName()
-                    // 先直接落到「诊断包备份」目录，不用每次挑位置；目录不可写（没给所有文件访问权限等）时退回文件选择器。
-                    val saved = withContext(Dispatchers.IO) {
-                        runCatching {
-                            val dir = File(DIAGNOSTICS_BACKUP_DIR).apply { mkdirs() }
-                            val target = File(dir, name)
-                            target.writeBytes(bytes)
-                            target
-                        }.getOrNull()
-                    }
-                    if (saved != null) {
-                        Toast.makeText(
-                            context.applicationContext,
-                            context.getString(R.string.ui_about_diagnostics_saved_at, saved.absolutePath),
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    } else {
-                        diagnosticsPayload = bytes
-                        diagnosticsSaver.launch(name)
-                    }
-                }
-            }
-        }
-    }
-    // 崩溃记录：留证文件在 files/crash/ 下，这里只做展示与一次性导出。
+    // 崩溃记录条数：只给关于页那行入口写摘要；明细都在「诊断与日志」里。
     var crashCount by remember { mutableStateOf(0) }
-    var crashLatest by remember { mutableStateOf<String?>(null) }
-    var crashSharing by remember { mutableStateOf(false) }
-    val shareCrash: () -> Unit = {
-        val latest = CrashRecorder.latest(context.applicationContext)
-        if (latest == null) {
-            Toast.makeText(context.applicationContext, context.getString(R.string.ui_about_crash_none), Toast.LENGTH_SHORT).show()
-        } else if (!crashSharing) {
-            crashSharing = true
-            coroutineScope.launch {
-                val shareUri = runCatching {
-                    withContext(Dispatchers.IO) {
-                        val dir = File(context.cacheDir, "diagnostics").apply { mkdirs() }
-                        val target = File(dir, latest.name)
-                        target.writeBytes(latest.readBytes())
-                        FileProvider.getUriForFile(context, context.packageName + ".fileprovider", target)
-                    }
-                }.getOrNull()
-                crashSharing = false
-                if (shareUri == null) {
-                    Toast.makeText(
-                        context.applicationContext,
-                        context.getString(R.string.ui_about_crash_failed),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                } else {
-                    val send = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_STREAM, shareUri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    runCatching {
-                        context.startActivity(
-                            Intent.createChooser(send, context.getString(R.string.ui_about_crash_share_title)),
-                        )
-                    }
-                }
-            }
-        }
-    }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -291,7 +186,6 @@ private fun SettingsPageContent(
                     AccessibilityProtectionClient.isEnabled(context)
                 val crashes = CrashRecorder.records(context)
                 crashCount = crashes.size
-                crashLatest = crashes.firstOrNull()?.name
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -364,47 +258,6 @@ private fun SettingsPageContent(
     val settingsNoHit = settingsKeyword.isNotEmpty() &&
         SETTINGS_SEARCH_INDEX.none { it.keywords.lowercase().contains(settingsKeyword) }
 
-    // 诊断包分享：生成到 cache 后交给系统分享面板，字节只在内存里留到写入完成。
-    var diagnosticsSharing by remember { mutableStateOf(false) }
-    val shareDiagnostics: () -> Unit = {
-        if (!diagnosticsSharing && !diagnosticsPending) {
-            diagnosticsSharing = true
-            coroutineScope.launch {
-                val shareUri = runCatching {
-                    withContext(Dispatchers.IO) {
-                        val payload = DiagnosticsBundle.collect(context.applicationContext)
-                        val dir = File(context.cacheDir, "diagnostics").apply { mkdirs() }
-                        val target = File(dir, DiagnosticsBundle.defaultFileName())
-                        target.writeBytes(payload)
-                        FileProvider.getUriForFile(context, context.packageName + ".fileprovider", target)
-                    }
-                }.getOrNull()
-                diagnosticsSharing = false
-                if (shareUri == null) {
-                    Toast.makeText(
-                        context.applicationContext,
-                        context.getString(R.string.ui_about_diagnostics_failed),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                } else {
-                    val send = Intent(Intent.ACTION_SEND).apply {
-                        type = "application/zip"
-                        putExtra(Intent.EXTRA_STREAM, shareUri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    runCatching {
-                        context.startActivity(
-                            Intent.createChooser(
-                                send,
-                                context.getString(R.string.ui_about_diagnostics_share_title),
-                            )
-                        )
-                    }
-                }
-            }
-        }
-    }
-
     MiuixScaffoldPage(
         title = stringResource(R.string.ui_set_up_7debf9),
         onBack = onBack,
@@ -460,6 +313,10 @@ private fun SettingsPageContent(
                         iconTint = EtaPreferenceColors.Blue,
                     )
 
+                    // 流体云常驻紧跟自动压缩：属于全局流体云行为，与灵屏无关。
+                    EtaPreferenceDivider()
+                    FluidPinnedPref()
+
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_memory_b55ff5),
@@ -479,12 +336,21 @@ private fun SettingsPageContent(
                     )
                     EtaPreferenceDivider()
                     EtaArrowPreference(
-                        title = stringResource(R.string.virtual_screen_title),
+                        title = stringResource(R.string.lingscreen_entry_title),
                         startAction = { EtaPreferenceIcon(icon = Icons.Rounded.Smartphone, tint = EtaPreferenceColors.Blue) },
                         onClick = { onNavigate(AppRoute.VirtualScreen) },
                     )
                     EtaPreferenceDivider()
-                    VirtualScreenFloatWindowPrefs()
+                    EtaArrowPreference(
+                        title = "子智能体",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.Hub,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { onNavigate(AppRoute.Subagents) },
+                    )
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
@@ -513,7 +379,6 @@ private fun SettingsPageContent(
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = "GitHub 账号",
-                        summary = "一键连接，之后可直接 clone/push、提 issue/PR",
                         startAction = {
                             EtaPreferenceIcon(
                                 icon = Icons.Rounded.Code,
@@ -937,7 +802,7 @@ private fun SettingsPageContent(
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = "功能自检",
-                        summary = "一键体检：权限、数据、已内置功能",
+                        summary = "一键体检：授权、自动任务依赖、本机数据",
                         startAction = {
                             EtaPreferenceIcon(
                                 icon = Icons.Rounded.VerifiedUser,
@@ -956,7 +821,7 @@ private fun SettingsPageContent(
                                 tint = EtaPreferenceColors.Orange,
                             )
                         },
-                        onClick = { openUrl("https://github.com/Mangi-11/Eta/issues") },
+                        onClick = { openUrl("$PROJECT_REPO_URL/issues") },
                     )
 
                     EtaPreferenceDivider()
@@ -969,33 +834,16 @@ private fun SettingsPageContent(
                                 tint = EtaPreferenceColors.Blue,
                             )
                         },
-                        onClick = { openUrl("https://github.com/Mangi-11/Eta") },
+                        onClick = { openUrl(PROJECT_REPO_URL) },
                     )
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
-                        title = stringResource(R.string.ui_about_diagnostics_title),
-                        summary = stringResource(
-                            if (diagnosticsPending) R.string.ui_about_diagnostics_collecting
-                            else R.string.ui_about_diagnostics_summary,
-                        ),
-                        startAction = {
-                            EtaPreferenceIcon(
-                                icon = Icons.Rounded.BugReport,
-                                tint = EtaPreferenceColors.Orange,
-                            )
-                        },
-                        enabled = !diagnosticsPending,
-                        onClick = exportDiagnostics,
-                    )
-
-                    EtaPreferenceDivider()
-                    EtaArrowPreference(
-                        title = stringResource(R.string.ui_about_crash_title),
+                        title = "诊断与日志",
                         summary = if (crashCount <= 0) {
-                            stringResource(R.string.ui_about_crash_none)
+                            "诊断包 · 暂无崩溃记录"
                         } else {
-                            stringResource(R.string.ui_about_crash_summary, crashCount, crashLatest.orEmpty())
+                            "诊断包 · 崩溃记录 $crashCount 条"
                         },
                         startAction = {
                             EtaPreferenceIcon(
@@ -1003,8 +851,7 @@ private fun SettingsPageContent(
                                 tint = EtaPreferenceColors.Orange,
                             )
                         },
-                        enabled = !crashSharing,
-                        onClick = shareCrash,
+                        onClick = { onNavigate(AppRoute.DiagnosticsCenter) },
                     )
                 }
             }
@@ -1101,70 +948,15 @@ private fun SystemizerConfirmDialog(
  * 配置来源由调用方按能力边界传入。Hook 开关仍可能因 LSPosed 未连接而禁用；Agent
  * Runtime 开关始终使用 App 本地配置。
  */
+/** 流体云常驻：与灵屏解耦，属于全局流体云行为。 */
 @Composable
-private fun VirtualScreenFloatWindowPrefs() {
+private fun FluidPinnedPref() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by SettingsDataStore.settingsFlow().collectAsState(initial = null)
     val current = settings ?: return
-
     EtaSwitchPreference(
-        title = "悬浮胶囊常驻",
-        summary = "打开 Eta 后一直显示悬浮胶囊（没任务时也在），点它看运行中会话",
-        checked = current.overlayCapsulePinned,
-        onCheckedChange = { value ->
-            if (value && !Settings.canDrawOverlays(context)) {
-                runCatching {
-                    context.startActivity(
-                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                }
-            }
-            scope.launch {
-                SettingsDataStore.updateSettings { it.copy(overlayCapsulePinned = value) }
-                runCatching {
-                    context.startService(
-                        Intent(context, io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java)
-                            .setAction(
-                                if (value) {
-                                    io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_PIN_CAPSULE
-                                } else {
-                                    io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_UNPIN_CAPSULE
-                                },
-                            ),
-                    )
-                }
-            }
-        },
-        startAction = { EtaPreferenceIcon(Icons.Rounded.VerifiedUser, tint = EtaPreferenceColors.Green) },
-    )
-
-    EtaPreferenceDivider()
-
-    EtaSwitchPreference(
-        title = "运行时不显示悬浮胶囊",
-        summary = "跑任务时只在流体云显示状态，不再弹出悬浮胶囊；需要看详情时点流体云回会话",
-        checked = current.overlayCapsuleHidden,
-        onCheckedChange = { value ->
-            scope.launch {
-                SettingsDataStore.updateSettings { it.copy(overlayCapsuleHidden = value) }
-                runCatching {
-                    context.startService(
-                        Intent(context, io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java)
-                            .setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_HIDE_CAPSULE_RUN),
-                    )
-                }
-            }
-        },
-        startAction = { EtaPreferenceIcon(Icons.Rounded.Visibility, tint = EtaPreferenceColors.Green) },
-    )
-
-    EtaPreferenceDivider()
-
-    EtaSwitchPreference(
-        title = "流体云常驻",
-        summary = "没任务时也在流体云保留一条 Eta，点它回 Eta；任务结束由「空闲」接替进度卡片",
+        title = stringResource(R.string.lingscreen_fluid_pinned),
         checked = current.overlayFluidPinned,
         onCheckedChange = { value ->
             scope.launch {
@@ -1172,44 +964,12 @@ private fun VirtualScreenFloatWindowPrefs() {
                 runCatching {
                     context.startService(
                         Intent(context, io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java)
-                            .setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_REFRESH_FLUID),
+                            .setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_REFRESH_FLUID)
                     )
                 }
             }
         },
         startAction = { EtaPreferenceIcon(Icons.Rounded.Cloud, tint = EtaPreferenceColors.Green) },
-    )
-
-    EtaPreferenceDivider()
-
-    EtaSwitchPreference(
-        title = "虚拟屏幕悬浮小窗",
-        summary = "虚拟屏启动时自动弹出可拖拽小窗，拖到屏幕边缘自动折叠",
-        checked = current.virtualScreenFloatWindowEnabled,
-        onCheckedChange = { value ->
-            if (value && !Settings.canDrawOverlays(context)) {
-                runCatching {
-                    context.startActivity(
-                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                }
-            }
-            scope.launch { SettingsDataStore.updateSettings { it.copy(virtualScreenFloatWindowEnabled = value) } }
-        },
-        startAction = { EtaPreferenceIcon(Icons.Rounded.Smartphone, tint = EtaPreferenceColors.Blue) },
-    )
-
-    EtaPreferenceDivider()
-
-    EtaSwitchPreference(
-        title = "贴边自动折叠",
-        summary = "拖到屏幕左右边缘松手自动折叠成窄触发条",
-        checked = current.virtualScreenFloatEdgeCollapseEnabled,
-        onCheckedChange = { value ->
-            scope.launch { SettingsDataStore.updateSettings { it.copy(virtualScreenFloatEdgeCollapseEnabled = value) } }
-        },
-        startAction = { EtaPreferenceIcon(Icons.Rounded.Smartphone, tint = EtaPreferenceColors.Green) },
     )
 }
 
@@ -1333,12 +1093,12 @@ private val SETTINGS_SEARCH_INDEX = listOf(
     SettingsSearchEntry("section_agent", "llm 提供商 模型 服务商 api 密钥 深度思考"),
     SettingsSearchEntry("section_context_extensions", "上下文 扩展 自动压缩 记忆"),
     SettingsSearchEntry("section_tools", "工具 工具档 精简 五档 mcp"),
-    SettingsSearchEntry("system_enhancements", "能力增强 语音 朗读 语速 音调 tts 虚拟屏 小窗 悬浮窗 折叠 胶囊 常驻"),
+    SettingsSearchEntry("system_enhancements", "能力增强 语音 朗读 语速 音调 tts 灵屏 小窗 悬浮窗 折叠 胶囊 常驻"),
     SettingsSearchEntry("section_assistant_takeover", "系统助手接管 接管 助手"),
     SettingsSearchEntry("section_oem_assistant_compatibility", "厂商助手兼容 小布 小爱 vivo 蓝心 兼容"),
     SettingsSearchEntry("section_general", "通用 外观 主题 语言"),
     SettingsSearchEntry("section_permissions", "权限 无障碍 悬浮窗 通知"),
-    SettingsSearchEntry("section_about", "关于 版本 用量 token 统计 消耗 数据占用 清理 数据库 大小 诊断包 日志 导出 分享 开源 功能自检 自检 体检"),
+    SettingsSearchEntry("section_about", "关于 版本 用量 token 统计 消耗 数据占用 清理 数据库 大小 诊断包 日志 导出 分享 开源 功能自检 自检 体检 崩溃 诊断与日志"),
     SettingsSearchEntry("section_patrol", "极致自动排查 自动排查 巡检 排查 诊断 崩溃 日志 报告 巡检周期"),
 )
 

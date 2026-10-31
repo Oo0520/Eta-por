@@ -43,11 +43,6 @@ internal sealed interface AgentEvent {
             "history_trimmed rounds=$omittedUserRounds, messages=$omittedMessages"
     }
 
-    /** 上下文超限后自动降档重试：只在本次运行内生效，不改用户设置。 */
-    data class ContextOverflowDowngrade(val profileId: String) : AgentEvent {
-        override fun toLogLine(): String = "context_overflow_downgrade profile=$profileId"
-    }
-
     data class RunStarted(
         val initialImages: Int,
         val initialImageBytes: Int,
@@ -190,10 +185,23 @@ internal sealed interface AgentEvent {
         val imageBytes: Int,
         /** 可选：旧版本 Runtime 不发送，消费端缺省时回退到摘要文本判断。 */
         val success: Boolean? = null,
+        val command: String? = null,
     ) : AgentEvent {
         override fun toLogLine(): String =
             "tool_finished round=$round, name=${name.toSafeLogToken()}, " +
                 "${resultSummary.toSafeResultLogFields()}, images=$imageCount, image_bytes=$imageBytes"
+    }
+
+    data class SubagentProgress(
+        val round: Int,
+        val toolCallId: String,
+        val subagentId: String,
+        val subagentType: String,
+        val snapshotJson: String,
+    ) : AgentEvent {
+        override fun toLogLine(): String =
+            "subagent_progress round=$round, id=${subagentId.toSafeLogToken()}, " +
+                "type=${subagentType.toSafeLogToken()}, chars=${snapshotJson.length}"
     }
 
     data class HostedToolStarted(

@@ -57,6 +57,7 @@ internal object AgentModelClient {
                     thinkingEnabled = effort.enablesReasoning,
                     reasoningEffort = effort,
                     autoCompactionEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED),
+                    subagentTools = Prefs.isEnabled(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
                 )
             }
         }
@@ -75,6 +76,7 @@ internal object AgentModelClient {
             modelDisplayName = "GPT-5.5",
             systemPrompt = BuiltinProviders.DEFAULT_SYSTEM_PROMPT,
             autoCompactionEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED),
+            subagentTools = Prefs.isEnabled(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
             terminalTools = Prefs.isEnabled(Prefs.Keys.AGENT_TERMINAL_TOOLS),
             browserTools = Prefs.isEnabled(Prefs.Keys.AGENT_BROWSER_TOOLS),
             deviceDirectTools = Prefs.isEnabled(Prefs.Keys.AGENT_DEVICE_DIRECT_TOOLS),
@@ -110,6 +112,7 @@ internal object AgentModelClient {
         roleplayContext: RoleplayRunContext? = null,
         rewriteReply: Boolean = false,
         assistantScreenContext: String = "",
+        toolFilter: ((JSONArray) -> JSONArray)? = null,
         onContextSnapshot: (AgentContextSnapshot) -> Unit = {},
         onTranscript: (List<ConversationMessage>) -> Unit = {},
         restrictedToolNames: Set<String>? = null,
@@ -119,8 +122,6 @@ internal object AgentModelClient {
         // 自定义提示词与工具白名单是正式配置：每次 run 开始读一次，避免轮内改动让前缀反复失效。
         val customization = PromptCustomizationStore.load()
         val toolPolicy = AgentToolPolicyStore.load()
-        // 上下文超限时自动降一档：只影响本次运行，不写用户设置。
-        var activeProfileOverride: LocalToolProfile? = null
         val initialCapabilities = capabilitiesProvider()
         val messages = AgentPromptBuilder.buildInitialMessages(
             config,
@@ -156,29 +157,38 @@ internal object AgentModelClient {
             config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext, initialCapabilities.virtualScreenEnabled, initialCapabilities.virtualScreenFallbackEnabled, customization,
         ).length()
         // MCP 工具只在 run 开始时压一次：每轮重复解析这 190KB JSON 纯属浪费。
+        val remoteToolNames = (0 until additionalTools.length()).mapNotNull { index ->
+            additionalTools.optJSONObject(index)?.optJSONObject("function")?.optString("name")
+                ?.takeIf { it.isNotBlank() }
+        }.toSet()
         val compactedAdditionalTools = if (additionalTools.length() == 0) {
             additionalTools
         } else {
             JSONArray(additionalTools.toString()).also { AgentToolSchemaCompactor.compactMcp(it) }
+
         }
-        fun toolsFor(capabilities: AgentToolCapabilities): JSONArray = AgentToolDirectory.build(
-            terminalTools = config.terminalTools,
-            browserTools = config.browserTools,
-            deviceDirectTools = config.deviceDirectTools,
-            deviceSensitiveReadTools = config.deviceSensitiveReadTools,
-            deviceSensitiveActionTools = config.deviceSensitiveActionTools,
-            skillGitHubDiscovery = true,
-            skillGitHubInstall = true,
-            memoryTools = memoryContext.enabled,
-            memoryWritable = roleplayContext == null,
-            capabilities = capabilities,
-            localWebSearch = !config.usesHostedWebSearch,
-            localProfile = activeProfileOverride ?: LocalToolProfileStore.current(config.providerId, config.model),
-            policy = toolPolicy,
-            additionalTools = compactedAdditionalTools,
-            restrictedToolNames = restrictedToolNames,
-            rewriteReply = rewriteReply,
-        )
+        fun toolsFor(capabilities: AgentToolCapabilities): JSONArray {
+            val built = AgentToolDirectory.build(
+                terminalTools = config.terminalTools,
+                browserTools = config.browserTools,
+                deviceDirectTools = config.deviceDirectTools,
+                deviceSensitiveReadTools = config.deviceSensitiveReadTools,
+                deviceSensitiveActionTools = config.deviceSensitiveActionTools,
+                skillGitHubDiscovery = true,
+                skillGitHubInstall = true,
+                memoryTools = memoryContext.enabled,
+                memoryWritable = roleplayContext == null,
+                capabilities = capabilities,
+                localWebSearch = !config.usesHostedWebSearch,
+                localProfile = LocalToolProfileStore.current(config.providerId, config.model),
+                policy = toolPolicy,
+                additionalTools = compactedAdditionalTools,
+                restrictedToolNames = restrictedToolNames,
+                rewriteReply = rewriteReply,
+            )
+            // 子代理用 toolFilter 在父工具目录上裁剪；主运行不传，走原样。
+            return toolFilter?.invoke(built) ?: built
+        }
         val tools = toolsFor(initialCapabilities)
         // 只在请求侧丢最老轮次：数据库与界面一条不删；系统提示、记忆与当前输入永不裁。
         val trimOutcome = if (rewriteReply || compactOnly) AgentHistoryTrimmer.Outcome() else
@@ -266,25 +276,9 @@ internal object AgentModelClient {
             traceFormatter = traceFormatter,
             onEvent = onEvent,
             purpose = if (rewriteReply) ProviderRequestPurpose.REPLY_REWRITE else ProviderRequestPurpose.CHAT,
-            onContextOverflow = if (rewriteReply) {
-                null
-            } else {
-                val callback: () -> LocalToolProfile? = {
-                    val current = activeProfileOverride
-                        ?: LocalToolProfileStore.current(config.providerId, config.model)
-                    val leaner = current.leaner()
-                    if (leaner == null) {
-                        null
-                    } else {
-                        activeProfileOverride = leaner
-                        onEvent(AgentEvent.ContextOverflowDowngrade(leaner.id))
-                        leaner
-                    }
-                }
-                callback
-            },
             roleplayContext = roleplayContext,
             initialSupplementIndex = initialSupplementIndex,
+            remoteToolNames = remoteToolNames,
             toolsForRound = ::toolsForRound,
         )
         val result = try {
@@ -384,6 +378,7 @@ internal object AgentModelClient {
         val customHeaders: List<CustomHeader> = emptyList(),
         val customBody: List<CustomBody> = emptyList(),
         val autoCompactionEnabled: Boolean = Prefs.Keys.BOOLEAN_DEFAULTS.getValue(Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED),
+        val subagentTools: Boolean = Prefs.Keys.BOOLEAN_DEFAULTS.getValue(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
         val authMode: String = ProviderAuthModes.API_KEY,
     ) {
         val usesHostedWebSearch: Boolean
@@ -415,8 +410,6 @@ internal object AgentModelClient {
         val contextSummary: Boolean = false,
         val compactedUserTurns: Int = 0,
         val summaryThroughUserTurn: Int = 0,
-        /** 第几次压缩产生的摘要：轮次由它记录，不再靠"数摘要条数"，避免数字回退。 */
-        val compactionRound: Int = 0,
         val messageId: String = "",
     )
 
@@ -427,7 +420,8 @@ internal object AgentModelClient {
     data class ToolCall(
         val id: String,
         val name: String,
-        val argumentsJson: String
+        val argumentsJson: String,
+        val round: Int = 1,
     )
 
     data class ToolResult(
@@ -438,6 +432,7 @@ internal object AgentModelClient {
          * 最终 assistant 自己组织的答复不受此标记影响。
          */
         val sensitive: Boolean = false,
+        val command: String? = null,
     )
 
     /** 图片引用：入口侧可为本地 URI/路径，进入模型协议前必须解析为远程 URL 或 data URL。 */

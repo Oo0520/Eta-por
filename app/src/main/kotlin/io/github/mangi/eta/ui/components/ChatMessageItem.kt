@@ -38,12 +38,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Lightbulb
@@ -86,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.model.AgentFileReferencePromptCodec
+import io.github.mangi.eta.agent.model.AgentSkillCommandPromptCodec
 import io.github.mangi.eta.agent.overlay.toolDisplayName
 import io.github.mangi.eta.ui.markdown.MarkdownTone
 import io.github.mangi.eta.ui.voice.LocalSpeechPlaybackProgress
@@ -215,6 +218,8 @@ internal fun ChatMessageItem(
     onDeleteMessage: (String) -> Unit = {},
     onRegenerateMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
+    /** 非空时才在卡片末尾出现「新建分支」；工作过程里的中间条目传 null。 */
+    onForkMessage: ((String) -> Unit)? = null,
 ) {
     when (message) {
         is UserMessageUi -> UserMessageBubble(
@@ -224,6 +229,7 @@ internal fun ChatMessageItem(
             isEditing = isEditing,
             onEdit = { onEditMessage(message.id) },
             onDelete = { onDeleteMessage(message.id) },
+            onFork = onForkMessage?.let { callback -> { callback(message.id) } },
             modifier = modifier,
         )
         is AgentMessageUi -> AgentMessageBlock(
@@ -238,9 +244,13 @@ internal fun ChatMessageItem(
             onRegenerate = { onRegenerateMessage(message.id) },
             onEdit = { onEditMessage(message.id) },
             onSelectCandidate = { onSelectReplyCandidate(message.id, it) },
+            onFork = onForkMessage?.let { callback -> { callback(message.id) } },
             modifier = modifier,
         )
-        is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction) {
+        is SystemNoticeMessageUi -> if (
+            message.code == SystemNoticeCode.ContextCompaction ||
+            message.code == SystemNoticeCode.CommandNote
+        ) {
             ContextCompactionMarker(message = message, modifier = modifier)
         } else {
             AgentMessageBlock(
@@ -256,6 +266,7 @@ internal fun ChatMessageItem(
                                     SystemNoticeCode.ModelRetry -> R.string.system_notice_model_retry
                                     SystemNoticeCode.RuntimeFailed -> R.string.system_notice_runtime_failed
                                     SystemNoticeCode.Interrupted -> R.string.system_notice_interrupted
+                                    SystemNoticeCode.CommandNote -> R.string.system_notice_command_note
                                 },
                             ),
                         )
@@ -305,6 +316,7 @@ private fun UserMessageBubble(
     isEditing: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onFork: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     @Suppress("DEPRECATION")
@@ -330,6 +342,10 @@ private fun UserMessageBubble(
     }
     val visiblePrompt = remember(message.content) {
         AgentFileReferencePromptCodec.parse(message.content)
+    }
+    // 技能调用要跟普通消息区别开：正文被剥掉了，只剩这句话，这里补回「用了哪个技能」。
+    val skillCommand = remember(message.content) {
+        AgentSkillCommandPromptCodec.parseHeader(message.content)
     }
     val overlayBubbleColor = if (MiuixTheme.colorScheme.background.luminance() < 0.5f) {
         Color(0xFF37393D)
@@ -358,7 +374,9 @@ private fun UserMessageBubble(
                             label = stringResource(R.string.ui_copy_4edd1d),
                             onClick = {
                                 @Suppress("DEPRECATION")
-                                clipboardManager.setText(AnnotatedString(message.content))
+                                clipboardManager.setText(
+                                    AnnotatedString(AgentSkillCommandPromptCodec.strip(message.content)),
+                                )
                                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                                 tooltipState.dismiss()
                             },
@@ -419,6 +437,30 @@ private fun UserMessageBubble(
                         vertical = if (assistantOverlay) 8.dp else 12.dp,
                     ),
             ) {
+                skillCommand?.let { skill ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .background(
+                                color = MiuixTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(9.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = "/" + skill.skillId,
+                            style = MiuixTheme.textStyles.footnote1,
+                            fontWeight = FontWeight.Medium,
+                            color = MiuixTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = " · " + stringResource(R.string.agent_command_skill_tag),
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.primary.copy(alpha = 0.72f),
+                        )
+                    }
+                }
                 if (message.images.isNotEmpty()) {
                     var previewIndex by remember(message.images) { mutableStateOf<Int?>(null) }
                     Row(
@@ -481,11 +523,15 @@ private fun UserMessageBubble(
             copied = copied,
             onCopy = {
                 @Suppress("DEPRECATION")
-                clipboardManager.setText(AnnotatedString(message.content))
+                clipboardManager.setText(
+                    AnnotatedString(AgentSkillCommandPromptCodec.strip(message.content)),
+                )
                 copied = true
             },
             onEdit = onEdit,
             onDelete = onDelete,
+            createdAt = message.createdAt,
+            onFork = onFork,
         )
     }
 }
@@ -498,6 +544,8 @@ private fun UserMessageActionRow(
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    createdAt: Long = 0L,
+    onFork: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier.padding(top = 4.dp, end = 2.dp),
@@ -533,7 +581,32 @@ private fun UserMessageActionRow(
                 modifier = Modifier.size(18.dp),
             )
         }
+        onFork?.let { fork ->
+            IconButton(onClick = fork, enabled = actionsEnabled, minWidth = 30.dp, minHeight = 30.dp) {
+                Icon(
+                    imageVector = Icons.Rounded.AccountTree,
+                    contentDescription = stringResource(R.string.action_new_branch),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        MessageTimestampLabel(createdAt)
     }
+}
+
+@Composable
+private fun MessageTimestampLabel(
+    createdAt: Long,
+    modifier: Modifier = Modifier,
+) {
+    // createdAt = 0 是老消息：不显示时间，也不占位。
+    val label = formatMessageTimestamp(createdAt) ?: return
+    Text(
+        text = label,
+        style = MiuixTheme.textStyles.body2,
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f),
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -595,7 +668,11 @@ private fun ContextCompactionMarker(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Rounded.Compress,
+                imageVector = if (message.code == SystemNoticeCode.CommandNote) {
+                    Icons.Rounded.Terminal
+                } else {
+                    Icons.Rounded.Compress
+                },
                 contentDescription = null,
                 modifier = Modifier
                     .size(12.dp)
@@ -634,6 +711,7 @@ private fun AgentMessageBlock(
     onRegenerate: () -> Unit,
     onEdit: () -> Unit = {},
     onSelectCandidate: (Int) -> Unit = {},
+    onFork: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     @Suppress("DEPRECATION")
@@ -797,6 +875,25 @@ private fun AgentMessageBlock(
                             onClick = onDelete,
                             enabled = messageActionsEnabled,
                         )
+                    }
+                    val showCandidateSwitcher = message.characterEditable && message.candidateCount > 1
+                    val timestampLabel = formatMessageTimestamp(message.createdAt)
+                    if (onFork != null || timestampLabel != null) {
+                        // 候选切换器也要抢同一段右侧留白，两者同时出现时不重复占位。
+                        if (!showCandidateSwitcher) Spacer(Modifier.weight(1f))
+                        onFork?.let { fork ->
+                            TooltipBox(text = stringResource(R.string.action_new_branch), enabled = messageActionsEnabled) {
+                                AnswerActionButton(
+                                    icon = Icons.Rounded.AccountTree,
+                                    contentDescription = stringResource(R.string.action_new_branch),
+                                    onClick = fork,
+                                    enabled = messageActionsEnabled,
+                                )
+                            }
+                        }
+                        timestampLabel?.let { label ->
+                            MessageTimestampLabel(message.createdAt, Modifier.padding(start = 6.dp, end = 2.dp))
+                        }
                     }
                     if (message.characterEditable && message.candidateCount > 1) {
                         Spacer(Modifier.weight(1f))

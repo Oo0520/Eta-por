@@ -5,9 +5,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * root helper 的退出现场：虚拟屏服务进程的 stderr 尾部与实际退出码。
+ * root helper 的退出现场：灵屏服务进程的 stderr 尾部与实际退出码。
  *
- * 以前 stderr 只被排空不保留，进程一挂就只剩"虚拟屏不可用"，无法区分是 native 崩溃、
+ * 以前 stderr 只被排空不保留，进程一挂就只剩"灵屏不可用"，无法区分是 native 崩溃、
  * 被系统回收还是主动退出。这里保留最近几次会话的尾部输出，供诊断包一键带走。
  */
 internal object HelperExitLog {
@@ -25,7 +25,7 @@ internal object HelperExitLog {
         var finishedAt: Long = 0L
     }
 
-    /** 新建虚拟屏会话时调用：上一段没结束的记录一并收尾，避免下一次会话覆盖现场。 */
+    /** 新建灵屏会话时调用：上一段没结束的记录一并收尾，避免下一次会话覆盖现场。 */
     fun started() = synchronized(lock) {
         current?.let { open -> if (open.exitCode == null) open.exitCode = STILL_RUNNING }
         val session = Session(System.currentTimeMillis())
@@ -52,10 +52,10 @@ internal object HelperExitLog {
     }
 
     fun dump(): String = synchronized(lock) {
-        if (sessions.isEmpty()) return "本次运行还没有启动过虚拟屏服务进程。\n"
+        if (sessions.isEmpty()) return "本次运行还没有启动过灵屏服务进程。\n"
         val format = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
         buildString {
-            append("虚拟屏服务进程（root helper）退出记录，最多保留最近 ").append(MAX_SESSIONS).append(" 次。\n\n")
+            append("灵屏服务进程（root helper）退出记录，最多保留最近 ").append(MAX_SESSIONS).append(" 次。\n\n")
             sessions.toList().asReversed().forEach { session ->
                 append("── 会话 ").append(format.format(Date(session.startedAt)))
                 append(" 退出码 ").append(session.exitCode?.toString() ?: "运行中")

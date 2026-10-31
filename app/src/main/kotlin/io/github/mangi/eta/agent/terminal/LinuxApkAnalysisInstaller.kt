@@ -72,6 +72,40 @@ internal class LinuxApkAnalysisInstaller(
         }
     }
 
+    /**
+     * 卸载 APK 分析工具：删掉 opt/eta/apk-analysis 与 usr/local/bin 下 Eta 建的包装，
+     * 撤销安装记录。Debian 侧由包管理器装的 JVM 保留（/usr/bin/java 仍可用）。
+     */
+    suspend fun uninstall(): Boolean {
+        installMutex.lock()
+        return try {
+            withContext(Dispatchers.IO) {
+                if (!isReady()) return@withContext false
+                val command = """
+                    set -e
+                    rm -f /usr/local/bin/java /usr/local/bin/jadx /usr/local/bin/apktool
+                    rm -f /usr/local/bin/smali /usr/local/bin/baksmali
+                    rm -rf /opt/eta/apk-analysis
+                    rm -f /${AlpineEnvironmentPaths.APK_ANALYSIS_MARKER}
+                """.trimIndent()
+                val result = InstallerShellRunner.run(
+                    command = command,
+                    timeoutSeconds = 120,
+                    environment = distribution.terminalEnvironment,
+                    linuxRootfsPath = rootfs.absolutePath,
+                )
+                AndroidAgentLogger.info(
+                    "APK analysis profile action=uninstall " +
+                        "outcome=${if (result.exitCode == 0) "succeeded" else "failed"} " +
+                        "exitCode=${result.exitCode} outputChars=${result.output.length}",
+                )
+                result.exitCode == 0 && !isReady()
+            }
+        } finally {
+            installMutex.unlock()
+        }
+    }
+
     private suspend fun installLocked(
         onProgress: suspend (ApkAnalysisInstallProgress) -> Unit,
     ): ApkAnalysisInstallResult = withContext(Dispatchers.IO) {

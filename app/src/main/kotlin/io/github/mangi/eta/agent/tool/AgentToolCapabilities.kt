@@ -92,8 +92,8 @@ internal data class AgentToolCapabilities(
                         function.put(
                             "description",
                             function.getString("description") + if (virtualScreenFallbackEnabled)
-                                " 当前优先使用虚拟屏；不兼容时暂停并等待通知授权。仅用户点击允许后，本次任务才能改用主屏；切换后必须重新观察。"
-                            else " 当前已启用虚拟屏：此工具只作用于独立 display，自动创建会话；不会操作主屏。"
+                                " 当前优先使用灵屏；不兼容时暂停并等待通知授权。仅用户点击允许后，本次任务才能改用主屏；切换后必须重新观察。"
+                            else " 当前已启用灵屏：此工具只作用于独立 display，自动创建会话；不会操作主屏。"
                         )
                         if (name == "press_key" && !virtualScreenFallbackEnabled) function.getJSONObject(
                             "parameters"
@@ -103,7 +103,7 @@ internal data class AgentToolCapabilities(
                         if (name in setOf("set_clipboard", "get_clipboard")) {
                             function.put(
                                 "description",
-                                "仅访问本次虚拟屏运行的临时剪贴板，不读取或修改用户系统剪贴板。"
+                                "仅访问本次灵屏运行的临时剪贴板，不读取或修改用户系统剪贴板。"
                             )
                         }
                     }
@@ -144,10 +144,9 @@ internal data class AgentToolCapabilities(
                     AccessibilityProtectionClient.isEnabled(context),
                 notificationsAllowed = AgentNotificationHistoryService.isEnabled(context),
                 usageAllowed = AgentPersonalContextTools.hasUsageAccess(context),
-                locationAllowed = context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
-                    PackageManager.PERMISSION_GRANTED &&
-                    (context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                        context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED),
+                // 读取最近位置只需要前台定位权限；后台定位不是这个工具的前置条件。
+                locationAllowed = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                    context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED,
                 colorOs = isColorOsDevice(),
                 vivo = isVivoDevice(),
                 virtualDisplayAvailable = Build.VERSION.SDK_INT >= 34,

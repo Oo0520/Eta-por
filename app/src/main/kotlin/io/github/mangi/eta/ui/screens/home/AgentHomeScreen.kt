@@ -9,6 +9,9 @@ import io.github.mangi.eta.ui.components.AgentChatBody
 import io.github.mangi.eta.ui.components.LocalRoleplayChat
 import io.github.mangi.eta.ui.components.chatConversationCompositionKey
 import io.github.mangi.eta.ui.model.AgentChatHomeUiState
+import io.github.mangi.eta.ui.model.AgentCommand
+import io.github.mangi.eta.ui.model.CommandPaletteUi
+import io.github.mangi.eta.ui.model.CommandResultUi
 import io.github.mangi.eta.ui.model.ToolAccessUiState
 import io.github.mangi.eta.ui.model.ToolToggleKind
 import io.github.mangi.eta.ui.model.AgentHomeAction
@@ -26,6 +29,11 @@ internal fun AgentHomeScreen(
     state: AgentChatHomeUiState,
     modelPickerState: AgentModelPickerUiState,
     conversationKey: String?,
+    /** 斜杠命令表：内置命令 + 已启用技能，由上层注入。 */
+    commands: List<AgentCommand> = AgentCommands.builtIns,
+    /** 命令结果卡与主动展开的命令面板。 */
+    commandResult: CommandResultUi? = null,
+    commandPalette: CommandPaletteUi? = null,
     isPaused: Boolean = false,
     onAction: (AgentHomeAction) -> Unit,
     /** 输入框上方两个入口用的工具/技能开关状态。 */
@@ -79,8 +87,17 @@ internal fun AgentHomeScreen(
             onDeleteMessage = { id -> onAction(AgentHomeAction.DeleteMessage(id)) },
             onRegenerateMessage = { id -> onAction(AgentHomeAction.RegenerateMessage(id)) },
             onSelectReplyCandidate = { id, index -> onAction(AgentHomeAction.SelectReplyCandidate(id, index)) },
+            onForkMessage = { id -> onAction(AgentHomeAction.ForkMessage(id)) },
             onOpenNavigator = { onAction(AgentHomeAction.OpenConversationNavigator) },
-            commands = AgentCommands.builtIns,
+            commands = commands,
+            commandResult = commandResult,
+            onDismissCommandResult = { onAction(AgentHomeAction.DismissCommandResult) },
+            commandPalette = commandPalette,
+            onPickPaletteEntry = { entry -> onAction(AgentHomeAction.PickPaletteEntry(entry.key)) },
+            onCloseCommandPalette = { onAction(AgentHomeAction.CloseCommandPalette) },
+            onLongPressPaletteEntry = { entry -> onAction(AgentHomeAction.ShowPaletteEntryDetail(entry.key)) },
+            // 外部要往输入框写字（点了技能把 /名字 填回去）必须带上同步令牌，否则输入框不跟随。
+            inputSyncVersion = state.inputSyncVersion,
             commandConfirm = state.commandConfirm,
             inputResetToken = state.inputResetToken,
             onConfirmCommand = { onAction(AgentHomeAction.ConfirmAgentCommand) },

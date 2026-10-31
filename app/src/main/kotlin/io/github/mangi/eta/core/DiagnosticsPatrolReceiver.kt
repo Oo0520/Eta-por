@@ -22,7 +22,16 @@ internal class DiagnosticsPatrolReceiver : BroadcastReceiver() {
                     ACTION_CAPTURE -> runBlocking {
                         DiagnosticsPatrol.runOnce(app, reason = "崩溃即取证", exportBundle = false)
                     }
-                    else -> runBlocking { DiagnosticsPatrolAlarm.refresh(app) }
+                    else -> {
+                        runBlocking {
+                            DiagnosticsPatrolAlarm.refresh(app)
+                            BootReceipt.record(
+                                context = app,
+                                alarmRescheduled = DiagnosticsPatrolAlarm.isScheduled(app),
+                                receivers = 1,
+                            )
+                        }
+                    }
                 }
             } catch (error: Throwable) {
                 AndroidAgentLogger.warn("Diagnostics patrol failed: type=${error.safeLogType()}")

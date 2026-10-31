@@ -25,7 +25,7 @@ import io.github.mangi.eta.core.EtaTrace
 internal object AccessibilityHealthNotifier {
 
     private const val CHANNEL = "eta_accessibility_health"
-    private const val NOTIFICATION_ID = 4772
+    private const val NOTIFICATION_ID = 4773
     private const val VERIFY_DELAY_MS = 8_000L
     private const val COOLDOWN_MS = 5 * 60_000L
 

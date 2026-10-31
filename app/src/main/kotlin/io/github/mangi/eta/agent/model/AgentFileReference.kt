@@ -60,7 +60,18 @@ internal object AgentFileReferencePromptCodec {
         }
     }
 
+    /**
+     * 解析 Eta 自己写进用户消息的结构化块：先拆文件引用，再剥掉斜杠命令注入的技能块。
+     *
+     * 展示、搜索、导出都走这里，所以技能块只需要在这一处剥，气泡里就不会出现整段 SKILL.md。
+     */
     fun parse(content: String): AgentFileReferencePrompt {
+        val parsed = parseFileReferences(content)
+        val request = AgentSkillCommandPromptCodec.strip(parsed.request)
+        return if (request === parsed.request) parsed else parsed.copy(request = request)
+    }
+
+    private fun parseFileReferences(content: String): AgentFileReferencePrompt {
         val prefix = "$FILES_HEADER\n\n"
         if (!content.startsWith(prefix)) {
             return AgentFileReferencePrompt(request = content, references = emptyList())

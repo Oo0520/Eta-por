@@ -25,7 +25,7 @@ internal object VirtualScreenNotification {
                 CHANNEL, context.getString(R.string.virtual_screen_notification_channel), NotificationManager.IMPORTANCE_LOW,
             ))
             val open = PendingIntent.getActivity(context, 0,
-                Intent(context, VirtualScreenViewerActivity::class.java)
+                android.content.Intent(context, io.github.mangi.eta.ui.MainActivity::class.java)
                     .setData(Uri.parse("eta-virtual-screen://view/$sessionId"))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -45,7 +45,7 @@ internal object VirtualScreenNotification {
     private const val COMPLETION_CHANNEL = "eta_task_completion"
     private const val COMPLETION_ID = 1111
 
-    /** 虚拟屏指令运行完毕后，走一条高优先级通知通道，由 ColorOS 尽量归入流体云展示。 */
+    /** 灵屏指令运行完毕后，走一条高优先级通知通道，由 ColorOS 尽量归入流体云展示。 */
     fun showCompletion(context: Context, ok: Boolean, detail: String) {
         if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED) return

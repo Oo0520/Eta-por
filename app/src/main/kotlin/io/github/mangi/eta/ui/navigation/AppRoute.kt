@@ -24,6 +24,9 @@ sealed interface AppRoute : NavKey {
     data object Skills : AppRoute
 
     @Serializable
+    data object Subagents : AppRoute
+
+    @Serializable
     data object Characters : AppRoute
 
     @Serializable
@@ -80,6 +83,8 @@ sealed interface AppRoute : NavKey {
     data object SelfCheck : AppRoute
 
     @Serializable
+    data object DiagnosticsCenter : AppRoute
+
     data object DiagnosticsPatrol : AppRoute
 
     @Serializable
@@ -124,6 +129,10 @@ sealed interface AppRoute : NavKey {
 
     @Serializable
     data object ConversationCategories : AppRoute
+
+    /** 分支图：以当前会话所在树的根为起点，全屏画布展示分叉关系。 */
+    @Serializable
+    data object ConversationBranches : AppRoute
     @Serializable
     data object VirtualScreen : AppRoute
 

@@ -16,6 +16,16 @@ internal interface ConversationDao : ChunkedTextDao {
     @Query("SELECT COUNT(*) FROM conversation_messages")
     suspend fun messageCount(): Int
 
+    /**
+     * sort_index 与行下标不一致的会话（流式占位留下的空洞）。
+     * 这类会话必须整段读、整段重写，否则空洞会一直留着（#006 懒加载后仍要保住这条修复路径）。
+     */
+    @Query(
+        "SELECT conversation_id FROM conversation_messages GROUP BY conversation_id " +
+            "HAVING MIN(sort_index) != 0 OR MAX(sort_index) != COUNT(*) - 1"
+    )
+    suspend fun misalignedConversationIds(): List<String>
+
     @Query(
         "SELECT c.id, c.title, c.reasoning_effort, c.created_at, c.updated_at, c.model_id, " +
             "(c.roleplay_json != '') AS has_roleplay, " +
@@ -38,7 +48,8 @@ internal interface ConversationDao : ChunkedTextDao {
     @Query(
         "SELECT id, title, thinking_enabled, reasoning_effort, " +
             "applied_runtime_run_ids_json, roleplay_json, revisions_json, " +
-            "last_model_usage_json, created_at, updated_at, model_id, pinned, category_id " +
+            "last_model_usage_json, created_at, updated_at, model_id, pinned, category_id, " +
+            "parent_conversation_id, parent_message_id, branch_root_id " +
             "FROM conversations WHERE id = :conversationId"
     )
     suspend fun conversationMetadataRow(conversationId: String): ConversationMetadata?
@@ -49,7 +60,8 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query(
         "SELECT id, title, thinking_enabled, reasoning_effort, " +
-            "applied_runtime_run_ids_json, roleplay_json, revisions_json, last_model_usage_json, created_at, updated_at, model_id, pinned, category_id " +
+            "applied_runtime_run_ids_json, roleplay_json, revisions_json, last_model_usage_json, created_at, updated_at, model_id, pinned, category_id, " +
+            "parent_conversation_id, parent_message_id, branch_root_id " +
             "FROM conversations ORDER BY pinned DESC, updated_at DESC"
     )
     suspend fun conversationMetadataRows(): List<ConversationMetadata>
@@ -59,7 +71,8 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query(
         "SELECT id, title, thinking_enabled, reasoning_effort, " +
-            "applied_runtime_run_ids_json, roleplay_json, revisions_json, last_model_usage_json, created_at, updated_at, model_id, pinned, category_id " +
+            "applied_runtime_run_ids_json, roleplay_json, revisions_json, last_model_usage_json, created_at, updated_at, model_id, pinned, category_id, " +
+            "parent_conversation_id, parent_message_id, branch_root_id " +
             "FROM conversations ORDER BY pinned DESC, updated_at DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun conversationMetadataPage(limit: Int, offset: Int): List<ConversationMetadata>
@@ -236,6 +249,35 @@ internal interface ConversationDao : ChunkedTextDao {
     @Query("UPDATE conversations SET revisions_json = :stored WHERE id = :conversationId")
     suspend fun setConversationRevisions(conversationId: String, stored: String)
 
+    /** 分叉落库：分支会话在「首次保存」之后补上来源、分叉点与整棵树的根。 */
+    @Query(
+        "UPDATE conversations SET parent_conversation_id = :parentConversationId, " +
+            "parent_message_id = :parentMessageId, branch_root_id = :branchRootId WHERE id = :conversationId"
+    )
+    suspend fun setConversationBranch(
+        conversationId: String,
+        parentConversationId: String?,
+        parentMessageId: String?,
+        branchRootId: String?,
+    )
+
+    /**
+     * 分支树：根会话 + 所有 branch_root_id 指向它的会话。
+     * 老数据（迁移回填）把 branch_root_id 写成自身 id，所以根也会被 OR 条件兜住。
+     */
+    @Query(
+        "SELECT c.id, c.title, c.created_at, c.parent_conversation_id, c.parent_message_id, " +
+            "(SELECT COUNT(*) FROM conversation_messages m WHERE m.conversation_id = c.id) AS message_count, " +
+            "COALESCE((SELECT substr(m2.content, 1, 96) FROM conversation_messages m2 " +
+            "WHERE m2.conversation_id = c.parent_conversation_id AND m2.id = c.parent_message_id LIMIT 1), '') AS fork_preview " +
+            "FROM conversations c WHERE c.branch_root_id = :rootConversationId OR c.id = :rootConversationId " +
+            "ORDER BY c.created_at ASC, c.id ASC"
+    )
+    suspend fun conversationBranchNodes(rootConversationId: String): List<ConversationBranchNodeRow>
+
+    @Query("SELECT branch_root_id FROM conversations WHERE id = :conversationId")
+    suspend fun branchRootOf(conversationId: String): String?
+
     @Query("SELECT * FROM conversation_state WHERE id = :id")
     suspend fun state(id: String = ConversationStateEntity.SINGLETON_ID): ConversationStateEntity?
 
@@ -324,6 +366,10 @@ internal interface ConversationDao : ChunkedTextDao {
 
     @Query("DELETE FROM conversation_categories WHERE id = :categoryId")
     suspend fun deleteCategory(categoryId: String)
+
+    /** 仅在恢复带分类的备份时使用：先用备份里的分类整体替换本机分类表。 */
+    @Query("DELETE FROM conversation_categories")
+    suspend fun deleteAllCategories()
 
     @Query("UPDATE conversations SET category_id = NULL WHERE category_id = :categoryId")
     suspend fun clearCategoryAssignments(categoryId: String)

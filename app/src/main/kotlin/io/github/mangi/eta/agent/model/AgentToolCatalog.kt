@@ -17,54 +17,36 @@ internal object AgentToolCatalog {
         memoryWritable: Boolean = true,
         capabilities: AgentToolCapabilities = AgentToolCapabilities(rootAvailable = true),
         localWebSearch: Boolean = true,
-        localProfile: LocalToolProfile = LocalToolProfile.FULL,
     ): JSONArray =
         capabilities.project(JSONArray().also { tools ->
-            val keepAll = localProfile == LocalToolProfile.LIGHT || localProfile == LocalToolProfile.FULL
-            val minimal = localProfile == LocalToolProfile.MINIMAL
-            val dev = localProfile == LocalToolProfile.DEV
-            // 精简档：手机助手砍掉设备操作与浏览器等于砍掉主要用途，所以这两组照发，
-            // 只砍管理类的技能发现与任务，再靠描述压缩省 token。
-            val lean = localProfile == LocalToolProfile.STANDARD
+            // 工具档只剩「正常」与「纯聊天」：纯聊天在 AgentToolDirectory 里已直接返回空数组，
+            // 走到这里的都是正常档，全部工具原样声明，不再按档位删减。
             AgentContextAppToolCatalog.appendTo(tools)
-            if (!minimal) AgentGestureToolCatalog.appendTo(tools)
-            if (!minimal) AgentTextSystemToolCatalog.appendTo(tools)
-            if (keepAll || lean) {
-                AgentDeviceToolCatalog.appendTo(
-                    tools,
-                    directTools = deviceDirectTools,
-                    sensitiveReadTools = deviceSensitiveReadTools,
-                    sensitiveActionTools = deviceSensitiveActionTools,
-                )
-            } else if (dev && deviceDirectTools) {
-                AgentDeviceToolCatalog.appendTo(
-                    tools,
-                    directTools = true,
-                    sensitiveReadTools = false,
-                    sensitiveActionTools = false,
-                    devOnly = true,
-                )
-            }
+            AgentGestureToolCatalog.appendTo(tools)
+            AgentTextSystemToolCatalog.appendTo(tools)
+            AgentDeviceToolCatalog.appendTo(
+                tools,
+                directTools = deviceDirectTools,
+                sensitiveReadTools = deviceSensitiveReadTools,
+                sensitiveActionTools = deviceSensitiveActionTools,
+            )
             if (browserTools) {
                 AgentWebToolCatalog.appendTo(tools, includeSearch = localWebSearch)
-                if (keepAll || lean) AgentBrowserToolCatalog.appendTo(tools)
+                AgentBrowserToolCatalog.appendTo(tools)
             }
-            if (keepAll) {
-                AgentSkillToolCatalog.appendTo(
-                    tools,
-                    githubDiscovery = skillGitHubDiscovery,
-                    githubInstall = skillGitHubInstall,
-                    authoring = memoryWritable,
-                )
-            }
-            if (memoryTools && !minimal) AgentMemoryToolCatalog.appendTo(tools, writable = memoryWritable)
-            if (memoryWritable && keepAll) AgentTaskToolCatalog.appendTo(tools)
-            if (deviceDirectTools && (keepAll || dev || lean)) AgentVirtualScreenToolCatalog.appendTo(tools)
+            AgentSkillToolCatalog.appendTo(
+                tools,
+                githubDiscovery = skillGitHubDiscovery,
+                githubInstall = skillGitHubInstall,
+                authoring = memoryWritable,
+            )
+            if (memoryTools) AgentMemoryToolCatalog.appendTo(tools, writable = memoryWritable)
+            if (memoryWritable) AgentTaskToolCatalog.appendTo(tools)
+            if (deviceDirectTools) AgentVirtualScreenToolCatalog.appendTo(tools)
             if (terminalTools) {
                 AgentFileVisionToolCatalog.appendTo(tools)
                 AgentTerminalToolCatalog.appendTo(tools)
                 AgentFileToolCatalog.appendTo(tools)
             }
-            AgentToolSchemaCompactor.compact(tools, localProfile)
         })
 }

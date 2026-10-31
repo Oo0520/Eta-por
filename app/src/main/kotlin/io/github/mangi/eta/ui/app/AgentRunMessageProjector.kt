@@ -46,10 +46,10 @@ internal class AgentRunMessageProjector(
         is AgentEvent.SearchSuggestions -> attachSearchSuggestions(runId, event, messages)
         is AgentEvent.UsageReceived -> attachUsage(runId, event.round, event.usage.toUi(), messages)
         is AgentEvent.HistoryTrimmed -> messages
-        is AgentEvent.ContextOverflowDowngrade -> messages
         is AgentEvent.ToolStarted ->
             startTool(runId, event, finalizeTextRound(runId, event.round, finalizeThinkingRound(runId, event.round, messages)))
         is AgentEvent.ToolFinished -> finishTool(runId, event, messages)
+        is AgentEvent.SubagentProgress -> updateSubagentProgress(runId, event, messages)
         is AgentEvent.HostedToolStarted ->
             startHostedTool(runId, event, finalizeTextRound(runId, event.round, finalizeThinkingRound(runId, event.round, messages)))
         is AgentEvent.HostedToolFinished -> finishHostedTool(runId, event, messages)
@@ -216,6 +216,8 @@ internal class AgentRunMessageProjector(
             content = delta,
             isStreaming = true,
             renderMarkdown = false,
+            // 一条回复的时间按首个增量落下的时刻记，流式续写不再刷新。
+            createdAt = System.currentTimeMillis(),
         )
     }
 
@@ -441,9 +443,27 @@ internal class AgentRunMessageProjector(
             if (index == targetIndex && message is ToolActivityMessageUi) {
                 message.copy(
                     status = status,
+                    command = event.command ?: message.command,
                     resultSummary = event.resultSummary,
                     imageCount = event.imageCount,
                 )
+            } else {
+                message
+            }
+        }
+    }
+
+    fun updateSubagentProgress(
+        runId: String,
+        event: AgentEvent.SubagentProgress,
+        messages: List<AgentChatMessageUi>,
+    ): List<AgentChatMessageUi> {
+        val targetId = toolActivityMessageId(runId, event.round, event.toolCallId)
+        val targetIndex = messages.indexOfLast { it is ToolActivityMessageUi && it.id == targetId }
+        if (targetIndex < 0) return messages
+        return messages.mapIndexed { index, message ->
+            if (index == targetIndex && message is ToolActivityMessageUi) {
+                message.copy(command = event.snapshotJson)
             } else {
                 message
             }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import kotlin.random.Random
 
 /** Normal GUI tool names keep their contract, but are bound to one owned secondary display. */
 internal class VirtualScreenUiTools(
@@ -36,7 +37,7 @@ internal class VirtualScreenUiTools(
         if (name in VirtualScreenRoutingPolicy.unavailableTools) {
             failure(
                 "VIRTUAL_ACTION_UNSUPPORTED",
-                "此 UI 工具不能在虚拟屏执行；请使用虚拟屏内的应用，不会操作主屏。"
+                "此 UI 工具不能在灵屏执行；请使用灵屏内的应用，不会操作主屏。"
             )
         } else when (name) {
             "launch_app" -> launchApp(args)
@@ -57,7 +58,7 @@ internal class VirtualScreenUiTools(
         failure(
             if (error is IllegalArgumentException || error is IllegalStateException) error.message
                 ?: "VIRTUAL_UI_FAILED" else "VIRTUAL_UI_FAILED",
-            "虚拟屏操作未完成；请重新观察，不会回退到主屏。"
+            "灵屏操作未完成；请重新观察，不会回退到主屏。"
         )
     }
 
@@ -75,7 +76,7 @@ internal class VirtualScreenUiTools(
         val settings = runBlocking { SettingsDataStore.settings() }
         require(settings.virtualScreenEnabled) { "VIRTUAL_SCREEN_DISABLED" }
         require(VirtualScreenSession.prepareForRun(owner, runId)) { "DISPLAY_BUSY" }
-        if (!VirtualScreenSession.isActive()) {
+        if (!VirtualScreenSession.isActive(owner)) {
             val created = VirtualScreenSession.execute(
                 context, owner, JSONObject().put("action", "create")
                     .put("allowScreenOff", settings.virtualScreenOffEnabled), isCancelled, runId
@@ -94,6 +95,7 @@ internal class VirtualScreenUiTools(
         info: VirtualDisplayInfo
     ): AgentModelClient.ToolResult = when (name) {
         "observe_screen" -> observe(args, info)
+        "tap_smart" -> tapSmart(args, info)
         "tap", "tap_area", "long_press", "swipe", "scroll" -> coordinateAction(name, args, info)
         "tap_element", "long_press_element", "scroll_element" -> nodeAction(name, args, info)
         "type_text" -> typeText(args, info)
@@ -125,7 +127,7 @@ internal class VirtualScreenUiTools(
             )
         }
 
-        else -> failure("VIRTUAL_ACTION_UNSUPPORTED", "此 UI 操作不支持虚拟屏")
+        else -> failure("VIRTUAL_ACTION_UNSUPPORTED", "此 UI 操作不支持灵屏")
     }
 
     private fun observe(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
@@ -163,7 +165,7 @@ internal class VirtualScreenUiTools(
                 "execution_scope",
                 JSONObject().put("type", "virtual_display").put("display_id", info.displayId)
                     .put("main_screen_locked", context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true)
-                    .put("note", "观察和输入仅针对这个虚拟屏。主屏的锁屏、指纹窗口（如 UDfinger）和全局 mCurrentFocus 不代表此虚拟屏被遮挡；依据本次观察和此虚拟屏工具的实际结果判断。")
+                    .put("note", "观察和输入仅针对这个灵屏。主屏的锁屏、指纹窗口（如 UDfinger）和全局 mCurrentFocus 不代表此灵屏被遮挡；依据本次观察和此灵屏工具的实际结果判断。")
             )
             .put("observation_id", nodes?.id ?: JSONObject.NULL)
             .put("observation_source", if (nodes != null) "accessibility" else JSONObject.NULL)
@@ -181,14 +183,14 @@ internal class VirtualScreenUiTools(
                             "当前应用窗口多次返回空 UI 树，暂时停用节点工具；后续观察仍会探测，节点恢复或切换应用窗口后解除限制。使用截图与坐标工具；焦点文本可使用 Root 输入。"
                         else if (nodes == null)
                             "当前窗口尚无有效 UI 树，可能仍在加载；后续观察会重新探测。"
-                        else "仅查询此虚拟屏窗口，不读取主屏窗口。")
+                        else "仅查询此灵屏窗口，不读取主屏窗口。")
             )
             .put(
                 "coordinate_contract",
                 JSONObject().put("coordinate_space_required", true)
                     .put("supported_coordinate_spaces", JSONArray(listOf("normalized", "screen", "screenshot")))
                     .put("screen", screen)
-                    .put("note", "screen 与截图均为虚拟屏原始像素；所有 GUI 工具均针对该 display。")
+                    .put("note", "screen 与截图均为灵屏原始像素；所有 GUI 工具均针对该 display。")
             )
         val captureScreenshot = options.includeScreenshot ||
             (nodes == null && options.includeUiTree && !args.has("include_screenshot"))
@@ -211,6 +213,15 @@ internal class VirtualScreenUiTools(
         snapshot = nodes
         observedSession = info.sessionId
         observedManualGeneration = info.manualInputGeneration
+        // 撞上人机验证就当场摊牌，别让模型继续点「关闭」按钮浪费轮次。
+        detectHumanVerification(nodes)?.let { hit ->
+            json.put("human_verification_required", true)
+            json.put("human_verification_hint", hit)
+            json.put(
+                "next_step",
+                "当前页面在要求本人完成人机验证（滑块/短信等）。停止自动点击：把这一页交给用户，或改用主屏模式；验证通过后本会话通常会放行一段时间。",
+            )
+        }
         return AgentModelClient.ToolResult(json.toString(), images, sensitive = true)
     }
 
@@ -223,8 +234,22 @@ internal class VirtualScreenUiTools(
             info.manualInputGeneration == 0L ||
                     (observedSession == info.sessionId && observedManualGeneration == info.manualInputGeneration)
         ) { "STALE_OBSERVATION" }
+        // 坐标每次微抖 ±3px：风控对「精确到同一个像素点」非常敏感，人手指点不到这么准。
+        // 已经停在验证页就不要再点了：继续点「关闭」既过不去，还会抬高风控分。
+        detectHumanVerification(snapshot)?.let { hit ->
+            return failure(
+                "HUMAN_VERIFICATION_REQUIRED",
+                "当前页面要求本人完成人机验证（命中：$hit）。已停止自动点击：请用户接管这一页，或在主屏完成验证后继续。",
+            )
+        }
+        // 连续动作间隔随机化：固定节律是最容易被行为模型抓的特征之一。
+        SystemClock.sleep(90L + Random.nextLong(180L))
         fun point(x: String, y: String): Pair<Int, Int> {
-            return coordinatePoint(integer(args, x), integer(args, y), args.optString("coordinate_space"), info.width, info.height)
+            val base = coordinatePoint(integer(args, x), integer(args, y), args.optString("coordinate_space"), info.width, info.height)
+            return Pair(
+                (base.first + Random.nextInt(-3, 4)).coerceIn(0, (info.width - 1).coerceAtLeast(0)),
+                (base.second + Random.nextInt(-3, 4)).coerceIn(0, (info.height - 1).coerceAtLeast(0)),
+            )
         }
 
         val action = JSONObject().put(
@@ -266,8 +291,9 @@ internal class VirtualScreenUiTools(
                     .put("x2", gesture.end.x).put("y2", gesture.end.y)
             }
         }
+        val baseDuration = args.optInt("duration_ms", if (name == "long_press") 800 else 500)
         action.put(
-            "durationMs", args.optInt("duration_ms", if (name == "long_press") 800 else 500)
+            "durationMs", (baseDuration + Random.nextInt(-40, 41))
                 .coerceIn(
                     if (name == "long_press") 300 else 100,
                     if (name == "long_press") 3000 else 2000
@@ -331,6 +357,73 @@ internal class VirtualScreenUiTools(
         return actionResult(result, info)
     }
 
+
+    /**
+     * 智能点击：先按无障碍节点点，失败按节点中心坐标点，最后才用调用方给的坐标。
+     * 目的是让模型不必自己判断"该用节点还是坐标"，减少盲点与反复试探。
+     */
+    private fun tapSmart(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
+        val text = args.optString("text").trim()
+        val desc = args.optString("desc").trim()
+        val hasCoords = args.has("x") && args.has("y")
+        if (text.isBlank() && desc.isBlank() && !hasCoords) {
+            return failure("INVALID_ARGUMENTS", "至少提供 text、desc 或 x/y 之一")
+        }
+        val service = AgentAccessibilityService.current()
+        val options = AgentScreenObservationContract.resolve(args)
+        val snap = service?.captureNodeSnapshot(options.maxNodes, info.displayId)
+            ?.takeIf { it.displayId == info.displayId && it.packageName == info.focusedPackage }
+        if (snap != null && service != null) {
+            snapshot = snap
+            observedSession = info.sessionId
+            observedManualGeneration = info.manualInputGeneration
+            val matched = snap.nodes.firstOrNull { node ->
+                (text.isNotBlank() && node.text.contains(text, true)) ||
+                    (desc.isNotBlank() && node.desc.contains(desc, true))
+            }
+            if (matched != null) {
+                VirtualScreenSession.showNodeGesture(
+                    info, "tap", matched.bounds.centerX(), matched.bounds.centerY(), 0
+                )
+                val click = service.clickNode(snap, matched.index)
+                if (click.ok) {
+                    return AgentModelClient.ToolResult(
+                        JSONObject().put("ok", true).put("tool", "tap_smart")
+                            .put("method", "accessibility").put("display_id", info.displayId)
+                            .put("matched", matched.text.ifBlank { matched.desc })
+                            .toString()
+                    )
+                }
+                // 无障碍点不动：用该节点中心坐标再点一次
+                if (!matched.bounds.isEmpty) {
+                    val coords = JSONObject()
+                        .put("x", matched.bounds.centerX())
+                        .put("y", matched.bounds.centerY())
+                        .put("coordinate_space", "screen")
+                    val byBounds = coordinateAction("tap", coords, info)
+                    return withMethod(byBounds, "bounds_tap")
+                }
+            }
+        }
+        if (hasCoords) {
+            val raw = JSONObject(args.toString())
+            if (!raw.has("coordinate_space")) raw.put("coordinate_space", "screen")
+            return withMethod(coordinateAction("tap", raw, info), "coordinate")
+        }
+        return failure(
+            "NODE_NOT_FOUND",
+            "没有找到文本/描述匹配的可点控件；请先 observe_screen（必要时 include_screenshot=true），再用 tap_area 指定坐标",
+        )
+    }
+
+    /** 给坐标点击结果补一个 method 字段，便于回看是哪条路径生效。 */
+    private fun withMethod(result: AgentModelClient.ToolResult, method: String): AgentModelClient.ToolResult =
+        runCatching {
+            val json = JSONObject(result.content ?: "{}")
+            json.put("method", method)
+            AgentModelClient.ToolResult(json.toString())
+        }.getOrDefault(result)
+
     private fun typeText(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
         val mode = args.optString("mode", "replace").trim().lowercase(Locale.ROOT).ifBlank { "replace" }
         require(mode in setOf("replace", "append")) { "INVALID_ARGUMENT" }
@@ -357,8 +450,14 @@ internal class VirtualScreenUiTools(
         if (!json.optBoolean("ok")) return result
         snapshot = null
         val after = runCatching {
-            val observation = withDisplay { info -> observe(JSONObject().put("include_screenshot", false)
-                .put("include_ui_tree", true).put("max_nodes", 30), info) }
+            // 动作刚落地时界面常还没重绘完：直接抓 after 会拿到动作前的画面，
+            // screen_changed 因此频繁误报 false，模型就会以为「点了没生效」而重复点。
+            // 先等界面稳定（连续两次树一致，最多约 420ms）再取快照。
+            val observation = withDisplay { info ->
+                awaitSettled(info)
+                observe(JSONObject().put("include_screenshot", false)
+                    .put("include_ui_tree", true).put("max_nodes", 30), info)
+            }
             snapshot.takeIf { JSONObject(observation.content).optBoolean("ok") }
         }.getOrNull() ?: return result
         val changed = before == null || before.nodes != after.nodes || before.packageName != after.packageName
@@ -368,6 +467,43 @@ internal class VirtualScreenUiTools(
             .put("window_changed", before != null && before.windowId != after.windowId)
             .put("ui_tree_truncated", after.truncated).put("ui_nodes", JSONArray(after.nodes.map(::nodeJson))))
         return result.copy(content = json.toString(), sensitive = true)
+    }
+
+    /** 点下去就会真花钱/真提交的按钮；命中就先挂起，等用户在流体云上点「确认」。 */
+    private val riskyClickKeywords = listOf(
+        "确认支付", "立即支付", "确认付款", "提交订单", "确认下单",
+        "立即购买", "确认购买", "确认转账", "立即付款",
+    )
+
+    /** 人机验证页的关键词：只认强特征，避免把聊天里的「验证码」误判成风控页。 */
+    private val humanVerificationKeywords = listOf(
+        "拖动下方滑块", "拖动滑块", "请完成拼图", "完成拼图", "滑动验证",
+        "人机验证", "安全验证", "请验证身份", "身份验证", "请输入验证码", "验证码已发送",
+    )
+
+    private fun detectHumanVerification(nodes: AgentAccessibilityService.NodeSnapshot?): String? {
+        val snapshot = nodes ?: return null
+        for (node in snapshot.nodes) {
+            val haystack = node.text + " " + node.desc
+            humanVerificationKeywords.firstOrNull { haystack.contains(it) }?.let { return it }
+        }
+        return null
+    }
+
+    /** 等界面稳定：连续两次节点树一致就返回，最多等 [maxMs]。 */
+    private fun awaitSettled(info: VirtualDisplayInfo, maxMs: Long = 420) {
+        val service = AgentAccessibilityService.current() ?: return
+        val deadline = SystemClock.elapsedRealtime() + maxMs
+        var previous: AgentAccessibilityService.NodeSnapshot? = null
+        while (true) {
+            val current = runCatching { service.captureNodeSnapshot(30, info.displayId) }.getOrNull()
+            if (current != null && previous != null &&
+                current.packageName == previous.packageName && current.nodes == previous.nodes
+            ) return
+            previous = current
+            if (SystemClock.elapsedRealtime() >= deadline) return
+            SystemClock.sleep(120)
+        }
     }
 
     private fun textAction(
@@ -390,8 +526,16 @@ internal class VirtualScreenUiTools(
             "index"
         ) else null
         val nodes = if (index != null) requiredSnapshot(args, info) else null
-        // Some ROMs expose virtual nodes but time out SET_TEXT; focused input uses display-specific keys.
+        // 不带 index 时写当前焦点输入框：
+        // 先用无障碍在本 display 的焦点节点上做 ACTION_SET_TEXT（QQ、美团这类自绘输入框都认），
+        // 只有它明确失败（如输入框拒绝 SET_TEXT）才退回 root 粘贴（KEYCODE_PASTE）。
+        // 之前一律走 root 粘贴，遇到不响应 KEYCODE_PASTE 的输入框就会「调用成功但一个字没进去」。
         if (index == null) {
+            val focused = AgentAccessibilityService.current()
+            if (focused != null) {
+                val direct = focused.setTextNode(null, null, text, info.displayId)
+                if (direct.ok) return actionResult(direct, info)
+            }
             return VirtualScreenSession.execute(context, owner, JSONObject().put("action", "text")
                 .put("text", text).put("replace", replace), isCancelled)
         }
@@ -450,7 +594,7 @@ internal class VirtualScreenUiTools(
             if (!json.optBoolean("ok") || json.optBoolean("matched")) return result
             waitCancellable(200)
         } while (SystemClock.elapsedRealtime() < deadline)
-        return failure("TIMEOUT", "等待虚拟屏目标超时")
+        return failure("TIMEOUT", "等待灵屏目标超时")
     }
 
     private fun waitCancellable(duration: Int) {

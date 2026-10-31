@@ -76,7 +76,7 @@ internal object AgentToolNaming {
         "wait_for_package" to "屏幕与界面|等应用到前台",
         "open_system_panel" to "屏幕与界面|开通知栏或快捷开关",
         "press_key" to "屏幕与界面|按系统键",
-        "virtual_screen" to "屏幕与界面|虚拟屏控制",
+        "virtual_screen" to "屏幕与界面|灵屏控制",
         "inspect_app" to "屏幕与界面|查看应用信息",
         "app_state_control" to "屏幕与界面|停用或冻结应用",
 
