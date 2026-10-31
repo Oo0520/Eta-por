@@ -466,7 +466,7 @@ internal fun AgentChatInputBar(
         var selectedSubagent by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(Unit) {
             while (true) {
-                liveSubagentIds = SubagentRunRegistry.liveIds()
+                liveSubagentIds = SubagentRunRegistry.liveIds(draftKey)
                 delay(1000)
             }
         }

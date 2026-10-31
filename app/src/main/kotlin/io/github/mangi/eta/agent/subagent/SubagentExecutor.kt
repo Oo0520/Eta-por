@@ -129,6 +129,7 @@ internal class SubagentExecutor(
 
         // 登记到注册表：只有占用灵屏的子智能体，才应该收到「人工接管结束」这类定向消息。
         SubagentRunRegistry.register(
+            conversationKey = conversationKey,
             subagentId = subagentId,
             controller = childController,
             ownsScreen = profile.isToolAllowed("observe_screen"),
@@ -191,6 +192,8 @@ internal class SubagentExecutor(
             lastEmitNanos = now
             val encoded = tracker.snapshot().encode()
             latestSnapshots[toolCall.id] = encoded
+            // 消息层的更新在切走会话时可能被丢掉，这里再存一份供界面兜底读取。
+            SubagentRunRegistry.publishSnapshot(subagentId, encoded)
             onProgress(
                 AgentEvent.SubagentProgress(
                     round = parentRound,

@@ -13,6 +13,9 @@ internal object SubagentRunRegistry {
 
     private val controllers = ConcurrentHashMap<String, AgentRunController>()
 
+    /** 子智能体所属会话：输入框的目标胶囊必须按会话过滤，否则会串到别的对话里。 */
+    private val conversationOf = ConcurrentHashMap<String, String>()
+
     /** 处于暂停态的子智能体 id（只用于界面回显，真正的挂起由控制器内部完成）。 */
     private val pausedIds: MutableSet<String> =
         java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
@@ -21,13 +24,20 @@ internal object SubagentRunRegistry {
     @Volatile
     private var screenOwnerId: String? = null
 
-    fun register(subagentId: String, controller: AgentRunController, ownsScreen: Boolean) {
+    fun register(
+        conversationKey: String,
+        subagentId: String,
+        controller: AgentRunController,
+        ownsScreen: Boolean,
+    ) {
         controllers[subagentId] = controller
+        conversationOf[subagentId] = conversationKey
         if (ownsScreen) screenOwnerId = subagentId
     }
 
     fun unregister(subagentId: String) {
         controllers.remove(subagentId)
+        conversationOf.remove(subagentId)
         pausedIds.remove(subagentId)
         if (screenOwnerId == subagentId) screenOwnerId = null
     }
@@ -54,10 +64,26 @@ internal object SubagentRunRegistry {
 
     fun isPaused(subagentId: String): Boolean = pausedIds.contains(subagentId)
 
+    /** 每个子智能体最近一次进度快照（进程内）。会话切走导致消息更新丢失时，界面靠它兜底。 */
+    private val latestSnapshots = ConcurrentHashMap<String, String>()
+
+    fun publishSnapshot(subagentId: String, snapshotJson: String) {
+        latestSnapshots[subagentId] = snapshotJson
+    }
+
+    fun latestSnapshot(subagentId: String): String? = latestSnapshots[subagentId]
+
     fun screenOwner(): String? = screenOwnerId
 
-    /** 当前存活的子智能体 id 列表（用于输入框的「发给谁」目标切换）。 */
-    fun liveIds(): List<String> = controllers.keys.toList()
+    /**
+     * 指定会话里存活的子智能体 id 列表。
+     *
+     * 必须按会话过滤：注册表是进程级的，不过滤会把别的对话正在跑的子代理也列到当前输入框上。
+     */
+    fun liveIds(conversationKey: String?): List<String> {
+        val key = conversationKey?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return controllers.keys.filter { conversationOf[it] == key }
+    }
 
     /** 该子智能体是否还活着（控制器仍在册）。 */
     fun isAlive(subagentId: String): Boolean = controllers.containsKey(subagentId)

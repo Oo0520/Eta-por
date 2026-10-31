@@ -52,6 +52,7 @@ import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
 import io.github.mangi.eta.agent.overlay.toolDisplayName
 import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
 import io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot
+import io.github.mangi.eta.agent.subagent.SubagentRunRegistry
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityStatusUi
 import kotlinx.coroutines.Dispatchers
@@ -120,9 +121,23 @@ internal fun ToolActivityRow(
                 output = message.resultSummary.orEmpty(),
             )
         }
+        // 切走会话时进度事件可能被丢掉，气泡就会一直停在旧状态；运行中直接读进程内最新快照。
+        var liveJson by remember(message.id) { mutableStateOf<String?>(null) }
+        LaunchedEffect(message.id, snapshot.subagentId, snapshot.status) {
+            val id = snapshot.subagentId
+            if (id.isBlank() || snapshot.status != SubagentActivitySnapshot.STATUS_RUNNING) {
+                liveJson = null
+                return@LaunchedEffect
+            }
+            while (true) {
+                liveJson = SubagentRunRegistry.latestSnapshot(id)
+                delay(1000)
+            }
+        }
+        val effective = SubagentActivitySnapshot.decode(liveJson) ?: snapshot
         SubagentActivityRow(
             message = message,
-            snapshot = snapshot,
+            snapshot = effective,
             elapsedSeconds = elapsedSeconds,
             modifier = modifier,
         )
