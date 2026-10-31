@@ -216,6 +216,8 @@ internal class AgentRunMessageProjector(
             content = delta,
             isStreaming = true,
             renderMarkdown = false,
+            // 一条回复的时间按首个增量落下的时刻记，流式续写不再刷新。
+            createdAt = System.currentTimeMillis(),
         )
     }
 

@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronLeft
@@ -217,6 +218,8 @@ internal fun ChatMessageItem(
     onDeleteMessage: (String) -> Unit = {},
     onRegenerateMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
+    /** 非空时才在卡片末尾出现「新建分支」；工作过程里的中间条目传 null。 */
+    onForkMessage: ((String) -> Unit)? = null,
 ) {
     when (message) {
         is UserMessageUi -> UserMessageBubble(
@@ -226,6 +229,7 @@ internal fun ChatMessageItem(
             isEditing = isEditing,
             onEdit = { onEditMessage(message.id) },
             onDelete = { onDeleteMessage(message.id) },
+            onFork = onForkMessage?.let { callback -> { callback(message.id) } },
             modifier = modifier,
         )
         is AgentMessageUi -> AgentMessageBlock(
@@ -240,6 +244,7 @@ internal fun ChatMessageItem(
             onRegenerate = { onRegenerateMessage(message.id) },
             onEdit = { onEditMessage(message.id) },
             onSelectCandidate = { onSelectReplyCandidate(message.id, it) },
+            onFork = onForkMessage?.let { callback -> { callback(message.id) } },
             modifier = modifier,
         )
         is SystemNoticeMessageUi -> if (
@@ -311,6 +316,7 @@ private fun UserMessageBubble(
     isEditing: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onFork: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     @Suppress("DEPRECATION")
@@ -524,6 +530,8 @@ private fun UserMessageBubble(
             },
             onEdit = onEdit,
             onDelete = onDelete,
+            createdAt = message.createdAt,
+            onFork = onFork,
         )
     }
 }
@@ -536,6 +544,8 @@ private fun UserMessageActionRow(
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    createdAt: Long = 0L,
+    onFork: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier.padding(top = 4.dp, end = 2.dp),
@@ -571,7 +581,32 @@ private fun UserMessageActionRow(
                 modifier = Modifier.size(18.dp),
             )
         }
+        onFork?.let { fork ->
+            IconButton(onClick = fork, enabled = actionsEnabled, minWidth = 30.dp, minHeight = 30.dp) {
+                Icon(
+                    imageVector = Icons.Rounded.AccountTree,
+                    contentDescription = stringResource(R.string.action_new_branch),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        MessageTimestampLabel(createdAt)
     }
+}
+
+@Composable
+private fun MessageTimestampLabel(
+    createdAt: Long,
+    modifier: Modifier = Modifier,
+) {
+    // createdAt = 0 是老消息：不显示时间，也不占位。
+    val label = formatMessageTimestamp(createdAt) ?: return
+    Text(
+        text = label,
+        style = MiuixTheme.textStyles.body2,
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f),
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -676,6 +711,7 @@ private fun AgentMessageBlock(
     onRegenerate: () -> Unit,
     onEdit: () -> Unit = {},
     onSelectCandidate: (Int) -> Unit = {},
+    onFork: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     @Suppress("DEPRECATION")
@@ -839,6 +875,25 @@ private fun AgentMessageBlock(
                             onClick = onDelete,
                             enabled = messageActionsEnabled,
                         )
+                    }
+                    val showCandidateSwitcher = message.characterEditable && message.candidateCount > 1
+                    val timestampLabel = formatMessageTimestamp(message.createdAt)
+                    if (onFork != null || timestampLabel != null) {
+                        // 候选切换器也要抢同一段右侧留白，两者同时出现时不重复占位。
+                        if (!showCandidateSwitcher) Spacer(Modifier.weight(1f))
+                        onFork?.let { fork ->
+                            TooltipBox(text = stringResource(R.string.action_new_branch), enabled = messageActionsEnabled) {
+                                AnswerActionButton(
+                                    icon = Icons.Rounded.AccountTree,
+                                    contentDescription = stringResource(R.string.action_new_branch),
+                                    onClick = fork,
+                                    enabled = messageActionsEnabled,
+                                )
+                            }
+                        }
+                        timestampLabel?.let { label ->
+                            MessageTimestampLabel(message.createdAt, Modifier.padding(start = 6.dp, end = 2.dp))
+                        }
                     }
                     if (message.characterEditable && message.candidateCount > 1) {
                         Spacer(Modifier.weight(1f))

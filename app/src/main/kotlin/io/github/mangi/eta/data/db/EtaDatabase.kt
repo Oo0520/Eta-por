@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 /** 结构版本的唯一来源：@Database 与自检页共用，文案里不再写字面量。 */
-internal const val ETA_DB_SCHEMA_VERSION = 29
+internal const val ETA_DB_SCHEMA_VERSION = 30
 
 @Database(
     entities = [
@@ -81,6 +81,7 @@ internal abstract class EtaDatabase : RoomDatabase() {
                         MIGRATION_26_27,
                         MIGRATION_27_28,
                         MIGRATION_28_29,
+                        MIGRATION_29_30,
                     )
                     .addCallback(object : Callback() {
                         override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) { createTextChunkCleanup(db) }
@@ -179,6 +180,24 @@ internal abstract class EtaDatabase : RoomDatabase() {
 
         internal val MIGRATION_28_29 = Migration(28, 29) { database ->
             database.execSQL("ALTER TABLE model_providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'api_key'")
+        }
+
+        /**
+         * 29 → 30：会话分支（分叉来源 / 分叉点 / 整棵树的根）与消息时间戳。
+         *
+         * - 老消息没有真实时间，`created_at` 留 0，界面按「不显示时间」处理，不回填假时间。
+         * - 老会话把 `branch_root_id` 回填成自身 id，这样第一次分叉时整棵树可以直接由
+         *   `branch_root_id` 一次查出来，不需要递归。
+         */
+        internal val MIGRATION_29_30 = Migration(29, 30) { database ->
+            database.execSQL("ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT")
+            database.execSQL("ALTER TABLE conversations ADD COLUMN parent_message_id TEXT")
+            database.execSQL("ALTER TABLE conversations ADD COLUMN branch_root_id TEXT")
+            database.execSQL("UPDATE conversations SET branch_root_id = id WHERE branch_root_id IS NULL")
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_conversations_branch_root_id ON conversations(branch_root_id)"
+            )
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
         }
 
         private fun createTextChunkCleanup(database: androidx.sqlite.db.SupportSQLiteDatabase) {

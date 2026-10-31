@@ -129,6 +129,10 @@ sealed interface AppRoute : NavKey {
 
     @Serializable
     data object ConversationCategories : AppRoute
+
+    /** 分支图：以当前会话所在树的根为起点，全屏画布展示分叉关系。 */
+    @Serializable
+    data object ConversationBranches : AppRoute
     @Serializable
     data object VirtualScreen : AppRoute
 

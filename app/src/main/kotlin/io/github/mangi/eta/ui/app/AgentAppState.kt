@@ -58,6 +58,7 @@ import io.github.mangi.eta.ui.model.AgentChatHomeUiState
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.MessageReferenceUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
+import io.github.mangi.eta.ui.model.BranchNodeUi
 import io.github.mangi.eta.ui.model.AgentModelPickerProjector
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
 import io.github.mangi.eta.ui.model.AgentCommand
@@ -81,6 +82,7 @@ import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
+import io.github.mangi.eta.ui.model.ToolSummaryMessageUi
 import io.github.mangi.eta.ui.model.UserMessageUi
 import io.github.mangi.eta.ui.model.contentMatches
 import io.github.mangi.eta.ui.model.SearchJumpUiState
@@ -787,12 +789,14 @@ internal class AgentAppState(
                         id = "user-$runId",
                         content = payload.userText,
                         images = archivedRun.userImagePreviews,
+                        createdAt = System.currentTimeMillis(),
                     ) +
                     AgentMessageUi(
                         id = "assistant-$runId",
                         content = "",
                         isStreaming = true,
                         renderMarkdown = false,
+                        createdAt = System.currentTimeMillis(),
                     ),
             )
         )
@@ -1486,7 +1490,14 @@ internal class AgentAppState(
             roleplay = binding,
             history = transcript,
             journal = transcript,
-            messages = if (text.isBlank()) emptyList() else listOf(AgentMessageUi(greetingId, text, characterEditable = true)),
+            messages = if (text.isBlank()) emptyList() else listOf(
+                AgentMessageUi(
+                    id = greetingId,
+                    content = text,
+                    characterEditable = true,
+                    createdAt = System.currentTimeMillis(),
+                ),
+            ),
             roleplayMessages = RoleplayMessageState(links = if (text.isBlank()) emptyMap() else mapOf(
                 greetingId to RoleplayMessageLink(greetingId),
             )),
@@ -1497,6 +1508,128 @@ internal class AgentAppState(
             recentOpenedIds = recentOpenedIds,selectedConversationId = id, searchQuery = "")
         refreshConversationSummaries()
         persistConversations()
+    }
+
+    /** 当前会话 id；分支图页面靠它判断「从哪棵树打开」。 */
+    val homeConversationId: String? get() = selectedConversationId
+
+    /**
+     * 从某条消息分出一条新会话（消息级分叉）。
+     *
+     * - 新会话复制到这条消息（含）为止的消息序列；消息 id 必须全部重写，因为
+     *   `conversation_messages` 的主键是全局唯一的 message.id，直接复用会把原会话的整行
+     *   按 REPLACE 挪到新会话里。
+     * - 上下文按「整轮」截断：保留这条消息所在轮次结束前的全部历史，保证模型上下文以
+     *   assistant 结尾，不会出现连续两条 user。
+     * - 原会话原地不动；新会话直接选中，可以接着聊。
+     */
+    fun forkConversationFromMessage(messageId: String) {
+        val sourceId = selectedConversationId ?: return
+        if (homeState.isStreaming) {
+            Toast.makeText(appContext, "正在生成，等这一轮结束再分叉", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (homeState.messageEdit != null) cancelMessageEdit()
+        val targetIndex = homeState.messages.indexOfFirst { it.id == messageId }
+        if (targetIndex < 0) return
+
+        conversationsById = conversationsById + (sourceId to homeState)
+        ChatDraftStore.save(appContext, sourceId, homeState.input)
+
+        val forkId = newConversationId()
+        val now = System.currentTimeMillis()
+        val forkedHistory = forkHistory(homeState, targetIndex)
+        val forkState = homeState.copy(
+            messages = homeState.messages.take(targetIndex + 1).mapIndexed { index, message ->
+                message.reidentify(forkId, index)
+            },
+            history = forkedHistory,
+            journal = forkedHistory,
+            input = "",
+            pendingImages = emptyList(),
+            pendingFileReferences = emptyList(),
+            pendingMessageRefs = emptyList(),
+            queuedMessages = emptyList(),
+            messageEdit = null,
+            isStreaming = false,
+            searchJump = null,
+            resumableRun = null,
+            commandConfirm = null,
+            commandResult = null,
+            // 角色卡的修订链按消息 id 记录；分支重写了 id，一律不带过去（角色设定本身保留）。
+            roleplayMessages = RoleplayMessageState(),
+            lastModelUsage = null,
+        )
+        val sourceTitle = conversationTitles[sourceId]?.takeIf(String::isNotBlank) ?: "新对话"
+        conversationTitles = conversationTitles + (forkId to "$sourceTitle · 分支")
+        conversationUpdatedAt = conversationUpdatedAt + (forkId to now)
+        conversationCategoryIds[sourceId]?.let { category ->
+            conversationCategoryIds = conversationCategoryIds + (forkId to category)
+        }
+        fileAttachmentOwnerVersion += 1
+        conversationsById = conversationsById + (forkId to forkState)
+        selectedConversationId = forkId
+        homeState = forkState
+        ChatDraftStore.save(appContext, forkId, "")
+        noteRecentOpened(forkId)
+        conversationPaneState = conversationPaneState.copy(selectedConversationId = forkId)
+        refreshConversationModel()
+        refreshConversationSummaries()
+        // 先让会话行落库，再补分叉归属：UPDATE 早于 INSERT 只会打在 0 行上。
+        scope.launch {
+            persistConversations().await()
+            AgentConversationStore.attachBranch(appContext, forkId, sourceId, messageId)
+        }
+        Toast.makeText(appContext, "已从这条消息分出新分支", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 分支画布的数据源：一次取出当前会话所在整棵树，并转成只读的 UI 模型。 */
+    suspend fun loadBranchNodes(): List<BranchNodeUi> {
+        val conversationId = selectedConversationId ?: return emptyList()
+        return AgentConversationStore.branchNodes(appContext, conversationId).map { row ->
+            BranchNodeUi(
+                id = row.id,
+                title = row.title.ifBlank { "新对话" },
+                createdAt = row.createdAt,
+                parentConversationId = row.parentConversationId,
+                parentMessageId = row.parentMessageId,
+                messageCount = row.messageCount,
+                forkPreview = row.forkPreview.orEmpty().replace(Regex("\\s+"), " ").trim(),
+            )
+        }
+    }
+
+    /**
+     * 按「整轮」截断上下文：保留分叉点所在轮次结束前的全部历史。
+     * 口径与 [AgentConversationRevisionReducer] 一致，避免留下半轮。
+     */
+    private fun forkHistory(
+        state: AgentChatHomeUiState,
+        targetIndex: Int,
+    ): List<AgentModelClient.ConversationMessage> {
+        val source = state.journal.ifEmpty { state.history }
+        if (source.isEmpty()) return emptyList()
+        val turns = state.messages.take(targetIndex + 1).count { it is UserMessageUi }
+        if (turns <= 0) return emptyList()
+        val userIndices = source.indices.filter { source[it].role == "user" }
+        val end = userIndices.getOrNull(turns) ?: source.size
+        return source.take(end)
+    }
+
+    private fun AgentChatMessageUi.reidentify(branchId: String, index: Int): AgentChatMessageUi = when (this) {
+        is UserMessageUi -> copy(id = "$branchId-u$index")
+        is AgentMessageUi -> copy(
+            id = "$branchId-a$index",
+            characterEditable = false,
+            candidateCount = 1,
+            selectedCandidate = 0,
+            searchSuggestionsHtml = emptyList(),
+        )
+        is ThinkingMessageUi -> copy(id = "$branchId-t$index")
+        is ToolActivityMessageUi -> copy(id = "$branchId-x$index")
+        is ToolSummaryMessageUi -> copy(id = "$branchId-s$index")
+        is SystemNoticeMessageUi -> copy(id = "$branchId-n$index")
+        else -> this
     }
 
     fun selectReplyCandidate(messageId: String, index: Int) {
@@ -1944,6 +2077,8 @@ internal class AgentAppState(
             content = runtimePrompt,
             images = pendingImages.map { it.dataUrl },
             isEdited = editBoundary != null,
+            // 编辑保留原消息时间；新消息按发送时刻落库，卡片末尾据此显示时间戳。
+            createdAt = editBoundary?.userMessage?.createdAt ?: System.currentTimeMillis(),
         )
         val history = editBoundary?.historyPrefix ?: state.history
         val messages = if (editBoundary == null) {

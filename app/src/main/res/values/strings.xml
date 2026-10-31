@@ -34,6 +34,17 @@
   <string name="action_reinstall">重新安装</string>
   <string name="action_settings">设置</string>
   <string name="action_new_conversation">新建对话</string>
+  <string name="action_new_branch">新建分支</string>
+  <string name="action_branch_graph">分支图</string>
+  <string name="branch_graph_title">分支图</string>
+  <string name="branch_graph_hint">从哪条消息分出、分出几条，都在这张树上。点节点切过去，双指缩放，双击回到根。</string>
+  <string name="branch_graph_empty">这条对话还没有分支，在消息末尾点「新建分支」就能分出来。</string>
+  <string name="branch_graph_root">根对话</string>
+  <string name="branch_created_toast">已从这条消息分出新分支</string>
+  <string name="branch_streaming_toast">正在生成，等这一轮结束再分叉</string>
+  <string name="branch_forked_from">分出点</string>
+  <string name="branch_message_count">%1$d 条消息</string>
+  <string name="branch_open_conversation">进入</string>
   <string name="action_conversation_history">会话历史</string>
   <string name="action_more">更多选项</string>
   <string name="action_open_terminal">打开终端</string>

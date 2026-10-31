@@ -46,6 +46,8 @@ sealed interface AgentHomeAction {
     data class DeleteMessage(val id: String) : AgentHomeAction
     data class RegenerateMessage(val id: String) : AgentHomeAction
     data class SelectReplyCandidate(val id: String, val index: Int) : AgentHomeAction
+    /** 以这条消息为分叉点，复制出一条新会话。 */
+    data class ForkMessage(val id: String) : AgentHomeAction
     data object OpenTools : AgentHomeAction
     data object OpenSkills : AgentHomeAction
     data object OpenPermissions : AgentHomeAction
