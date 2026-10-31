@@ -187,9 +187,18 @@ internal fun SubagentSettingsScreen(
     // 每个授权模型真实支持的档位；空表示未知，退回通用全集。
     var modelEfforts by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     // 内部 UUID → 显示名：授权列表与类型默认都按 UUID 存，展示时必须换成名字。
-    val providerModelNames = remember(providers) {
-        providers.flatMap { it.models }.associate { it.id to it.displayName }
+    // 授权与类型默认统一存【对外 modelId】（cn:hy3）；这里同时准备：
+    // 1) apiId → 显示名；2) 历史 UUID → apiId 的迁移映射。
+    val nameByApiId = remember(providers) {
+        providers.flatMap { it.models }.associate { it.modelId to it.displayName }
     }
+    val apiIdByUuid = remember(providers) {
+        providers.flatMap { it.models }.associate { it.id to it.modelId }
+    }
+    fun canonicalModelId(id: String): String =
+        if (id in nameByApiId) id else apiIdByUuid[id] ?: id
+    fun modelDisplayName(id: String): String =
+        nameByApiId[id] ?: nameByApiId[apiIdByUuid[id].orEmpty()] ?: id
     var showProfileDefaults by remember { mutableStateOf(false) }
     var expandedProfile by remember { mutableStateOf<String?>(null) }
     var parallelDraft by remember { mutableStateOf("8") }
@@ -264,7 +273,7 @@ internal fun SubagentSettingsScreen(
                                 val picked = grantDraft[modelId].orEmpty()
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
-                                        text = providerModelNames[modelId] ?: modelId,
+                                        text = modelDisplayName(modelId),
                                         style = MiuixTheme.textStyles.footnote2,
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                     )
@@ -388,7 +397,7 @@ internal fun SubagentSettingsScreen(
                                 Text(
                                     text = buildString {
                                         val m = current?.modelId.orEmpty()
-                                        append(if (m.isBlank()) "未设置" else providerModelNames[m] ?: m)
+                                        append(if (m.isBlank()) "未设置" else modelDisplayName(m))
                                         val e = current?.effort.orEmpty()
                                         if (e.isNotBlank()) append(" · ").append(e)
                                     },
@@ -399,7 +408,7 @@ internal fun SubagentSettingsScreen(
                             if (expanded) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     authorizedIds.forEach { id ->
-                                        val active = current?.modelId == id
+                                        val active = current?.modelId?.let { canonicalModelId(it) } == id
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(50))
@@ -420,7 +429,7 @@ internal fun SubagentSettingsScreen(
                                                 .padding(horizontal = 10.dp, vertical = 4.dp),
                                         ) {
                                             Text(
-                                                text = providerModelNames[id] ?: id,
+                                                text = modelDisplayName(id),
                                                 style = MiuixTheme.textStyles.footnote2,
                                                 color = if (active) MiuixTheme.colorScheme.onPrimary
                                                 else MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -875,9 +884,10 @@ internal fun SubagentSettingsScreen(
                         )
                     },
                     onClick = {
-                        authorizedDraft = subagentSettings.allowedModelIds.toSet()
+                        authorizedDraft = subagentSettings.allowedModelIds
+                            .map { canonicalModelId(it) }.toSet()
                         grantDraft = subagentSettings.effectiveGrants.associate {
-                            it.modelId to it.allowedEfforts.toSet()
+                            canonicalModelId(it.modelId) to it.allowedEfforts.toSet()
                         }
                         showAuthorizedSheet = true
                     },
@@ -1037,12 +1047,12 @@ private fun SubagentModelMultiPickerContent(
                 }
                 items(
                     items = group.models,
-                    key = { model -> "pick:${model.providerId}:${model.id}" },
+                    key = { model -> "pick:${model.providerId}:${model.modelId}" },
                 ) { model ->
                     SubagentModelOptionRow(
                         model = model,
-                        selected = model.id in selectedIds,
-                        onClick = { onToggle(model.id) },
+                        selected = model.modelId in selectedIds,
+                        onClick = { onToggle(model.modelId) },
                     )
                 }
             }

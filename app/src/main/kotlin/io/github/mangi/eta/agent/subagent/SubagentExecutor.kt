@@ -10,6 +10,7 @@ import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.data.model.enabledModel
+import io.github.mangi.eta.data.model.enabledModelByApiId
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
 import java.util.concurrent.ConcurrentHashMap
@@ -170,11 +171,15 @@ internal class SubagentExecutor(
             }
         }.getOrDefault(emptyList())
         val granted = grants.mapNotNull { grant ->
-            val resolved = providerModels.enabledModel(grant.modelId) ?: return@mapNotNull null
+            // 优先按对外 id 解析（新数据），回退按内部 UUID（旧数据）。
+            val resolved = providerModels.enabledModelByApiId(grant.modelId)
+                ?: providerModels.enabledModel(grant.modelId)
+                ?: return@mapNotNull null
             val selectable = resolved.model.reasoningCapabilities
                 ?.selectableEfforts?.map { it.wireValue }.orEmpty()
             GrantedModel(
-                uuid = grant.modelId,
+                // 内部调用仍需要真实 UUID；对外一律用 apiId。
+                uuid = resolved.model.id,
                 apiId = resolved.model.modelId,
                 displayName = resolved.model.displayName.ifBlank { resolved.model.modelId },
                 allowedEfforts = if (grant.allowedEfforts.isEmpty()) {

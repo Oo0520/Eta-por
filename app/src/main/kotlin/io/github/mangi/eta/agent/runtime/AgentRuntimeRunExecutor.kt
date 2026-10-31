@@ -18,6 +18,7 @@ import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
 import io.github.mangi.eta.agent.subagent.SubagentExecutor
 import io.github.mangi.eta.data.model.enabledModel
+import io.github.mangi.eta.data.model.enabledModelByApiId
 import io.github.mangi.eta.agent.mcp.McpRunSnapshot
 import io.github.mangi.eta.agent.mcp.McpToolExecutor
 import io.github.mangi.eta.agent.mcp.RoutingToolExecutor
@@ -305,9 +306,8 @@ internal class AgentRuntimeRunExecutor(
                             val resolved = runCatching {
                                 runBlocking {
                                     io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
-                                    io.github.mangi.eta.data.repository.ProviderRepository
-                                        .allProviders()
-                                        .enabledModel(grant.modelId)
+                                    val all = io.github.mangi.eta.data.repository.ProviderRepository.allProviders()
+                                    all.enabledModelByApiId(grant.modelId) ?: all.enabledModel(grant.modelId)
                                 }
                             }.getOrNull() ?: return@mapNotNull null
                             val selectable = resolved.model.reasoningCapabilities
