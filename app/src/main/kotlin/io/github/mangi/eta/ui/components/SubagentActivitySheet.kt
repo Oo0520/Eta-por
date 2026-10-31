@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,7 +41,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.LaunchedEffect
 import io.github.mangi.eta.agent.subagent.SubagentRunRegistry
+import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.TextField
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot
@@ -251,7 +254,16 @@ private fun SubagentInspectorContent(
         if (running) {
             var steerText by rememberSaveable(snapshot.subagentId) { mutableStateOf("") }
             var steerNotice by rememberSaveable(snapshot.subagentId) { mutableStateOf<String?>(null) }
-            var pausedLocal by rememberSaveable(snapshot.subagentId) { mutableStateOf(false) }
+            // 暂停状态以注册表为准：面板关掉再打开时不能把「继续执行」重置回「暂停」。
+            var paused by remember(snapshot.subagentId) {
+                mutableStateOf(SubagentRunRegistry.isPaused(snapshot.subagentId))
+            }
+            LaunchedEffect(snapshot.subagentId) {
+                while (true) {
+                    paused = SubagentRunRegistry.isPaused(snapshot.subagentId)
+                    delay(1000)
+                }
+            }
             var pauseNotice by rememberSaveable(snapshot.subagentId) { mutableStateOf<String?>(null) }
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -263,25 +275,25 @@ private fun SubagentInspectorContent(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     EtaTextButton(
-                        text = if (pausedLocal) "继续执行" else "暂停",
+                        text = if (paused) "继续执行" else "暂停",
                         onClick = {
-                            val ok = if (pausedLocal) {
+                            val ok = if (paused) {
                                 SubagentRunRegistry.resume(snapshot.subagentId)
                             } else {
                                 SubagentRunRegistry.pause(snapshot.subagentId)
                             }
                             if (ok) {
-                                pausedLocal = !pausedLocal
-                                pauseNotice = if (pausedLocal) "已暂停，检查完点「继续执行」" else "已继续执行"
+                                paused = !paused
+                                pauseNotice = if (paused) "已暂停，检查完点「继续执行」" else "已继续执行"
                             } else {
                                 // 注册表里找不到，不代表面板里的状态就是准的：快照可能已经过期。
-                                pausedLocal = false
+                                paused = false
                                 pauseNotice = "这条子代理已结束，或面板状态已过期；关掉重新点开可刷新"
                             }
                         },
                     )
                     Text(
-                        text = if (pausedLocal) {
+                        text = if (paused) {
                             "已暂停：它停在检查点，不会自己往下走"
                         } else {
                             "暂停后在下一个检查点停住，进度不丢"
