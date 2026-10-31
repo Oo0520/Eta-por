@@ -26,6 +26,8 @@ internal data class SubagentModelOption(
                 // 只有 reasoning=true 但没有档位声明：思考固定开/关，传档位会被拒。
                 supportsThinking -> add("思考固定，无档位")
             }
+            // 官方价目参考（查不到就不写，绝不估算）。
+            ModelPriceCatalog.priceOf(modelId)?.let { add("官方价 " + it.display()) }
         }
         if (facts.isNotEmpty()) append("（").append(facts.joinToString("，")).append("）")
     }
