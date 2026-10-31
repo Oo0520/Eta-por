@@ -228,17 +228,14 @@ internal class SubagentExecutor(
             }
         }
         // 未指定模型时不报错，按「该类型的默认模型 → 授权列表第一个」兜底。
-        val profileDefault = subagentSettings?.profileDefaults?.get(profile.name)
-        val profileGrant = profileDefault?.modelId?.takeIf { it.isNotBlank() }?.let { uuid ->
-            granted.firstOrNull { it.uuid == uuid }
-        }
+        // 「按类型默认模型」已移除：不再读取 profileDefaults，未指定时统一用授权列表第一个。
         val autoGrant = if (allowModelPick && requestedModel == null) {
-            profileGrant ?: granted.firstOrNull()
+            granted.firstOrNull()
         } else {
             null
         }
         val effectiveModelId = requestedGrant?.uuid ?: autoGrant?.uuid
-        val effectiveEffort = requestedEffort ?: profileDefault?.effort?.takeIf { it.isNotBlank() }
+        val effectiveEffort = requestedEffort
         val useOverride = allowModelPick && configForOverride != null &&
             (effectiveModelId != null || effectiveEffort != null)
         val resolvedConfig = runCatching {
