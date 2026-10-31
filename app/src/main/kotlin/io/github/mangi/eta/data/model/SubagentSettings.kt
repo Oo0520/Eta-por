@@ -19,9 +19,14 @@ internal data class SubagentSettings(
     /** 授权给主 Agent 挑选的模型 id 列表；为空表示不限制（可选全部已启用模型）。 */
     val allowedModelIds: List<String> = emptyList(),
     /** 单个子智能体单次派发允许的最大思考轮次；超过即中止并向主 Agent 回报。 */
-    val maxRounds: Int = 12,
-    /** 同一动作（工具名 + 参数）连续重复达到该次数即中止；0 表示关闭该保护。 */
-    val repeatAbortThreshold: Int = 3,
+    val maxRounds: Int = 40,
+    /**
+     * 连续工具调用失败达到该次数即中止；0 表示关闭该保护。
+     *
+     * 只数「失败」而不是「重复动作」：滑屏、翻页这类动作本来就是反复做的，
+     * 按重复次数判定会把正常任务误杀；连续失败才是真的卡住了。
+     */
+    val failureAbortThreshold: Int = 5,
 ) {
     val resolvedReasoningEffort: ReasoningEffort?
         get() = ReasoningEffort.fromWireValue(reasoningEffort)
