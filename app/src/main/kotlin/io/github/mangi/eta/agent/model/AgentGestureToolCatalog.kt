@@ -25,6 +25,24 @@ internal object AgentGestureToolCatalog {
             )
             .put(
                 AgentToolSchema.function(
+                    name = "tap_smart",
+                    description = "智能点击：给 text 或 desc，先按无障碍节点点击；节点点不动时自动改用该节点中心坐标点击；再不行按传入 x/y 点击。灵屏任务优先用这个工具，比盲点坐标准。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put("text", JSONObject().put("type", "string").put("description", "目标控件上的可见文字，包含匹配即可。"))
+                                .put("desc", JSONObject().put("type", "string").put("description", "目标控件的 content-desc，包含匹配即可。"))
+                                .put("x", JSONObject().put("type", "integer").put("description", "兜底坐标：节点点击都失败时才使用。"))
+                                .put("y", JSONObject().put("type", "integer"))
+                                .put("coordinate_space", AgentToolSchema.coordinateSpace())
+                                .put("max_nodes", JSONObject().put("type", "integer").put("description", "本次最多读取的节点数，默认 60。"))
+                        )
+                )
+            )
+            .put(
+                AgentToolSchema.function(
                     name = "tap_area",
                     description = "点击矩形区域中心。大按钮、大列表项和可见文字区域优先用这个工具；坐标系同 tap，必须显式填写 coordinate_space。",
                     parameters = JSONObject()

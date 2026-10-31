@@ -203,11 +203,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             ACTION_PAUSE_RUN -> requestPause(intent.getStringExtra(EXTRA_RUN_ID))
             ACTION_RESUME_RUN -> requestResume(intent.getStringExtra(EXTRA_RUN_ID))
             ACTION_STOP_RUN -> cancelRun(intent.getStringExtra(EXTRA_RUN_ID).orEmpty())
-            ACTION_REFRESH_FLUID -> {
-                // 降级开关与常驻开关同一条通道：先同步策略，再按新策略重画卡片。
-                FluidNotificationPolicy.refresh()
-                RunProgressNotifier.refreshFluidPolicy(this, fluidPinned())
-            }
+            ACTION_REFRESH_FLUID -> RunProgressNotifier.refreshIdle(this, fluidPinned())
             ACTION_SUPPLEMENT_RUN -> requestSupplement(
                 intent.getStringExtra(EXTRA_SUPPLEMENT_TEXT).orEmpty(),
                 intent.getStringExtra(EXTRA_SUPPLEMENT_CONVERSATION_ID).orEmpty(),
@@ -1249,11 +1245,9 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         const val ACTION_RESUME_RUN = "io.github.mangi.eta.agent.runtime.RESUME_RUN"
         const val ACTION_STOP_RUN = "io.github.mangi.eta.agent.runtime.STOP_RUN"
         const val EXTRA_RUN_ID = "io.github.mangi.eta.agent.runtime.EXTRA_RUN_ID"
-        /** 通知「插入」弹层提交的补充内容：按对话精确投递，不打断当前步骤。 */
         const val ACTION_SUPPLEMENT_RUN = "io.github.mangi.eta.agent.runtime.SUPPLEMENT_RUN"
         const val EXTRA_SUPPLEMENT_TEXT = "io.github.mangi.eta.agent.runtime.EXTRA_SUPPLEMENT_TEXT"
-        const val EXTRA_SUPPLEMENT_CONVERSATION_ID =
-            "io.github.mangi.eta.agent.runtime.EXTRA_SUPPLEMENT_CONVERSATION_ID"
+        const val EXTRA_SUPPLEMENT_CONVERSATION_ID = "io.github.mangi.eta.agent.runtime.EXTRA_SUPPLEMENT_CONVERSATION_ID"
         /** 设置里切换「流体云常驻」后立即刷新空闲条目。 */
         const val ACTION_REFRESH_FLUID = "io.github.mangi.eta.agent.runtime.REFRESH_FLUID"
         const val EXTRA_MARK_READ_CONVERSATION_ID = "io.github.mangi.eta.agent.runtime.MARK_READ_CONVERSATION_ID"

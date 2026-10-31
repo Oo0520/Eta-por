@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.Hearing
+import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.ImportContacts
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Inventory
@@ -339,6 +340,18 @@ private fun SettingsPageContent(
                         startAction = { EtaPreferenceIcon(icon = Icons.Rounded.Smartphone, tint = EtaPreferenceColors.Blue) },
                         onClick = { onNavigate(AppRoute.VirtualScreen) },
                     )
+                    EtaPreferenceDivider()
+                    EtaArrowPreference(
+                        title = "子智能体",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.Hub,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { onNavigate(AppRoute.Subagents) },
+                    )
+
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.route_skills),
@@ -1176,7 +1189,7 @@ private val SETTINGS_SEARCH_INDEX = listOf(
             R.string.route_mcp_servers,
         ),
         labelsRaw = listOf("GitHub 账号", "角色"),
-        keywords = "上下文 扩展 自动压缩 压缩 记忆 memory 记忆注入 自动任务 定时 计划 触发 automation 灵屏 虚拟屏 屏幕 小窗 skills 技能 mcp 服务器 server github 账号 仓库 pr 角色 人设 角色卡",
+        keywords = "上下文 扩展 自动压缩 压缩 记忆 memory 记忆注入 自动任务 定时 计划 触发 automation 灵屏 灵屏 屏幕 小窗 skills 技能 mcp 服务器 server github 账号 仓库 pr 角色 人设 角色卡",
     ),
     SettingsSearchEntry(
         sectionKey = "section_tools",

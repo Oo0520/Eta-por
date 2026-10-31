@@ -5,4 +5,9 @@
     <string name="linux_environment_base_ready">基础环境已就绪，下一步安装基础工具</string>
     <string name="linux_environment_tools_ready">基础工具已就绪，可按需安装扩展工具</string>
     <string name="linux_environment_shared_folders_summary">把 Android 目录挂载到 Linux 环境</string>
+    <!-- Debian 安装中断恢复（上游 6b976a6） -->
+    <string name="linux_debian_repair_failed">Debian 软件包检查或恢复没有完成。请确认没有其他包管理任务在运行后重试；若仍失败，可在 Debian 终端执行 dpkg --configure -a 与 apt-get --fix-broken install 查看具体错误。</string>
+    <string name="linux_debian_install_timeout">Debian 基础工具安装超时。可重试，以检查并恢复未完成的软件包操作。</string>
+    <string name="linux_debian_install_failed">Debian 基础工具安装失败。请在 Debian 终端检查软件源、是否有其他包管理任务在运行，以及可用存储空间。</string>
+
 </resources>

@@ -890,20 +890,29 @@ private fun ModelEditDialog(
         // 早先拉取、未写入窗口的模型也带着远端标注，打开编辑时直接预填。
         mutableStateOf((model.contextWindowOverride ?: model.contextWindow)?.toString().orEmpty())
     }
+    // 远端没给能力元数据时（自定义/第三方提供商），按模型家族推断一份，预填到编辑页。
+    // 只是预填：用户仍可逐项改，保存前能看到具体勾了哪些档位。
+    val inferredCapabilities = remember(model.id, isNew) {
+        if (model.effectiveReasoningCapabilities == null) {
+            io.github.mangi.eta.data.model.ModelReasoningInference.infer(model.modelId)
+        } else {
+            null
+        }
+    }
     var reasoningOverrideActive by remember(model.id, isNew) {
         mutableStateOf(
-            model.reasoningOverride != null || model.reasoningCapabilitiesOverride != null
+            model.reasoningOverride != null ||
+                model.reasoningCapabilitiesOverride != null ||
+                inferredCapabilities != null
         )
     }
     var reasoningEnabled by remember(model.id, isNew) {
-        mutableStateOf(model.supportsReasoning)
+        mutableStateOf(model.supportsReasoning || inferredCapabilities != null)
     }
     var selectedReasoningEfforts by remember(model.id, isNew) {
+        val base = model.effectiveReasoningCapabilities ?: inferredCapabilities
         mutableStateOf(
-            model.effectiveReasoningCapabilities
-                ?.selectableEfforts
-                ?.toSet()
-                .orEmpty() + ReasoningEffort.DEFAULT
+            base?.selectableEfforts?.toSet().orEmpty() + ReasoningEffort.DEFAULT
         )
     }
     val contextError = contextWindowInputError(contextWindowOverrideText)
@@ -1046,7 +1055,11 @@ private fun ModelEditDialog(
                                 if (geminiCapabilities.mandatory) "该模型必须思考，不支持 Off；Default 使用模型默认档位。"
                                 else "尚未确认该模型的思考档位；仅使用 Default，不发送自定义思考档位。"
                             } else if (reasoningOverrideActive) {
-                                stringResource(R.string.page_covered_model_automatic_capabilities_3fa7d4)
+                                if (inferredCapabilities != null) {
+                                    "档位按模型名推断（非官方元数据）；请按网关实际能力核对后再保存。"
+                                } else {
+                                    stringResource(R.string.page_covered_model_automatic_capabilities_3fa7d4)
+                                }
                             } else {
                                 stringResource(
                                     if (model.reasoning == true) {

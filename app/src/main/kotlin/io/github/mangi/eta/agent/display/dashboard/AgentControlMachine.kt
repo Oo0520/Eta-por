@@ -28,7 +28,7 @@ internal enum class AgentControlMode {
     TERMINATED,
     ;
 
-    /** AI 是否允许往虚拟屏注入事件。 */
+    /** AI 是否允许往灵屏注入事件。 */
     val aiMayInject: Boolean get() = this == AI_RUNNING
 
     /** 触摸归用户所有（接管中，以及交还前的收尾窗口）。 */

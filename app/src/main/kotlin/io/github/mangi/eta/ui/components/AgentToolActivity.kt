@@ -50,6 +50,9 @@ import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
 import io.github.mangi.eta.agent.overlay.toolDisplayName
+import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
+import io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot
+import io.github.mangi.eta.agent.subagent.SubagentRunRegistry
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityStatusUi
 import kotlinx.coroutines.Dispatchers
@@ -103,6 +106,59 @@ internal fun ToolActivityRow(
     modifier: Modifier = Modifier,
     showTitle: Boolean = true,
 ) {
+    val running = message.status == ToolActivityStatusUi.Running
+    val elapsedSeconds = rememberRunningSeconds(message.id, running)
+    if (message.toolName == AgentSubagentToolCatalog.TOOL_NAME) {
+        val snapshot = remember(message.command, message.argumentsSummary, message.resultSummary, message.status) {
+            SubagentActivitySnapshot.decode(message.command) ?: SubagentActivitySnapshot(
+                subagentType = message.argumentsSummary.substringBefore(" · ").ifBlank { "subagent" },
+                description = message.argumentsSummary.substringAfter(" · ", message.argumentsSummary),
+                status = when (message.status) {
+                    ToolActivityStatusUi.Running -> SubagentActivitySnapshot.STATUS_RUNNING
+                    ToolActivityStatusUi.Failed -> SubagentActivitySnapshot.STATUS_FAILED
+                    else -> SubagentActivitySnapshot.STATUS_COMPLETED
+                },
+                output = message.resultSummary.orEmpty(),
+            )
+        }
+        // 切走会话时进度事件可能被丢掉：消息里的快照会停在很早的状态，甚至解析失败退化成
+        // 只有「完成 · N 次工具调用」的占位。所以这里按 toolCallId 从进程内注册表兜底，
+        // 且不受消息状态限制——已结束的子代理同样需要把步骤补回来。
+        val toolCallId = remember(message.id) {
+            Regex("^.*-tool-\\d+-(.+)$").find(message.id)?.groupValues?.getOrNull(1).orEmpty()
+        }
+        var liveJson by remember(message.id) { mutableStateOf<String?>(null) }
+        LaunchedEffect(message.id, toolCallId, snapshot.subagentId, snapshot.status) {
+            if (toolCallId.isBlank() && snapshot.subagentId.isBlank()) {
+                liveJson = null
+                return@LaunchedEffect
+            }
+            while (true) {
+                val live = if (toolCallId.isNotBlank()) {
+                    SubagentRunRegistry.snapshotForToolCall(toolCallId)
+                } else {
+                    SubagentRunRegistry.latestSnapshot(snapshot.subagentId)
+                }
+                if (live != null) liveJson = live
+                val liveStatus = SubagentActivitySnapshot.decode(liveJson)?.status
+                val messageDone = snapshot.status != SubagentActivitySnapshot.STATUS_RUNNING
+                if (messageDone && liveStatus != null &&
+                    liveStatus != SubagentActivitySnapshot.STATUS_RUNNING
+                ) {
+                    return@LaunchedEffect
+                }
+                delay(1000)
+            }
+        }
+        val effective = SubagentActivitySnapshot.decode(liveJson) ?: snapshot
+        SubagentActivityRow(
+            message = message,
+            snapshot = effective,
+            elapsedSeconds = elapsedSeconds,
+            modifier = modifier,
+        )
+        return
+    }
     var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
     // 只有「当前浏览器」条目订阅实时会话快照，避免每个工具行都跟随快照重组。
     val browserSnapshot = if (showBrowserShortcut) {
@@ -110,7 +166,6 @@ internal fun ToolActivityRow(
     } else {
         null
     }
-    val running = message.status == ToolActivityStatusUi.Running
     val failed = message.status == ToolActivityStatusUi.Failed
     val title = message.argumentsSummary.ifBlank { toolDisplayName(message.toolName) }
     val outcome = remember(message.status, message.resultSummary) { message.outcomeLine() }
@@ -128,7 +183,6 @@ internal fun ToolActivityRow(
     val hasDetail = !message.command.isNullOrBlank() ||
         resultDetail != null ||
         showBrowserShortcut
-    val elapsedSeconds = rememberRunningSeconds(message.id, running)
 
     Column(modifier = modifier.fillMaxWidth()) {
         Row(

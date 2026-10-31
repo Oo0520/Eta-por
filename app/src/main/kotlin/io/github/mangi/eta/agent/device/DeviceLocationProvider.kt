@@ -33,23 +33,23 @@ internal object DeviceLocationProvider {
             context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
         if (!foregroundGranted) return AccessState.DENIED
-        if (context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return AccessState.FOREGROUND_ONLY
-        }
         val manager = context.getSystemService(LocationManager::class.java)
             ?: return AccessState.DISABLED
-        return if (manager.isLocationEnabled) AccessState.AVAILABLE else AccessState.DISABLED
+        if (!manager.isLocationEnabled) return AccessState.DISABLED
+        // 后台定位只有在持续订阅或后台触发读取时才需要；读取系统已有的最近位置
+        // 属于前台读一次缓存，拿到「使用时允许」就够用，不能再当成拒绝。
+        val backgroundGranted = context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        return if (backgroundGranted) AccessState.AVAILABLE else AccessState.FOREGROUND_ONLY
     }
 
     @SuppressLint("MissingPermission")
     fun latest(context: Context): Result {
         return when (accessState(context)) {
             AccessState.DENIED -> Result.Unavailable("permission_required")
-            AccessState.FOREGROUND_ONLY -> Result.Unavailable("background_permission_required")
             AccessState.DISABLED -> Result.Unavailable("location_disabled")
-            AccessState.AVAILABLE -> {
+            // FOREGROUND_ONLY 也能读最近位置，只是不能后台持续读取。
+            AccessState.FOREGROUND_ONLY, AccessState.AVAILABLE -> {
                 val manager = context.getSystemService(LocationManager::class.java)
                     ?: return Result.Unavailable("unavailable")
                 val providers = runCatching { manager.getProviders(true) }

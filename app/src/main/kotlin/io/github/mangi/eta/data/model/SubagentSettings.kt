@@ -1,0 +1,59 @@
+package io.github.mangi.eta.data.model
+
+import kotlinx.serialization.Serializable
+
+/**
+ * Subagent 模型与思考配置。
+ *
+ * [modelId] 为空表示跟随主 Agent 当前生效的模型；指定具体 Model.id 且对应服务商与模型仍启用时，
+ * Subagent 优先使用该模型运行。
+ */
+/** 单个模型的授权范围：[allowedEfforts] 为空表示该模型支持的全部档位。 */
+@Serializable
+internal data class SubagentModelGrant(
+    val modelId: String = "",
+    val allowedEfforts: List<String> = emptyList(),
+)
+
+/** 某个子智能体类型的默认选择：模型 + 思考强度；都为空表示不设置。 */
+@Serializable
+internal data class SubagentProfileDefault(
+    val modelId: String = "",
+    val effort: String = "",
+)
+
+@Serializable
+internal data class SubagentSettings(
+    val modelId: String? = null,
+    val reasoningEffort: String? = null,
+    /** 同一主 Agent 下同时存活的子智能体总数上限（主 Agent 不计入）。 */
+    val maxParallel: Int = 8,
+    /** 允许 Agent 为子智能体挑选模型（仅影响新会话）。 */
+    val allowModelSelection: Boolean = false,
+    /** 授权给主 Agent 挑选的模型 id 列表；为空表示不限制（可选全部已启用模型）。 */
+    val allowedModelIds: List<String> = emptyList(),
+    /** 每个授权模型可用的思考强度档位；为空时沿用 [allowedModelIds]（视为不限档位）。 */
+    val allowedGrants: List<SubagentModelGrant> = emptyList(),
+    /** 按子智能体类型（explore / coder / plan / screen …）指定默认模型与强度。 */
+    val profileDefaults: Map<String, SubagentProfileDefault> = emptyMap(),
+    /** 单个子智能体单次派发允许的最大思考轮次；超过即中止并向主 Agent 回报。 */
+    val maxRounds: Int = 40,
+    /**
+     * 连续工具调用失败达到该次数即中止；0 表示关闭该保护。
+     *
+     * 只数「失败」而不是「重复动作」：滑屏、翻页这类动作本来就是反复做的，
+     * 按重复次数判定会把正常任务误杀；连续失败才是真的卡住了。
+     */
+    val failureAbortThreshold: Int = 5,
+) {
+    val resolvedReasoningEffort: ReasoningEffort?
+        get() = ReasoningEffort.fromWireValue(reasoningEffort)
+
+    /** 生效的授权列表：优先新字段，旧字段自动展开为「不限档位」。 */
+    val effectiveGrants: List<SubagentModelGrant>
+        get() = if (allowedGrants.isNotEmpty()) {
+            allowedGrants.filter { it.modelId.isNotBlank() }
+        } else {
+            allowedModelIds.filter { it.isNotBlank() }.map { SubagentModelGrant(it) }
+        }
+}

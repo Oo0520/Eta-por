@@ -37,7 +37,7 @@ internal class VirtualScreenUiTools(
         if (name in VirtualScreenRoutingPolicy.unavailableTools) {
             failure(
                 "VIRTUAL_ACTION_UNSUPPORTED",
-                "此 UI 工具不能在虚拟屏执行；请使用虚拟屏内的应用，不会操作主屏。"
+                "此 UI 工具不能在灵屏执行；请使用灵屏内的应用，不会操作主屏。"
             )
         } else when (name) {
             "launch_app" -> launchApp(args)
@@ -58,7 +58,7 @@ internal class VirtualScreenUiTools(
         failure(
             if (error is IllegalArgumentException || error is IllegalStateException) error.message
                 ?: "VIRTUAL_UI_FAILED" else "VIRTUAL_UI_FAILED",
-            "虚拟屏操作未完成；请重新观察，不会回退到主屏。"
+            "灵屏操作未完成；请重新观察，不会回退到主屏。"
         )
     }
 
@@ -95,6 +95,7 @@ internal class VirtualScreenUiTools(
         info: VirtualDisplayInfo
     ): AgentModelClient.ToolResult = when (name) {
         "observe_screen" -> observe(args, info)
+        "tap_smart" -> tapSmart(args, info)
         "tap", "tap_area", "long_press", "swipe", "scroll" -> coordinateAction(name, args, info)
         "tap_element", "long_press_element", "scroll_element" -> nodeAction(name, args, info)
         "type_text" -> typeText(args, info)
@@ -126,7 +127,7 @@ internal class VirtualScreenUiTools(
             )
         }
 
-        else -> failure("VIRTUAL_ACTION_UNSUPPORTED", "此 UI 操作不支持虚拟屏")
+        else -> failure("VIRTUAL_ACTION_UNSUPPORTED", "此 UI 操作不支持灵屏")
     }
 
     private fun observe(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
@@ -164,7 +165,7 @@ internal class VirtualScreenUiTools(
                 "execution_scope",
                 JSONObject().put("type", "virtual_display").put("display_id", info.displayId)
                     .put("main_screen_locked", context.getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true)
-                    .put("note", "观察和输入仅针对这个虚拟屏。主屏的锁屏、指纹窗口（如 UDfinger）和全局 mCurrentFocus 不代表此虚拟屏被遮挡；依据本次观察和此虚拟屏工具的实际结果判断。")
+                    .put("note", "观察和输入仅针对这个灵屏。主屏的锁屏、指纹窗口（如 UDfinger）和全局 mCurrentFocus 不代表此灵屏被遮挡；依据本次观察和此灵屏工具的实际结果判断。")
             )
             .put("observation_id", nodes?.id ?: JSONObject.NULL)
             .put("observation_source", if (nodes != null) "accessibility" else JSONObject.NULL)
@@ -182,14 +183,14 @@ internal class VirtualScreenUiTools(
                             "当前应用窗口多次返回空 UI 树，暂时停用节点工具；后续观察仍会探测，节点恢复或切换应用窗口后解除限制。使用截图与坐标工具；焦点文本可使用 Root 输入。"
                         else if (nodes == null)
                             "当前窗口尚无有效 UI 树，可能仍在加载；后续观察会重新探测。"
-                        else "仅查询此虚拟屏窗口，不读取主屏窗口。")
+                        else "仅查询此灵屏窗口，不读取主屏窗口。")
             )
             .put(
                 "coordinate_contract",
                 JSONObject().put("coordinate_space_required", true)
                     .put("supported_coordinate_spaces", JSONArray(listOf("normalized", "screen", "screenshot")))
                     .put("screen", screen)
-                    .put("note", "screen 与截图均为虚拟屏原始像素；所有 GUI 工具均针对该 display。")
+                    .put("note", "screen 与截图均为灵屏原始像素；所有 GUI 工具均针对该 display。")
             )
         val captureScreenshot = options.includeScreenshot ||
             (nodes == null && options.includeUiTree && !args.has("include_screenshot"))
@@ -355,6 +356,73 @@ internal class VirtualScreenUiTools(
             )
         return actionResult(result, info)
     }
+
+
+    /**
+     * 智能点击：先按无障碍节点点，失败按节点中心坐标点，最后才用调用方给的坐标。
+     * 目的是让模型不必自己判断"该用节点还是坐标"，减少盲点与反复试探。
+     */
+    private fun tapSmart(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
+        val text = args.optString("text").trim()
+        val desc = args.optString("desc").trim()
+        val hasCoords = args.has("x") && args.has("y")
+        if (text.isBlank() && desc.isBlank() && !hasCoords) {
+            return failure("INVALID_ARGUMENTS", "至少提供 text、desc 或 x/y 之一")
+        }
+        val service = AgentAccessibilityService.current()
+        val options = AgentScreenObservationContract.resolve(args)
+        val snap = service?.captureNodeSnapshot(options.maxNodes, info.displayId)
+            ?.takeIf { it.displayId == info.displayId && it.packageName == info.focusedPackage }
+        if (snap != null && service != null) {
+            snapshot = snap
+            observedSession = info.sessionId
+            observedManualGeneration = info.manualInputGeneration
+            val matched = snap.nodes.firstOrNull { node ->
+                (text.isNotBlank() && node.text.contains(text, true)) ||
+                    (desc.isNotBlank() && node.desc.contains(desc, true))
+            }
+            if (matched != null) {
+                VirtualScreenSession.showNodeGesture(
+                    info, "tap", matched.bounds.centerX(), matched.bounds.centerY(), 0
+                )
+                val click = service.clickNode(snap, matched.index)
+                if (click.ok) {
+                    return AgentModelClient.ToolResult(
+                        JSONObject().put("ok", true).put("tool", "tap_smart")
+                            .put("method", "accessibility").put("display_id", info.displayId)
+                            .put("matched", matched.text.ifBlank { matched.desc })
+                            .toString()
+                    )
+                }
+                // 无障碍点不动：用该节点中心坐标再点一次
+                if (!matched.bounds.isEmpty) {
+                    val coords = JSONObject()
+                        .put("x", matched.bounds.centerX())
+                        .put("y", matched.bounds.centerY())
+                        .put("coordinate_space", "screen")
+                    val byBounds = coordinateAction("tap", coords, info)
+                    return withMethod(byBounds, "bounds_tap")
+                }
+            }
+        }
+        if (hasCoords) {
+            val raw = JSONObject(args.toString())
+            if (!raw.has("coordinate_space")) raw.put("coordinate_space", "screen")
+            return withMethod(coordinateAction("tap", raw, info), "coordinate")
+        }
+        return failure(
+            "NODE_NOT_FOUND",
+            "没有找到文本/描述匹配的可点控件；请先 observe_screen（必要时 include_screenshot=true），再用 tap_area 指定坐标",
+        )
+    }
+
+    /** 给坐标点击结果补一个 method 字段，便于回看是哪条路径生效。 */
+    private fun withMethod(result: AgentModelClient.ToolResult, method: String): AgentModelClient.ToolResult =
+        runCatching {
+            val json = JSONObject(result.content ?: "{}")
+            json.put("method", method)
+            AgentModelClient.ToolResult(json.toString())
+        }.getOrDefault(result)
 
     private fun typeText(args: JSONObject, info: VirtualDisplayInfo): AgentModelClient.ToolResult {
         val mode = args.optString("mode", "replace").trim().lowercase(Locale.ROOT).ifBlank { "replace" }
@@ -526,7 +594,7 @@ internal class VirtualScreenUiTools(
             if (!json.optBoolean("ok") || json.optBoolean("matched")) return result
             waitCancellable(200)
         } while (SystemClock.elapsedRealtime() < deadline)
-        return failure("TIMEOUT", "等待虚拟屏目标超时")
+        return failure("TIMEOUT", "等待灵屏目标超时")
     }
 
     private fun waitCancellable(duration: Int) {

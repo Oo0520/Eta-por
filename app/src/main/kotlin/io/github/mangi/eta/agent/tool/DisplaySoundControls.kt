@@ -8,6 +8,7 @@ import io.github.mangi.eta.agent.device.BoundedRootCommandExecutor
 import io.github.mangi.eta.agent.device.DeviceToolContract
 import io.github.mangi.eta.agent.phone.PhoneOperation
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import org.json.JSONObject
 
 internal class DisplaySoundControls(
@@ -92,9 +93,16 @@ internal class DisplaySoundControls(
         val before =
             brightness()
                 ?: return DeviceToolContract.failure("BRIGHTNESS_UNAVAILABLE", "此系统不支持可靠的百分比亮度接口")
-        val result = execute("cmd display set-brightness $percent --unit percentage")
+        val viaCmd = execute("cmd display set-brightness $percent --unit percentage").ok
+        // 百分比接口不可用时退回写系统亮度刻度（0-255），这一步在 ColorOS 等系统上有效。
+        val applied = viaCmd || runCatching {
+            val raw = (percent * 255.0 / 100.0).roundToInt().coerceIn(0, 255)
+            Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, raw)
+        }.getOrDefault(false)
         val after = brightness()
-        val verified = result.ok && after != null && abs(after - percent) <= 1.0
+        val autoBrightness =
+            Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, 0) == 1
+        val verified = applied && after != null && abs(after - percent) <= 1.5
         return DeviceMutationResult.observed(
                 "set_brightness",
                 DeviceToolContract.appUserId(context),
@@ -102,10 +110,12 @@ internal class DisplaySoundControls(
                 before,
                 after,
                 percent,
-                result.ok,
+                applied,
                 matchesExpected = verified,
             )
             .put("actual_percent", after ?: JSONObject.NULL)
+            .put("method", if (viaCmd) "cmd_display" else "settings")
+            .put("auto_brightness", autoBrightness)
     }
 
     fun timeout(args: JSONObject): JSONObject {
@@ -157,8 +167,14 @@ internal class DisplaySoundControls(
 
     private fun brightness(): Double? {
         val result = execute("cmd display get-brightness --unit percentage")
-        return if (result.ok && !result.truncated)
+        val byCmd = if (result.ok && !result.truncated) {
             result.stdout.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it in 0.0..100.0 }
-        else null
+        } else {
+            null
+        }
+        if (byCmd != null) return byCmd
+        // 部分 ROM（ColorOS 等）没有 cmd display 的百分比接口，退回读系统亮度刻度。
+        val raw = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, -1)
+        return if (raw in 0..255) raw * 100.0 / 255.0 else null
     }
 }

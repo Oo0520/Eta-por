@@ -427,7 +427,7 @@ private fun TopBarOverflowMenu(
             val openTerminalText = stringResource(R.string.action_open_terminal)
             val stopKimiWebText = stringResource(R.string.capability_kimi_stop)
             val openBrowserText = stringResource(R.string.action_open_browser)
-            // 虚拟屏入口与收藏应用平铺在菜单最上方：点开菜单就能直达，不再有二级页面。
+            // 灵屏入口与收藏应用平铺在菜单最上方：点开菜单就能直达，不再有二级页面。
             // 菜单项与动作成对：原来按下标硬分发，插一项就会串位（点「打开浏览器」打到别处）。
             val kimiMenuIcon = if (canStopKimiWeb) Icons.Rounded.Stop else Icons.Rounded.Code
             val rows = buildList<Pair<DropdownItem, () -> Unit>> {
@@ -549,6 +549,7 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.Tools -> stringResource(R.string.route_tools)
     is AppRoute.WebToolsSettings -> stringResource(R.string.web_tools_settings_title)
     is AppRoute.Skills -> stringResource(R.string.route_skills)
+    is AppRoute.Subagents -> "Subagent"
     is AppRoute.Characters -> "角色"
     is AppRoute.CharacterDetail -> "角色详情"
     is AppRoute.CharacterEditor -> "编辑角色"

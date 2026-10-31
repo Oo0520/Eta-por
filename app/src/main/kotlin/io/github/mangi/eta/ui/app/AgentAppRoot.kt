@@ -102,6 +102,7 @@ import io.github.mangi.eta.ui.screens.usage.DataUsageScreen
 import io.github.mangi.eta.ui.screens.usage.TokenUsageScreen
 import io.github.mangi.eta.ui.screens.permissions.PermissionHealthScreen
 import io.github.mangi.eta.ui.screens.skills.AgentSkillsScreen
+import io.github.mangi.eta.ui.screens.subagent.SubagentSettingsScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxEnvironmentScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxFilesScreen
 import io.github.mangi.eta.ui.screens.terminal.SharedFoldersScreen
@@ -142,6 +143,8 @@ fun AgentAppRoot(
     openSpeechSettings: Boolean = false,
     openTerminal: Boolean = false,
     onTerminalOpened: () -> Unit = {},
+    openLinuxEnvironment: Boolean = false,
+    onLinuxEnvironmentOpened: () -> Unit = {},
     onSpeechSettingsOpened: () -> Unit = {},
     onAssistantConversationOpened: (Boolean) -> Unit = {},
 ) {
@@ -180,6 +183,13 @@ fun AgentAppRoot(
         if (openTerminal) {
             if (backStack.lastOrNull() != AppRoute.Terminal) backStack.add(AppRoute.Terminal)
             onTerminalOpened()
+        }
+    }
+    LaunchedEffect(openLinuxEnvironment) {
+        if (openLinuxEnvironment) {
+            // 从「安装进度」通知点进来时，直接落到 Linux 工具环境页，而不是停在首页。
+            if (backStack.lastOrNull() != AppRoute.LinuxEnvironment) backStack.add(AppRoute.LinuxEnvironment)
+            onLinuxEnvironmentOpened()
         }
     }
     var navigationResetKey by rememberSaveable { mutableIntStateOf(0) }
@@ -717,6 +727,9 @@ fun AgentAppRoot(
             }
             entry<AppRoute.WebToolsSettings>(swipeDismiss = swipeDismiss) {
                 WebToolsSettingsScreen(onBack = ::popRoute)
+            }
+            entry<AppRoute.Subagents>(swipeDismiss = swipeDismiss) {
+                SubagentSettingsScreen(onBack = ::popRoute)
             }
             entry<AppRoute.Skills>(swipeDismiss = swipeDismiss) {
                 LaunchedEffect(Unit) {

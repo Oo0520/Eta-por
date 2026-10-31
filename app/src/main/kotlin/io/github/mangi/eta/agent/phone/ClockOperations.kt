@@ -114,6 +114,13 @@ internal class ClockOperations(
         return PhoneOperation.changed("set_alarm", verified)
             .put("alarm_id", created.getString("alarm_id"))
             .put("alarm", after ?: created)
+            .put("vibrate_supported", false)
+            .apply {
+                if (args.has("vibrate")) put(
+                    "vibrate_note",
+                    "厂商时钟接口没有单独设置震动的参数，已按系统默认处理；需要指定震动请改用系统界面创建",
+                )
+            }
     }
 
     private fun change(tool: String, args: JSONObject): JSONObject {

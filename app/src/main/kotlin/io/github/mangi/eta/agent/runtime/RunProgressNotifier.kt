@@ -69,7 +69,7 @@ internal object RunProgressNotifier {
     /** 会话 key → 卡片。LinkedHashMap 保持启动顺序，撤卡时不动别人。 */
     private val cards = LinkedHashMap<String, RunCard>()
 
-    /** 虚拟屏接管的那几条会话：只有它们让位给仪表盘，其余照常发卡。 */
+    /** 灵屏接管的那几条会话：只有它们让位给仪表盘，其余照常发卡。 */
     private val delegatedRuns = LinkedHashSet<String>()
 
     private var active = false
@@ -111,7 +111,7 @@ internal object RunProgressNotifier {
         EtaTrace.log("run.progress.start", "开始汇报运行进度（多卡）")
     }
 
-    /** 虚拟屏会话在跑时，只让这一张卡让位给仪表盘，其余会话不受影响。 */
+    /** 灵屏会话在跑时，只让这一张卡让位给仪表盘，其余会话不受影响。 */
     fun delegateToVirtualScreen(runId: String, value: Boolean) {
         if (!isMainThread()) {
             handler.post { delegateToVirtualScreen(runId, value) }
@@ -349,36 +349,28 @@ internal object RunProgressNotifier {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setContentIntent(open)
             .addAction(
-                action(
+                textAction(
                     app,
-                    if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
+                    if (paused) "继续" else "暂停",
                     if (paused) AgentRuntimeService.ACTION_RESUME_RUN else AgentRuntimeService.ACTION_PAUSE_RUN,
-                    ACTION_PAUSE_REQUEST,
+                    1,
                     card.runId,
                     cardId,
                 ),
             )
             .addAction(
-                action(
+                textAction(
                     app,
-                    R.drawable.ic_stat_stop,
+                    "停止",
                     AgentRuntimeService.ACTION_STOP_RUN,
-                    ACTION_STOP_REQUEST,
+                    2,
                     card.runId,
                     cardId,
                 ),
             )
-        builder.addAction(insertAction(app, card, cardId))
-        if (open != null) {
-            builder.addAction(
-                Notification.Action.Builder(
-                    Icon.createWithResource(app, progressIcon(card.stage)),
-                    "",
-                    open,
-                ).build(),
-            )
-        }
-        // 降级开关打开时，进度卡只做普通通知：标题、正文、按钮照旧，不进流体云。
+            .addAction(insertAction(app, card, cardId))
+        // 会话进度卡才是真正会进流体云的那条，开关开着就必须跳过提升——
+        // 之前只给空闲卡加了判断，这里漏了，导致「通知不进流体云」看着没生效。
         if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK && FluidNotificationPolicy.allowsFluid()) {
             builder.setShortCriticalText(if (paused) "已暂停" else card.actionShort)
             builder.setRequestPromotedOngoing(true)
@@ -386,7 +378,28 @@ internal object RunProgressNotifier {
         return builder.build()
     }
 
-    /** 「插入」：拉起轻量输入弹层，提交后走 supplement 通道按对话精确投递。 */
+    /** 文字版按钮：icon 传 null，系统会渲染成文字胶囊。 */
+    private fun textAction(
+        app: Context,
+        label: String,
+        serviceAction: String,
+        requestOffset: Int,
+        runId: String,
+        cardId: Int,
+    ): Notification.Action {
+        val intent = Intent(app, AgentRuntimeService::class.java)
+            .setAction(serviceAction)
+            .putExtra(AgentRuntimeService.EXTRA_RUN_ID, runId)
+        val pending = PendingIntent.getService(
+            app,
+            cardId * 10 + requestOffset,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(null, label, pending).build()
+    }
+
+    /** 「插入」：拉起轻量输入弹层，提交后走 supplement 通道。 */
     private fun insertAction(app: Context, card: RunCard, cardId: Int): Notification.Action {
         val intent = Intent(app, SupplementActivity::class.java)
             .putExtra(AgentRuntimeService.EXTRA_SUPPLEMENT_CONVERSATION_ID, card.conversationKey)
@@ -399,7 +412,7 @@ internal object RunProgressNotifier {
             )
         val pending = PendingIntent.getActivity(
             app,
-            cardId * 10 + 4,
+            cardId * 10 + 3,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

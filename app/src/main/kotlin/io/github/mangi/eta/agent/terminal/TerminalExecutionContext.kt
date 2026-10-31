@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.terminal
 
+import java.io.File
 import org.json.JSONObject
 
 /** 同一次运行固定目录和 Linux 环境；Android 默认身份根据已确认的授权选择。 */
@@ -30,6 +31,23 @@ internal data class TerminalExecutionContext(
     val linuxReady: Boolean
         get() = LinuxEnvironmentPaths.rootfsReady(linuxRootfsPath)
 
+    /** 常用工具（curl/git/jq/rg/fd/sqlite3/wget/ps 等）是否已安装，供提示词说明。 */
+    val linuxCommonToolsReady: Boolean
+        get() = AlpineEnvironmentPaths.commonToolsReady(linuxRootfsPath)
+
+    /** 已安装的可选组件（python/node/ssh/kimi/apk_analysis 等）。 */
+    val linuxInstalledProfiles: List<String>
+        get() {
+            if (!linuxReady || linuxRootfsPath.isNullOrBlank()) return emptyList()
+            val rootfs = File(linuxRootfsPath)
+            return buildList {
+                LinuxPackageProfiles.ALL.forEach { profile ->
+                    if (linuxPackageProfileReady(rootfs, profile)) add(profile.id)
+                }
+                if (linuxApkAnalysisReady(rootfs)) add(APK_ANALYSIS_PROFILE_ID)
+            }
+        }
+
     fun identityFor(environment: TerminalEnvironment, rootAvailable: Boolean): String =
         if (environment.isLinux) linuxIdentity else if (rootAvailable) "root" else "user"
 
@@ -47,10 +65,18 @@ internal data class TerminalExecutionContext(
         append(linuxIdentity)
         append("，ready=")
         append(linuxReady)
+        append("，common_tools=")
+        append(linuxCommonToolsReady)
+        append("，profiles=")
+        append(linuxInstalledProfiles.ifEmpty { listOf("none") }.joinToString("/"))
         append("。Linux 工作区 ")
         append(JSONObject.quote(linuxWorkspacePath))
         append(" 映射宿主目录 ")
         append(JSONObject.quote(linuxHostWorkspacePath))
         append("；只有宿主目录相同时才与默认 Android 工作区共享文件。Linux 路径按 Linux 环境解释。")
+    }
+
+    private companion object {
+        const val APK_ANALYSIS_PROFILE_ID = "apk_analysis"
     }
 }

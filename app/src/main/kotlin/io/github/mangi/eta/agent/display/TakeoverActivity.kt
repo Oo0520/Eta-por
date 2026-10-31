@@ -187,7 +187,7 @@ internal class TakeoverActivity : ComponentActivity() {
                         },
                     )
 
-                    // 只记录手指活动，不消费事件（触摸要直通虚拟屏）
+                    // 只记录手指活动，不消费事件（触摸要直通灵屏）
                     Box(
                         Modifier
                             .fillMaxSize()
@@ -361,7 +361,7 @@ internal class TakeoverActivity : ComponentActivity() {
                 val differs = baselinePackage.isNotBlank() &&
                     current.focusedPackage.isNotBlank() &&
                     current.focusedPackage != baselinePackage
-                // 宽限 10 秒，并要求连续两次采样都不同：刚进接管页时虚拟屏前台包会短暂跳动，
+                // 宽限 10 秒，并要求连续两次采样都不同：刚进接管页时灵屏前台包会短暂跳动，
                 // 早前没有宽限，导致接管层 3–5 秒就被自动交还（日志里 4 秒一轮重建）。
                 if (differs) {
                     movedStreak++

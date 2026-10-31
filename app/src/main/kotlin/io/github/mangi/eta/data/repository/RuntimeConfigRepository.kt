@@ -14,6 +14,7 @@ import io.github.mangi.eta.data.model.OpenAiEndpointMode
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ReasoningEffort
+import io.github.mangi.eta.data.model.SubagentSettings
 import io.github.mangi.eta.data.model.enabledModel
 import io.github.mangi.eta.data.model.runtimeProviderType
 import io.github.mangi.eta.data.model.selectedOrFirstModel
@@ -34,6 +35,62 @@ internal object RuntimeConfigRepository {
     fun selectedProviderIdFlow() = SettingsDataStore.selectedProviderIdFlow()
 
     fun selectedModelIdFlow() = SettingsDataStore.selectedModelIdFlow()
+
+    fun subagentSettingsFlow() = SettingsDataStore.subagentSettingsFlow()
+
+    suspend fun setSubagentSettings(settings: SubagentSettings) {
+        SettingsDataStore.setSubagentSettings(settings)
+    }
+
+    /**
+     * 解析 Subagent 实际运行所用的模型配置。
+     *
+     * 指定了独立子模型且该模型仍处于启用状态时优先使用子模型，否则平滑回退到主模型；
+     * 工具开关继承父请求，并强制关闭 `subagentTools` 防止递归派发。
+     */
+    suspend fun subagentRuntimeConfig(
+        primaryConfig: AgentModelClient.ModelConfig,
+        overrideModelId: String? = null,
+        overrideEffortWire: String? = null,
+    ): AgentModelClient.ModelConfig {
+        // 子智能体模型只有一个来源：主 Agent 本次指定的（需已授权）。
+        // 未指定就跟随主模型，不再读取历史上的「子智能体模型」单选，避免两套设置打架。
+        val secondaryModelId = overrideModelId?.takeIf { it.isNotBlank() }
+        val resolvedSecondary = if (secondaryModelId != null) {
+            ProviderRepository.ensureBuiltInsMerged()
+            ProviderRepository.allProviders().enabledModel(secondaryModelId)
+        } else {
+            null
+        }
+        val base = resolvedSecondary?.let { (provider, model) ->
+            buildRuntimeConfig(provider, model)
+        } ?: primaryConfig
+        val explicitEffort = overrideEffortWire?.let { ReasoningEffort.fromWireValue(it) }
+        val effort = when {
+            explicitEffort != null -> {
+                val capabilities = base.reasoningCapabilities
+                when {
+                    capabilities != null -> capabilities.normalize(explicitEffort)
+                    explicitEffort == ReasoningEffort.OFF -> ReasoningEffort.OFF
+                    else -> base.effectiveReasoningEffort
+                }
+            }
+            resolvedSecondary != null -> base.effectiveReasoningEffort
+            else -> primaryConfig.effectiveReasoningEffort
+        }
+        return base.copy(
+            terminalTools = primaryConfig.terminalTools,
+            browserTools = primaryConfig.browserTools,
+            deviceDirectTools = primaryConfig.deviceDirectTools,
+            deviceSensitiveReadTools = primaryConfig.deviceSensitiveReadTools,
+            deviceSensitiveActionTools = primaryConfig.deviceSensitiveActionTools,
+            subagentTools = false,
+            thinkingEnabled = effort.enablesReasoning,
+            reasoningEffort = effort,
+            autoCompactionEnabled = primaryConfig.autoCompactionEnabled,
+            supportsSearchSuggestions = false,
+        )
+    }
 
     suspend fun selectedProvider(): ProviderSetting? {
         val settings = ProviderRepository.repairSelection()
@@ -134,6 +191,7 @@ internal object RuntimeConfigRepository {
             modelDisplayName = model.displayName.trim(),
             contextWindow = model.effectiveContextWindow,
             autoCompactionEnabled = Prefs.isEnabled(Prefs.Keys.AGENT_AUTO_COMPACTION_ENABLED),
+            subagentTools = Prefs.isEnabled(Prefs.Keys.AGENT_SUBAGENT_ENABLED),
             systemPrompt = systemPrompt,
             anthropicVersion = (provider as? AnthropicProviderSetting)?.anthropicVersion
                 ?: AnthropicProviderSetting.DEFAULT_ANTHROPIC_VERSION,
