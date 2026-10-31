@@ -138,6 +138,15 @@ internal object VirtualScreenFloatWindow {
     private var sinked = false
     /** 上一次看到的运行 id：用于判断任务是否刚结束。 */
     private var lastRunId: String? = null
+
+    /**
+     * 因「任务结束」被自动收起的 session。
+     *
+     * 收起时只是隐藏了浮窗，屏本身仍然存在（成功后按设计要保留一段时间）。如果没有这个记录，
+     * 之后任何一次状态变化——典型就是切换会话把焦点换到另一块屏——都会走进 show() 分支，
+     * 把刚收起的灵屏又弹回来。
+     */
+    private var dismissedSessionId: String? = null
     private var swallowingBubble = false
     private val sinkRunnable = Runnable { sinkToEdge() }
     /** 拖拽途中已经折叠过：松手不再重复吸附。 */
@@ -267,13 +276,27 @@ internal object VirtualScreenFloatWindow {
                     if (runId == null && lastRunId != null && !takeoverFull) {
                         VscrDiag.line("任务结束，收起浮窗")
                         lastRunId = null
+                        dismissedSessionId = next?.sessionId
                         hide()
                         return@collect
                     }
                     lastRunId = runId
+                    // 有新任务在跑，说明这次是「要用屏」，之前的收起标记作废。
+                    if (runId != null) dismissedSessionId = null
                     when {
                         suppressed -> Unit
-                        !settings.virtualScreenFloatWindowEnabled || next == null -> hide()
+                        !settings.virtualScreenFloatWindowEnabled || next == null -> {
+                            dismissedSessionId = null
+                            hide()
+                        }
+                        // 这块屏是被「任务结束」收起的，且当前没有新任务：保持隐藏，
+                        // 等它真的被关掉、或有新任务要用屏时再考虑显示。
+                        next.sessionId == dismissedSessionId -> {
+                            if (rootView != null) {
+                                VscrDiag.line("已收起的灵屏不再自动弹出 " + next.sessionId.take(8))
+                                hide()
+                            }
+                        }
                         next.sessionId != info?.sessionId -> show(next, settings)
                         else -> {
                             val shapeChanged = info?.let { it.width != next.width || it.height != next.height } == true
