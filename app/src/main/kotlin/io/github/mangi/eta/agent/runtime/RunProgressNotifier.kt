@@ -369,7 +369,9 @@ internal object RunProgressNotifier {
                 ),
             )
             .addAction(insertAction(app, card, cardId))
-        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
+        // 会话进度卡才是真正会进流体云的那条，开关开着就必须跳过提升——
+        // 之前只给空闲卡加了判断，这里漏了，导致「通知不进流体云」看着没生效。
+        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK && FluidNotificationPolicy.allowsFluid()) {
             builder.setShortCriticalText(if (paused) "已暂停" else card.actionShort)
             builder.setRequestPromotedOngoing(true)
         }
