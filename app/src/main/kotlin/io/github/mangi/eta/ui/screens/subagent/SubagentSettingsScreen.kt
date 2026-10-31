@@ -45,6 +45,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import io.github.mangi.eta.data.model.SubagentModelGrant
+import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -177,6 +181,8 @@ internal fun SubagentSettingsScreen(
     var showParallelDialog by remember { mutableStateOf(false) }
     var showAuthorizedSheet by remember { mutableStateOf(false) }
     var authorizedDraft by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // 每个授权模型允许的思考强度；空集合表示「该模型全部档位」。
+    var grantDraft by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
     var parallelDraft by remember { mutableStateOf("8") }
     var showRoundsDialog by remember { mutableStateOf(false) }
     var roundsDraft by remember { mutableStateOf("12") }
@@ -218,6 +224,62 @@ internal fun SubagentSettingsScreen(
                             else authorizedDraft + id
                         },
                     )
+                    if (authorizedDraft.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = "思考强度（不勾＝该模型全部档位）",
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                            authorizedDraft.sorted().forEach { modelId ->
+                                val picked = grantDraft[modelId].orEmpty()
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        text = modelId,
+                                        style = MiuixTheme.textStyles.footnote2.copy(fontFamily = FontFamily.Monospace),
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        ReasoningEffort.entries
+                                            .filter { it != ReasoningEffort.DEFAULT }
+                                            .forEach { effort ->
+                                                val active = effort.wireValue in picked
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(
+                                                            if (active) {
+                                                                MiuixTheme.colorScheme.primary
+                                                            } else {
+                                                                MiuixTheme.colorScheme.surfaceContainerHigh
+                                                            },
+                                                        )
+                                                        .clickable {
+                                                            val next = if (active) picked - effort.wireValue
+                                                            else picked + effort.wireValue
+                                                            grantDraft = grantDraft + (modelId to next)
+                                                        }
+                                                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                                                ) {
+                                                    Text(
+                                                        text = effort.wireValue,
+                                                        style = MiuixTheme.textStyles.footnote2,
+                                                        color = if (active) {
+                                                            MiuixTheme.colorScheme.onPrimary
+                                                        } else {
+                                                            MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -233,9 +295,18 @@ internal fun SubagentSettingsScreen(
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = {
                                 val snapshot = authorizedDraft.toList()
+                                val grants = snapshot.map { id ->
+                                    SubagentModelGrant(
+                                        modelId = id,
+                                        allowedEfforts = grantDraft[id].orEmpty().toList(),
+                                    )
+                                }
                                 scope.launch {
                                     RuntimeConfigRepository.setSubagentSettings(
-                                        subagentSettings.copy(allowedModelIds = snapshot),
+                                        subagentSettings.copy(
+                                            allowedModelIds = snapshot,
+                                            allowedGrants = grants,
+                                        ),
                                     )
                                 }
                                 showAuthorizedSheet = false
@@ -637,6 +708,9 @@ internal fun SubagentSettingsScreen(
                     },
                     onClick = {
                         authorizedDraft = subagentSettings.allowedModelIds.toSet()
+                        grantDraft = subagentSettings.effectiveGrants.associate {
+                            it.modelId to it.allowedEfforts.toSet()
+                        }
                         showAuthorizedSheet = true
                     },
                 )
