@@ -29,6 +29,23 @@ internal object SubagentRunRegistry {
 
     fun screenOwner(): String? = screenOwnerId
 
+    /** 该子智能体是否还活着（控制器仍在册）。 */
+    fun isAlive(subagentId: String): Boolean = controllers.containsKey(subagentId)
+
+    /**
+     * 向指定子智能体投递一条补充指令。
+     *
+     * 和定向接管同一条通道：在下一个回合边界注入，不打断正在执行的工具批次。
+     *
+     * @return false 表示它已经结束（或 id 不存在），调用方应提示用户。
+     */
+    fun steer(subagentId: String, text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        val controller = controllers[subagentId] ?: return false
+        return controller.steer(trimmed)
+    }
+
     /**
      * 把一条补充指令投给当前占用灵屏的子智能体。
      *
