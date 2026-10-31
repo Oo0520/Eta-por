@@ -183,6 +183,8 @@ internal fun SubagentSettingsScreen(
     var authorizedDraft by remember { mutableStateOf<Set<String>>(emptySet()) }
     // 每个授权模型允许的思考强度；空集合表示「该模型全部档位」。
     var grantDraft by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
+    // 每个授权模型真实支持的档位；空表示未知，退回通用全集。
+    var modelEfforts by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     var parallelDraft by remember { mutableStateOf("8") }
     var showRoundsDialog by remember { mutableStateOf(false) }
     var roundsDraft by remember { mutableStateOf("12") }
@@ -216,6 +218,23 @@ internal fun SubagentSettingsScreen(
                 insideMargin = DpSize(0.dp, 0.dp),
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    LaunchedEffect(authorizedDraft) {
+                        val ids = authorizedDraft.toList()
+                        modelEfforts = if (ids.isEmpty()) {
+                            emptyMap()
+                        } else {
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                                    val all = io.github.mangi.eta.data.repository.ProviderRepository.allProviders()
+                                    ids.associateWith { id ->
+                                        all.enabledModel(id)?.model?.reasoningCapabilities
+                                            ?.selectableEfforts?.map { it.wireValue }.orEmpty()
+                                    }
+                                }.getOrDefault(emptyMap())
+                            }
+                        }
+                    }
                     SubagentModelMultiPickerContent(
                         pickerState = pickerState,
                         selectedIds = authorizedDraft,
@@ -243,9 +262,13 @@ internal fun SubagentSettingsScreen(
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                     )
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        ReasoningEffort.entries
-                                            .filter { it != ReasoningEffort.DEFAULT }
-                                            .forEach { effort ->
+                                        val supported = modelEfforts[modelId].orEmpty()
+                                        val options = if (supported.isEmpty()) {
+                                            ReasoningEffort.entries.filter { it != ReasoningEffort.DEFAULT }
+                                        } else {
+                                            ReasoningEffort.entries.filter { it.wireValue in supported }
+                                        }
+                                        options.forEach { effort ->
                                                 val active = effort.wireValue in picked
                                                 Box(
                                                     modifier = Modifier

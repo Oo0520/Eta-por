@@ -88,7 +88,16 @@ internal object SubagentRunRegistry {
      */
     fun liveIds(conversationKey: String?): List<String> {
         val key = conversationKey?.takeIf { it.isNotBlank() } ?: return emptyList()
-        return controllers.keys.filter { conversationOf[it] == key }
+        return controllers.keys.filter { id ->
+            conversationOf[id] == key && isRunning(id)
+        }
+    }
+
+    /** 快照已进入终态的视为已结束：避免执行完但 unregister 漏掉时，胶囊一直挂在输入框上。 */
+    private fun isRunning(subagentId: String): Boolean {
+        val json = latestSnapshots[subagentId] ?: return true
+        val status = runCatching { SubagentActivitySnapshot.decode(json)?.status }.getOrNull()
+        return status == null || status == SubagentActivitySnapshot.STATUS_RUNNING
     }
 
     /** 该子智能体是否还活着（控制器仍在册）。 */

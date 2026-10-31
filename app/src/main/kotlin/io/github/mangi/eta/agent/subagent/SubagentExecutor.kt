@@ -201,20 +201,19 @@ internal class SubagentExecutor(
                 }
             }
         }
-        if (allowModelPick && allowed.isNotEmpty() && requestedModel == null) {
-            SubagentSessionStore.releaseRunning(conversationKey, subagentId)
-            controllerBinding.close()
-            return errorResult(
-                "SUBAGENT_MODEL_REQUIRED",
-                "已开启「允许主 Agent 为子智能体选择模型」，本次派发必须显式指定 model。" +
-                    "可选：${allowed.joinToString(", ")}；请按任务挑选后重试。",
-            )
+        // 未指定模型时不要报错：那是第一轮必失败、还得让主 Agent 重试一轮，体验很差。
+        // 这里从授权列表里取第一个，并在结果里标明「自动选择」，用户仍能看到用了什么。
+        val autoPickedModel = if (allowModelPick && requestedModel == null && allowed.isNotEmpty()) {
+            allowed.first()
+        } else {
+            null
         }
+        val effectiveModelId = requestedModel ?: autoPickedModel
         val useOverride = allowModelPick && configForOverride != null &&
-            (requestedModel != null || requestedEffort != null)
+            (effectiveModelId != null || requestedEffort != null)
         val resolvedConfig = runCatching {
             if (useOverride) {
-                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(requestedModel, requestedEffort) }
+                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(effectiveModelId, requestedEffort) }
             } else {
                 configProvider()
             }
@@ -361,6 +360,7 @@ internal class SubagentExecutor(
                     .put("description", description)
                     .put("model", modelLabel)
                     .put("effort", effortLabel)
+                    .put("model_auto_selected", autoPickedModel != null)
                     .put("status", SubagentActivitySnapshot.STATUS_COMPLETED)
                     .put("tool_calls", tracker.toolCount())
                     .put("summary", response.content)
