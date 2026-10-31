@@ -11,7 +11,28 @@ import org.json.JSONObject
 internal data class SubagentModelOption(
     val modelId: String,
     val efforts: List<String> = emptyList(),
-)
+    /** 上下文窗口（token）；null 表示未知。 */
+    val contextWindow: Int? = null,
+    /** 是否支持思考强度。 */
+    val supportsThinking: Boolean = false,
+) {
+    /** 给模型看的紧凑描述：只陈述客观事实，不做强弱排序。 */
+    fun describe(): String = buildString {
+        append(modelId)
+        val facts = buildList {
+            contextWindow?.let { add("上下文 " + humanTokens(it)) }
+            if (supportsThinking) add("支持思考")
+            if (efforts.isNotEmpty()) add("档位 " + efforts.joinToString("/"))
+        }
+        if (facts.isNotEmpty()) append("（").append(facts.joinToString("，")).append("）")
+    }
+
+    private fun humanTokens(tokens: Int): String = when {
+        tokens >= 1_000_000 -> (tokens / 1_000_000).toString() + "M"
+        tokens >= 1_000 -> (tokens / 1_000).toString() + "K"
+        else -> tokens.toString()
+    }
+}
 
 internal object AgentSubagentToolCatalog {
     const val TOOL_NAME = "subagent"
@@ -38,16 +59,15 @@ internal object AgentSubagentToolCatalog {
             "Optional model id for THIS subagent; must be one of the models the user authorized in Subagent settings. " +
                 "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings."
         } else {
-            "Optional model id for THIS subagent. Authorized models and their allowed reasoning efforts: " +
-                authorizedModels.joinToString("; ") { option ->
-                    if (option.efforts.isEmpty()) {
-                        option.modelId
-                    } else {
-                        "${option.modelId} (efforts: ${option.efforts.joinToString("/")})"
-                    }
-                } +
-                ". Pick model + reasoning_effort for each subagent based on the task " +
-                "(cheaper/faster for simple lookups, stronger for reasoning). " +
+            "Optional model id for THIS subagent. Authorized models: " +
+                authorizedModels.joinToString("；") { it.describe() } +
+                ". 选择规则（主动执行，不必等用户提醒）：" +
+                "① 先看上下文：要读大量材料、多文件或长日志时，只选上下文够大的（192K 装不下 1M 级别的材料）；" +
+                "② 再看能否自动验证：能靠测试/格式校验判定对错的机械任务，用支持思考的模型但给低档位（low）省成本；" +
+                "多步且出错不可回滚（写库、发消息、改动代码）的，给较高档位（high）；" +
+                "③ 一次派多个子代理时，主动分散到不同模型，别全部堆在同一个上；" +
+                "④ 想省成本就复用同一个模型 + 低档位，而不是每个子任务换一个。" +
+                "Pick model + reasoning_effort for each subagent based on these constraints. " +
                 "Omit reasoning_effort to use the model default; an unsupported value is rejected with the allowed list."
         }
         val profileLines = profiles.joinToString("\n") { profile ->

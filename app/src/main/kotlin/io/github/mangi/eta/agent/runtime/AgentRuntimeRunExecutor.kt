@@ -321,6 +321,9 @@ internal class AgentRuntimeRunExecutor(
                             io.github.mangi.eta.agent.subagent.SubagentModelOption(
                                 modelId = resolved.model.modelId,
                                 efforts = efforts,
+                                contextWindow = resolved.model.contextWindowOverride
+                                    ?: resolved.model.contextWindow,
+                                supportsThinking = resolved.model.reasoning == true,
                             )
                         }
                     } else {
