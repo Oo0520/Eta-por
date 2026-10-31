@@ -40,6 +40,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.mangi.eta.agent.subagent.SubagentRunRegistry
+import top.yukonga.miuix.kmp.basic.TextField
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.subagent.SubagentActivitySnapshot
 import io.github.mangi.eta.agent.subagent.SubagentStepSnapshot
@@ -242,6 +244,53 @@ private fun SubagentInspectorContent(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+            }
+        }
+
+        // 运行中可以直接给它下指令：走它自己的 steering 通道，下一个回合边界生效。
+        if (running) {
+            var steerText by rememberSaveable(snapshot.subagentId) { mutableStateOf("") }
+            var steerNotice by rememberSaveable(snapshot.subagentId) { mutableStateOf<String?>(null) }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextField(
+                        value = steerText,
+                        onValueChange = {
+                            steerText = it.take(500)
+                            steerNotice = null
+                        },
+                        label = "对它说一句（下一轮生效）",
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    EtaTextButton(
+                        text = "发送",
+                        enabled = steerText.isNotBlank(),
+                        onClick = {
+                            val delivered = SubagentRunRegistry.steer(snapshot.subagentId, steerText)
+                            steerNotice = if (delivered) {
+                                "已送达，下一轮生效"
+                            } else {
+                                "它已经结束了，这条没送出去"
+                            }
+                            if (delivered) steerText = ""
+                        },
+                    )
+                }
+                steerNotice?.let { notice ->
+                    Text(
+                        text = notice,
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.primary,
+                    )
+                }
             }
         }
 
