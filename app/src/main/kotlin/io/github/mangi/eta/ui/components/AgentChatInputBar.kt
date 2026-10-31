@@ -90,6 +90,9 @@ import io.github.mangi.eta.data.model.ReasoningEffort
 import androidx.compose.ui.platform.LocalContext
 import io.github.mangi.eta.ui.app.ChatDraftStore
 import io.github.mangi.eta.ui.model.AgentCommand
+import io.github.mangi.eta.ui.model.AgentPaletteEntry
+import io.github.mangi.eta.ui.model.CommandPaletteUi
+import io.github.mangi.eta.ui.model.commandPaletteEntries
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.AgentModelPickerUiState
@@ -169,6 +172,14 @@ internal fun AgentChatInputBar(
     onCancelMessageEdit: () -> Unit,
     /** 可用的斜杠命令；为空时输入框不弹命令面板。 */
     commands: List<AgentCommand> = emptyList(),
+    /** 命令主动展开的面板（/help、/skills、/model）；非空时无视输入前缀一直显示。 */
+    pinnedPalette: CommandPaletteUi? = null,
+    onPickPaletteEntry: (AgentPaletteEntry) -> Unit = {},
+    onClosePalette: () -> Unit = {},
+    /** 长按条目看完整描述。 */
+    onLongPressPaletteEntry: (AgentPaletteEntry) -> Unit = {},
+    /** 有结果卡在显示时收起面板，避免两块浮层摞在一起。 */
+    suppressPalette: Boolean = false,
     /** 命令执行后由业务状态递增，用来清掉本地输入框里的命令原文。 */
     inputResetToken: Long = 0,
     /** @ 引用：可选的历史消息与已选中的引用。 */
@@ -194,6 +205,18 @@ internal fun AgentChatInputBar(
     }
     val typedText by remember { derivedStateOf { textFieldState.text.toString() } }
     val commandMatches = remember(typedText, commands) { filterAgentCommands(typedText, commands) }
+    val prefixEntries = remember(commandMatches) { commandPaletteEntries(commandMatches) }
+    val paletteEntries = pinnedPalette?.entries ?: prefixEntries
+    val paletteVisible = !suppressPalette && (
+        (pinnedPalette?.entries?.isNotEmpty() == true) ||
+            (typedText.startsWith("/") && prefixEntries.isNotEmpty())
+        )
+    // 主动展开的面板遇到普通输入（不是新的斜杠命令）就让位，别挡着打字。
+    LaunchedEffect(pinnedPalette, typedText) {
+        if (pinnedPalette != null && typedText.isNotBlank() && !typedText.startsWith("/")) {
+            onClosePalette()
+        }
+    }
     // 行首或空格后的 @ 才当引用触发，避免邮箱、@用户名 之类误伤。
     val mentionQuery = remember(typedText) {
         Regex("(^|\\s)@([^\\s@]*)$").find(typedText)?.groupValues?.get(2)
@@ -419,26 +442,19 @@ internal fun AgentChatInputBar(
         }
 
         AnimatedVisibility(
-            visible = commandMatches.isNotEmpty(),
+            visible = paletteVisible,
             enter = fadeIn(tween(140)) + expandVertically(tween(160)),
             exit = fadeOut(tween(100)) + shrinkVertically(tween(140)),
         ) {
             AgentCommandPalette(
-                matches = commandMatches.take(6),
-                onPick = { command ->
-                    if (command.argHint == null) {
-                        // 无参数命令：点了直接执行，省一次回车。
-                        onSubmit("/" + command.name)
-                        textFieldState.clearText()
-                    } else {
-                        // 有参数命令：补全命令名，光标落到参数位。
-                        val filled = "/" + command.name + " "
-                        textFieldState.edit {
-                            replace(0, length, filled)
-                            selection = TextRange(filled.length)
-                        }
-                    }
-                },
+                entries = paletteEntries,
+                onPick = { entry -> onPickPaletteEntry(entry) },
+                title = pinnedPalette?.title,
+                onClose = pinnedPalette?.let { onClosePalette },
+                // 与 @ 面板同思路：固定上限。用「输入框上沿」测出来的空间当上限会自我正反馈，
+                // 面板越高、输入框越往上、量到的空间越大，最后把输入框挤到键盘后面。
+                maxHeight = CommandPaletteHeightLimit,
+                onLongPressEntry = onLongPressPaletteEntry,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
         }
@@ -472,9 +488,9 @@ internal fun AgentChatInputBar(
                     )
                     .padding(horizontal = 10.dp, vertical = 8.dp),
             ) {
-                // @ 引用面板打开时收起这行状态，别让它压住输入内容。
+                // @ 引用面板 / 命令面板打开时收起这行状态，别让它压住输入内容。
                 val mentionPanelOpen = mentionQuery != null && referenceCandidates.isNotEmpty()
-                if (!mentionPanelOpen) {
+                if (!mentionPanelOpen && !paletteVisible) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -562,6 +578,7 @@ internal fun AgentChatInputBar(
                                 character != null && isStreaming ->
                                     stringResource(R.string.chat_character_typing, character.characterName)
                                 character != null -> stringResource(R.string.chat_character_input_hint, character.characterName)
+                                isStreaming && isPaused -> stringResource(R.string.chat_eta_paused)
                                 isStreaming -> stringResource(R.string.chat_eta_working)
                                 else -> stringResource(R.string.chat_input_hint)
                             },
@@ -918,3 +935,6 @@ private fun ReferenceChip(reference: MessageReferenceUi, onRemove: () -> Unit) {
         )
     }
 }
+
+/** 命令面板的高度上限：约 4 条（标题 + 两行描述），配合收起状态行后输入框始终可完整显示。 */
+private val CommandPaletteHeightLimit = 200.dp

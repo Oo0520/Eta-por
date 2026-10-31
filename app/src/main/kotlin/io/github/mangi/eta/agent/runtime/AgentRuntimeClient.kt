@@ -125,17 +125,24 @@ internal class AgentRuntimeClient(
         }
     }
 
-    /** 暂停当前运行：不取消在途请求，下一个检查点生效。 */
-    fun pauseRun() {
+    /**
+     * 暂停指定 run：不取消在途请求，下一个检查点生效。
+     * runId 为空时退化成「全部暂停」（只有胶囊这类聚合入口会用）。
+     */
+    fun pauseRun(runId: String = "") {
         withRuntimeMessenger(Unit) { serviceMessenger ->
-            serviceMessenger.send(Message.obtain(null, AgentRuntimeWire.MSG_PAUSE))
+            val msg = Message.obtain(null, AgentRuntimeWire.MSG_PAUSE)
+            if (runId.isNotBlank()) msg.data = AgentRuntimeWire.ackBundle(runId)
+            serviceMessenger.send(msg)
         }
     }
 
-    /** 恢复已暂停的运行。 */
-    fun resumeRun() {
+    /** 恢复指定 run（空 runId = 恢复全部）。 */
+    fun resumeRun(runId: String = "") {
         withRuntimeMessenger(Unit) { serviceMessenger ->
-            serviceMessenger.send(Message.obtain(null, AgentRuntimeWire.MSG_RESUME))
+            val msg = Message.obtain(null, AgentRuntimeWire.MSG_RESUME)
+            if (runId.isNotBlank()) msg.data = AgentRuntimeWire.ackBundle(runId)
+            serviceMessenger.send(msg)
         }
     }
 

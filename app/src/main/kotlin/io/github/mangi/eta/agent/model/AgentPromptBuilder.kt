@@ -203,10 +203,10 @@ internal object AgentPromptBuilder {
         }
         roleplayContext?.personaMessage()?.let(messages::put)
         buildMemorySystemMessage(memoryContext, writable = roleplayContext == null)?.let(messages::put)
-        // 技能索引只在真正带 skills_list / skills_read 的档位注入：否则模型看得到目录却读不到正文，
+        // 技能索引只在真正带 skills_list / skills_read 的「正常」档注入：否则模型看得到目录却读不到正文，
         // 既白占上下文，又会诱使它编造技能内容。
         val activeProfile = LocalToolProfileStore.current(config.providerId, config.model)
-        if (activeProfile == LocalToolProfile.FULL || activeProfile == LocalToolProfile.LIGHT) {
+        if (activeProfile == LocalToolProfile.FULL) {
             buildSkillSystemMessage(skillContext)?.let(messages::put)
         }
         custom?.let { value -> customInstructionsMessage(value) }?.let(messages::put)

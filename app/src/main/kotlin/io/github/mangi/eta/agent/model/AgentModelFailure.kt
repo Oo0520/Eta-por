@@ -24,7 +24,7 @@ internal class AgentModelFailure(
             "RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED",
         )
 
-        /** 上下文超限错误码：上层据此自动降档重试。 */
+        /** 上下文超限错误码：上层据此给出压缩或新开会话的建议。 */
         const val CONTEXT_OVERFLOW = "CONTEXT_OVERFLOW"
 
         /** 上下文超限：给一句可操作的中文建议（工具档调低 / 新开会话）。 */

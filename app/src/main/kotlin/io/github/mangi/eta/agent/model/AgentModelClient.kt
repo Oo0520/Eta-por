@@ -119,8 +119,6 @@ internal object AgentModelClient {
         // 自定义提示词与工具白名单是正式配置：每次 run 开始读一次，避免轮内改动让前缀反复失效。
         val customization = PromptCustomizationStore.load()
         val toolPolicy = AgentToolPolicyStore.load()
-        // 上下文超限时自动降一档：只影响本次运行，不写用户设置。
-        var activeProfileOverride: LocalToolProfile? = null
         val initialCapabilities = capabilitiesProvider()
         val messages = AgentPromptBuilder.buildInitialMessages(
             config,
@@ -156,6 +154,10 @@ internal object AgentModelClient {
             config, skillContext, memoryContext, initialCapabilities.rootAvailable, roleplayContext, executionContext, initialCapabilities.virtualScreenEnabled, initialCapabilities.virtualScreenFallbackEnabled, customization,
         ).length()
         // MCP 工具只在 run 开始时压一次：每轮重复解析这 190KB JSON 纯属浪费。
+        val remoteToolNames = (0 until additionalTools.length()).mapNotNull { index ->
+            additionalTools.optJSONObject(index)?.optJSONObject("function")?.optString("name")
+                ?.takeIf { it.isNotBlank() }
+        }.toSet()
         val compactedAdditionalTools = if (additionalTools.length() == 0) {
             additionalTools
         } else {
@@ -173,7 +175,7 @@ internal object AgentModelClient {
             memoryWritable = roleplayContext == null,
             capabilities = capabilities,
             localWebSearch = !config.usesHostedWebSearch,
-            localProfile = activeProfileOverride ?: LocalToolProfileStore.current(config.providerId, config.model),
+            localProfile = LocalToolProfileStore.current(config.providerId, config.model),
             policy = toolPolicy,
             additionalTools = compactedAdditionalTools,
             restrictedToolNames = restrictedToolNames,
@@ -266,25 +268,9 @@ internal object AgentModelClient {
             traceFormatter = traceFormatter,
             onEvent = onEvent,
             purpose = if (rewriteReply) ProviderRequestPurpose.REPLY_REWRITE else ProviderRequestPurpose.CHAT,
-            onContextOverflow = if (rewriteReply) {
-                null
-            } else {
-                val callback: () -> LocalToolProfile? = {
-                    val current = activeProfileOverride
-                        ?: LocalToolProfileStore.current(config.providerId, config.model)
-                    val leaner = current.leaner()
-                    if (leaner == null) {
-                        null
-                    } else {
-                        activeProfileOverride = leaner
-                        onEvent(AgentEvent.ContextOverflowDowngrade(leaner.id))
-                        leaner
-                    }
-                }
-                callback
-            },
             roleplayContext = roleplayContext,
             initialSupplementIndex = initialSupplementIndex,
+            remoteToolNames = remoteToolNames,
             toolsForRound = ::toolsForRound,
         )
         val result = try {
@@ -415,8 +401,6 @@ internal object AgentModelClient {
         val contextSummary: Boolean = false,
         val compactedUserTurns: Int = 0,
         val summaryThroughUserTurn: Int = 0,
-        /** 第几次压缩产生的摘要：轮次由它记录，不再靠"数摘要条数"，避免数字回退。 */
-        val compactionRound: Int = 0,
         val messageId: String = "",
     )
 

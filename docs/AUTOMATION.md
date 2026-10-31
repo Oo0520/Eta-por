@@ -2,6 +2,20 @@
 
 通过自然语言创建任务，例如「每个工作日早上九点整理今天的日程」或「充电时整理待办，最多运行十次」。AI 应先调用 `tasks_triggers` 核对本机能力，再保存结构化规则。「设置 → 自动任务」提供目标与规则查看、暂停、立即运行、取消和删除；规则修改可继续在聊天中完成。
 
+## 界面结构（列表只做开关，正文进二级页）
+
+「设置 → 自动任务」分两层，长任务不允许撑坏列表：
+
+| 层 | 职责 | 约束 |
+| --- | --- | --- |
+| 一级：任务列表 | 任务名、触发摘要（1 行）、启用开关、进入箭头 | 行高固定 `EtaPreferenceDefaults.RowMinHeight`；`EtaPreference(summaryMaxLines = 1)`，不渲染 `prompt` |
+| 二级：任务详情 `AgentTaskDetailPage` | 启用开关、状态与运行次数、`prompt` 全文、触发/筛选/条件/下次运行、最近 3 次运行、立即运行/取消/删除 | 整页 `MiuixScaffoldPage` 的 LazyColumn 滚动，文本不受行数限制 |
+
+- 点任务行进入详情，点右侧开关就地切换 `enabled`（`tasks_update` 带 `expectedUpdatedAt`），两种点击互不干扰。
+- 详情页的任务对象按 id 从 `observeTasks()` 流里取：开关或运行后自动刷新；任务被删除（含详情页里点删除）时自动退回列表。
+- `EtaPreferenceRow` 的 summary 默认仍自然撑高；需要折叠时显式传 `summaryMaxLines`，不要回退成在页面里手写 `Text`。
+- 状态色语义：完成=Green、失败/中断=error、排队/执行中=primary、缺配置=Orange，其余用 `onSurfaceVariantSummary`。
+
 ## 模型工具
 
 | 工具 | 用途 |

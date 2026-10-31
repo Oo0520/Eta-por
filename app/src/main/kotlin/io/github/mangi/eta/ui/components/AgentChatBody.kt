@@ -90,6 +90,9 @@ import io.github.mangi.eta.ui.markdown.StreamingMarkdownState
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentCommand
 import io.github.mangi.eta.ui.model.CommandConfirmUi
+import io.github.mangi.eta.ui.model.CommandPaletteUi
+import io.github.mangi.eta.ui.model.CommandResultUi
+import io.github.mangi.eta.ui.model.AgentPaletteEntry
 import io.github.mangi.eta.ui.model.ToolAccessUiState
 import io.github.mangi.eta.ui.model.ToolToggleItem
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
@@ -202,6 +205,14 @@ internal fun AgentChatBody(
     commandConfirm: CommandConfirmUi? = null,
     onConfirmCommand: () -> Unit = {},
     onDismissCommandConfirm: () -> Unit = {},
+    /** 命令结果卡：/status、/effort、错误提示，停留到用户关掉。 */
+    commandResult: CommandResultUi? = null,
+    onDismissCommandResult: () -> Unit = {},
+    /** 命令主动展开的面板（/help、/skills、/model）。 */
+    commandPalette: CommandPaletteUi? = null,
+    onPickPaletteEntry: (AgentPaletteEntry) -> Unit = {},
+    onCloseCommandPalette: () -> Unit = {},
+    onLongPressPaletteEntry: (AgentPaletteEntry) -> Unit = {},
     inputResetToken: Long = 0,
     toolAccess: ToolAccessUiState,
     referenceCandidates: List<MessageReferenceUi> = emptyList(),
@@ -364,6 +375,12 @@ internal fun AgentChatBody(
             commandConfirm = commandConfirm,
             onConfirmCommand = onConfirmCommand,
             onDismissCommandConfirm = onDismissCommandConfirm,
+            commandResult = commandResult,
+            onDismissCommandResult = onDismissCommandResult,
+            commandPalette = commandPalette,
+            onPickPaletteEntry = onPickPaletteEntry,
+            onCloseCommandPalette = onCloseCommandPalette,
+            onLongPressPaletteEntry = onLongPressPaletteEntry,
             inputResetToken = inputResetToken,
             toolAccess = toolAccess,
             referenceCandidates = referenceCandidates,
@@ -438,6 +455,14 @@ private fun AgentChatScaffold(
     commandConfirm: CommandConfirmUi? = null,
     onConfirmCommand: () -> Unit = {},
     onDismissCommandConfirm: () -> Unit = {},
+    /** 命令结果卡：/status、/effort、错误提示，停留到用户关掉。 */
+    commandResult: CommandResultUi? = null,
+    onDismissCommandResult: () -> Unit = {},
+    /** 命令主动展开的面板（/help、/skills、/model）。 */
+    commandPalette: CommandPaletteUi? = null,
+    onPickPaletteEntry: (AgentPaletteEntry) -> Unit = {},
+    onCloseCommandPalette: () -> Unit = {},
+    onLongPressPaletteEntry: (AgentPaletteEntry) -> Unit = {},
     inputResetToken: Long = 0,
     toolAccess: ToolAccessUiState,
     referenceCandidates: List<MessageReferenceUi> = emptyList(),
@@ -508,6 +533,12 @@ private fun AgentChatScaffold(
                 commandConfirm = commandConfirm,
                 onConfirmCommand = onConfirmCommand,
                 onDismissCommandConfirm = onDismissCommandConfirm,
+                commandResult = commandResult,
+                onDismissCommandResult = onDismissCommandResult,
+                commandPalette = commandPalette,
+                onPickPaletteEntry = onPickPaletteEntry,
+                onCloseCommandPalette = onCloseCommandPalette,
+                onLongPressPaletteEntry = onLongPressPaletteEntry,
                 inputResetToken = inputResetToken,
                 toolAccess = toolAccess,
                 referenceCandidates = referenceCandidates,
@@ -1147,6 +1178,14 @@ private fun AgentChatBottomBar(
     commandConfirm: CommandConfirmUi? = null,
     onConfirmCommand: () -> Unit = {},
     onDismissCommandConfirm: () -> Unit = {},
+    /** 命令结果卡：/status、/effort、错误提示，停留到用户关掉。 */
+    commandResult: CommandResultUi? = null,
+    onDismissCommandResult: () -> Unit = {},
+    /** 命令主动展开的面板（/help、/skills、/model）。 */
+    commandPalette: CommandPaletteUi? = null,
+    onPickPaletteEntry: (AgentPaletteEntry) -> Unit = {},
+    onCloseCommandPalette: () -> Unit = {},
+    onLongPressPaletteEntry: (AgentPaletteEntry) -> Unit = {},
     inputResetToken: Long = 0,
     toolAccess: ToolAccessUiState,
     referenceCandidates: List<MessageReferenceUi> = emptyList(),
@@ -1216,6 +1255,19 @@ private fun AgentChatBottomBar(
         ) {
             LocalProfileSwitchToast(modifier = Modifier.fillMaxWidth())
             AnimatedVisibility(
+                visible = commandResult != null,
+                enter = fadeIn(tween(140)) + expandVertically(tween(160)),
+                exit = fadeOut(tween(100)) + shrinkVertically(tween(140)),
+            ) {
+                commandResult?.let { result ->
+                    AgentCommandResultCard(
+                        result = result,
+                        onDismiss = onDismissCommandResult,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                }
+            }
+            AnimatedVisibility(
                 visible = commandConfirm != null,
                 enter = fadeIn(tween(140)) + expandVertically(tween(160)),
                 exit = fadeOut(tween(100)) + shrinkVertically(tween(140)),
@@ -1269,6 +1321,11 @@ private fun AgentChatBottomBar(
                 onRemoveFileReference = onRemoveFileReference,
                 onCancelMessageEdit = onCancelMessageEdit,
                 commands = commands,
+                pinnedPalette = commandPalette,
+                onPickPaletteEntry = onPickPaletteEntry,
+                onClosePalette = onCloseCommandPalette,
+                onLongPressPaletteEntry = onLongPressPaletteEntry,
+                suppressPalette = commandResult != null,
                 inputResetToken = inputResetToken,
                 toolAccess = toolAccess,
                 referenceCandidates = referenceCandidates,

@@ -57,7 +57,7 @@ EtaPreferenceGroup {
 
 `EtaPreference` 的尾随 lambda 是自定义正文；无需自定义正文时使用 `title` 和 `summary`。内部 `EtaPreferenceRow` 将自定义正文明确命名为 `titleContent`，尾随 lambda 保留给右侧 `endActions`，防止控件误占正文。
 
-设置行不固定文本高度：摘要、长标题和大字体自然撑高。左右内容在一次测量中分配空间，右侧内容有宽度上限，正文保留可换行区域。底部滑块或附加操作使用 `bottomAction`；无点击回调的展示行不创建虚假的整行点击动作。
+设置行默认不固定文本高度：摘要、长标题和大字体自然撑高。需要把摘要折叠成固定行数时，显式传 `summaryMaxLines`（`EtaPreference`、`EtaPreferenceRow`、`EtaSwitchPreference` 均支持，默认 `Int.MAX_VALUE` 表示不限），组件会自动配 `TextOverflow.Ellipsis`；不要在页面里为了限行另写一份 `Text`。列表入口类页面（如自动任务，摘要 1 行）应直接用该参数，正文放到二级页面。左右内容在一次测量中分配空间，右侧内容有宽度上限，正文保留可换行区域。这个上限是**行宽的 45%**（`EtaPreferenceRow` 内 `actionWidth` 计算），且动作区的 `Row` 不裁剪子项：一行最多放两个紧凑控件，第三个动作要么用图标按钮、要么移到 `bottomAction`，否则会溢出卡片右缘（Linux 工具环境页 Kimi 行实测踩过）。只表达「移除 / 卸载」这类附属动作时用图标按钮：`IconButton`（`minWidth` / `minHeight` 32dp + 18dp 图标，中性 `onSurfaceVariantActions` 着色），不要用开关代替，也不要用主色。底部滑块或附加操作使用 `bottomAction`；无点击回调的展示行不创建虚假的整行点击动作。
 
 开关、复选、单选的状态和持久化由页面或 Store 持有。组件只绘制状态并转发事件；图标禁用态、行语义和子控件语义共同维护，避免读屏重复播报。不要在组件中拼 Entity、写偏好设置或启动业务任务。
 

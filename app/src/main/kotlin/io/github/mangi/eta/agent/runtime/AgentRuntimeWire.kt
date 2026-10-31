@@ -685,11 +685,6 @@ internal object AgentRuntimeWire {
                 putInt("omitted_rounds", event.omittedUserRounds)
             }
 
-            is AgentEvent.ContextOverflowDowngrade -> {
-                putString(KEY_TYPE, "context_overflow_downgrade")
-                putString("profile_id", event.profileId)
-            }
-
             is AgentEvent.ContextCompaction -> {
                 putString(KEY_TYPE, "context_compaction")
                 putString("operation_id", event.operationId)
@@ -837,10 +832,6 @@ internal object AgentRuntimeWire {
         "history_trimmed" -> AgentEvent.HistoryTrimmed(
             omittedMessages = bundle.getInt("omitted_messages"),
             omittedUserRounds = bundle.getInt("omitted_rounds"),
-        )
-
-        "context_overflow_downgrade" -> AgentEvent.ContextOverflowDowngrade(
-            profileId = bundle.getString("profile_id").orEmpty(),
         )
 
         "run_started" -> AgentEvent.RunStarted(

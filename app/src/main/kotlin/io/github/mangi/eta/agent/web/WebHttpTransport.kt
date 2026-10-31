@@ -16,9 +16,18 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import java.util.Locale
 
-internal class WebRequestException(val code: String, message: String, val status: Int? = null) : IOException(message)
+/**
+ * @param attempts 多来源尝试的明细（仅在聚合失败时使用）：每条包含 provider / code / http_status。
+ */
+internal class WebRequestException(
+    val code: String,
+    message: String,
+    val status: Int? = null,
+    val attempts: JSONArray? = null,
+) : IOException(message)
 
 internal data class WebHttpResponse(
     val requestedUrl: String,

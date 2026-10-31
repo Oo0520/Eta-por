@@ -33,7 +33,8 @@ internal object WebResponseDecoder {
         }
         val mime = declared?.let { "${it.type}/${it.subtype}" }?.lowercase(Locale.ROOT)
             ?: if (HTML_PREFIX.containsMatchIn(prefix)) "text/html" else "text/plain"
-        if (!mime.startsWith("text/") && mime !in additionalMimeTypes && mime !in setOf("application/json", "application/xhtml+xml") &&
+        if (!mime.startsWith("text/") && mime !in additionalMimeTypes &&
+            mime !in setOf("application/json", "application/xhtml+xml", "application/rss+xml", "application/atom+xml", "application/xml") &&
             !(mime.startsWith("application/") && mime.endsWith("+json"))
         ) throw WebRequestException("UNSUPPORTED_CONTENT_TYPE", "此网址不是可读取的文本网页，请使用对应的文件或媒体工具")
         val headerCharset = declared?.parameter("charset")

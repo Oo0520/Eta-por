@@ -43,11 +43,6 @@ internal sealed interface AgentEvent {
             "history_trimmed rounds=$omittedUserRounds, messages=$omittedMessages"
     }
 
-    /** 上下文超限后自动降档重试：只在本次运行内生效，不改用户设置。 */
-    data class ContextOverflowDowngrade(val profileId: String) : AgentEvent {
-        override fun toLogLine(): String = "context_overflow_downgrade profile=$profileId"
-    }
-
     data class RunStarted(
         val initialImages: Int,
         val initialImageBytes: Int,

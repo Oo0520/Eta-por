@@ -9,7 +9,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 
 /**
- * 模型用量记录：一次请求一行（kind = usage），降档重试另记一行（kind = downgrade）。
+ * 模型用量记录：一次模型请求一行（kind = usage）。
  * 只服务设置里的用量统计，不参与会话内容，可整表清理。
  */
 @Entity(tableName = "token_usage_records", indices = [Index("created_at")])

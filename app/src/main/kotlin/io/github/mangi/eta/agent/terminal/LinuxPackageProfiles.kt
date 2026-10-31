@@ -30,10 +30,25 @@ internal sealed interface PackageProfileInstallResult {
     data class Failed(val stage: PackageProfileInstallStage) : PackageProfileInstallResult
 }
 
+internal sealed interface PackageProfileUninstallResult {
+    data object NotInstalled : PackageProfileUninstallResult
+    data object EnvironmentNotReady : PackageProfileUninstallResult
+
+    /** 还有别的 profile 依赖它，需要先卸载依赖方。 */
+    data class BlockedByDependent(val profileId: String) : PackageProfileUninstallResult
+    data object Uninstalled : PackageProfileUninstallResult
+    data class Failed(val stage: PackageProfileInstallStage) : PackageProfileUninstallResult
+}
+
 internal data class LinuxPackageSpec(
     val packages: List<String> = emptyList(),
     val managedTool: ManagedLinuxTool? = null,
     val setupScript: String? = null,
+    /**
+     * 卸载时在 Linux 环境内执行的清理脚本。
+     * null 表示只撤销 Eta 的安装记录（marker），发行版包管理器装进去的包保留。
+     */
+    val uninstallScript: String? = null,
 )
 
 internal data class LinuxPackageProfile(
@@ -58,12 +73,14 @@ internal object LinuxPackageProfiles {
                 setupScript = """
                     UV_PYTHON_INSTALL_DIR=/opt/eta/python UV_PYTHON_BIN_DIR=/usr/local/bin UV_PYTHON_INSTALL_BIN=1 uv python install --default --force
                 """.trimIndent(),
+                uninstallScript = PYTHON_UNINSTALL_SCRIPT,
             ),
             LinuxDistribution.DEBIAN to LinuxPackageSpec(
                 managedTool = ManagedLinuxTool.UV,
                 setupScript = """
                     UV_PYTHON_INSTALL_DIR=/opt/eta/python UV_PYTHON_BIN_DIR=/usr/local/bin UV_PYTHON_INSTALL_BIN=1 uv python install --default --force
                 """.trimIndent(),
+                uninstallScript = PYTHON_UNINSTALL_SCRIPT,
             ),
         ),
     )
@@ -79,6 +96,7 @@ internal object LinuxPackageProfiles {
                 // Node 官方 arm64 二进制链接 libatomic.so.1，归档安装不含系统依赖，需补装。
                 packages = listOf("libatomic1"),
                 managedTool = ManagedLinuxTool.NODE,
+                uninstallScript = NODE_UNINSTALL_SCRIPT,
             ),
         ),
     )
@@ -98,6 +116,22 @@ internal object LinuxPackageProfiles {
         ),
     )
 
+    /** 卸载 Python 工具链：删掉 Eta 下载的 Python 与 uv，系统包不动。 */
+    private const val PYTHON_UNINSTALL_SCRIPT =
+        "rm -f /usr/local/bin/uv /usr/local/bin/uvx\n" +
+            "rm -f /usr/local/bin/python /usr/local/bin/python3 /usr/local/bin/python3.14\n" +
+            "rm -rf /opt/eta/python /opt/eta/uv"
+
+    /** 卸载 Node：只适用归档安装（Debian）；Alpine 走 apk 包，只撤销记录。 */
+    private const val NODE_UNINSTALL_SCRIPT =
+        "rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx\n" +
+            "rm -rf /opt/eta/node"
+
+    /** 卸载 Kimi Code：npm 全局前缀是 /usr/local，包落在 usr/local/lib/node_modules。 */
+    private const val KIMI_UNINSTALL_SCRIPT =
+        "rm -f /usr/local/bin/kimi\n" +
+            "rm -rf /usr/local/lib/node_modules/@moonshot-ai"
+
     /**
      * Kimi Code 使用 npm 分发，运行在 Node profile 之上；可选原生扩展由 npm 按平台安装。
      * 始终安装最新正式版（升级重装即可）；--prefix /usr/local 让 kimi 进入 PATH 首位，
@@ -114,8 +148,14 @@ internal object LinuxPackageProfiles {
         revision = AlpineEnvironmentPaths.KIMI_TOOLS_REVISION,
         dependsOn = NODE,
         specs = mapOf(
-            LinuxDistribution.ALPINE to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
-            LinuxDistribution.DEBIAN to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
+            LinuxDistribution.ALPINE to LinuxPackageSpec(
+                setupScript = KIMI_INSTALL_SCRIPT,
+                uninstallScript = KIMI_UNINSTALL_SCRIPT,
+            ),
+            LinuxDistribution.DEBIAN to LinuxPackageSpec(
+                setupScript = KIMI_INSTALL_SCRIPT,
+                uninstallScript = KIMI_UNINSTALL_SCRIPT,
+            ),
         ),
     )
     val ALL = listOf(PYTHON, NODE, SSH, KIMI)
@@ -149,6 +189,53 @@ internal class LinuxPackageProfileInstaller(
         } finally {
             installMutex.unlock()
         }
+    }
+
+    /**
+     * 卸载：删掉 Eta 自己下载的资产并撤销安装记录。
+     * 被其它 profile 依赖时（如 Node 之于 Kimi）拒绝，由调用方提示先卸依赖方。
+     */
+    suspend fun uninstall(): PackageProfileUninstallResult {
+        installMutex.lock()
+        return try {
+            uninstallLocked()
+        } finally {
+            installMutex.unlock()
+        }
+    }
+
+    private suspend fun uninstallLocked(): PackageProfileUninstallResult = withContext(Dispatchers.IO) {
+        if (!isReady()) return@withContext PackageProfileUninstallResult.NotInstalled
+        if (!LinuxEnvironmentPaths.rootfsReady(rootfs.absolutePath)) {
+            return@withContext PackageProfileUninstallResult.EnvironmentNotReady
+        }
+        LinuxPackageProfiles.ALL
+            .firstOrNull { candidate ->
+                candidate.dependsOn?.id == profile.id && linuxPackageProfileReady(rootfs, candidate)
+            }
+            ?.let { dependent ->
+                return@withContext PackageProfileUninstallResult.BlockedByDependent(dependent.id)
+            }
+        val command = buildString {
+            append("set -e\n")
+            profile.spec(distribution).uninstallScript?.let { append(it).append('\n') }
+            append("rm -f /").append(profile.markerName).append('\n')
+        }
+        val result = InstallerShellRunner.run(
+            command = command,
+            timeoutSeconds = INSTALL_TIMEOUT_SECONDS,
+            environment = distribution.terminalEnvironment,
+            linuxRootfsPath = rootfs.absolutePath,
+        )
+        AndroidAgentLogger.info(
+            "Package profile action=uninstall distribution=${distribution.wireName} profile=${profile.id} " +
+                "outcome=${if (result.exitCode == 0) "succeeded" else "failed"} " +
+                "exitCode=${result.exitCode} outputChars=${result.output.length}",
+        )
+        if (result.exitCode != 0 || isReady()) {
+            return@withContext PackageProfileUninstallResult.Failed(PackageProfileInstallStage.INSTALLING)
+        }
+        PackageProfileUninstallResult.Uninstalled
     }
 
     private suspend fun installLocked(
