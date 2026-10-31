@@ -56,6 +56,9 @@ internal object SubagentRunRegistry {
 
     fun screenOwner(): String? = screenOwnerId
 
+    /** 当前存活的子智能体 id 列表（用于输入框的「发给谁」目标切换）。 */
+    fun liveIds(): List<String> = controllers.keys.toList()
+
     /** 该子智能体是否还活着（控制器仍在册）。 */
     fun isAlive(subagentId: String): Boolean = controllers.containsKey(subagentId)
 
