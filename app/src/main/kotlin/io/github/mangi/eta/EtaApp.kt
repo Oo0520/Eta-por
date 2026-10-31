@@ -73,6 +73,9 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         }
         PredictiveBackController.apply(applicationInfo, predictiveBackEnabled)
         AgentMemoryRepository.init(this)
+        // 请求快照与自己配置的存储都需要 applicationContext：漏了这一步会让
+        // 「请求快照」既不写盘也读不到（界面显示 0 份）。
+        io.github.mangi.eta.agent.model.AgentRequestSnapshot.init(this)
         ProviderRepository.init(this)
         McpServerRepository.init(this)
         GitHubAccountManager.init(this)

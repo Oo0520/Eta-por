@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "name": "系统默认（Eta 原始）",
+  "description": "不注入任何自定义内容，等同于清空自定义提示词。",
+  "mode": "APPEND",
+  "base_system_prompt": "",
+  "persona_name": "",
+  "persona_style": "",
+  "append_instructions": "",
+  "tool_mode": "ALLOW_ALL",
+  "allowed_tools": []
+}

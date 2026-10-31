@@ -286,6 +286,7 @@ internal object AgentConversationStore {
         )
     }
 
+
     private val ConversationMetadata.reasoningEffortValue: ReasoningEffort
         get() = ReasoningEffort.fromWireValue(reasoningEffort) ?: ReasoningEffort.DEFAULT
 

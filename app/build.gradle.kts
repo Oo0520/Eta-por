@@ -41,8 +41,8 @@ android {
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
         // 跨零点必须换成当天日期、序号归 01，不能接着前一天的号往下加——
         // 之前从 2026102020 起就一直在沿用 10-20 的日期，日期不再反映实际构建日。
-        versionCode = 2026102401
-        versionName = "3.3.3"
+        versionCode = 2026102611
+        versionName = "3.3.4"
         testInstrumentationRunner = "io.github.mangi.eta.validation.DeviceValidationRunner"
 
         ndk {
@@ -97,6 +97,9 @@ android {
     }
 
     packaging {
+        // 不压缩 dex：上游 3.3.4 开启 useLegacyPackaging 后，APK 小约 4 MB，
+        // 但安装时必须解压并生成完整 vdex（实测多占 8.5 MB），本机长期使用得不偿失。
+        // 只在需要对外分发小包时临时打开。
         jniLibs {
             useLegacyPackaging = true
             keepDebugSymbols += setOf("**/libproot_exec.so", "**/libproot_loader.so", "**/libeta_pty.so")

@@ -1,5 +1,6 @@
 package io.github.mangi.eta.data.provider
 
+import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
 import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
@@ -22,6 +23,7 @@ internal object BuiltinProviders {
     const val SILICONFLOW_ID = "builtin-siliconflow"
     const val OPENROUTER_ID = "builtin-openrouter"
     const val XAI_ID = "builtin-xai"
+    const val GEMINI_ID = "builtin-gemini"
 
     /** 定制版只保留这两条内置：它们用于订阅账号（Codex / Grok）登录，删掉就没有登录入口了。 */
     val SUBSCRIPTION_PROVIDER_IDS: List<String> = listOf(OPENAI_ID, XAI_ID)
@@ -125,6 +127,13 @@ internal object BuiltinProviders {
             sourceType = ProviderSourceTypes.XAI,
             isBuiltIn = true,
             sortOrder = 10,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        GeminiProviderSetting(
+            id = GEMINI_ID,
+            name = "Gemini",
+            isBuiltIn = true,
+            sortOrder = 11,
             systemPrompt = DEFAULT_SYSTEM_PROMPT,
         ),
     )

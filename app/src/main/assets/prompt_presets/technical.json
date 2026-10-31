@@ -1,0 +1,12 @@
+{
+  "schema": 2,
+  "name": "技术 · 代码优先",
+  "description": "涉及操作时直接给可执行命令或代码，并说明失败时的替代方案。",
+  "mode": "APPEND",
+  "base_system_prompt": "",
+  "persona_name": "",
+  "persona_style": "",
+  "append_instructions": "涉及操作时优先给出可执行的命令或代码，说明每一步的作用；给出方案时同时说明失败时的替代路径。",
+  "tool_mode": "ALLOW_ALL",
+  "allowed_tools": []
+}

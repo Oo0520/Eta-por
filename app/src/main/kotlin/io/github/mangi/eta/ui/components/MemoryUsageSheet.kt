@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.device.MemoryProcessProbe
+import io.github.mangi.eta.agent.device.RootAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -67,16 +68,26 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
     val selfPid = remember { Process.myPid() }
     val selfPackage = remember { context.packageName }
     var procs by remember { mutableStateOf<List<MemoryProcessProbe.Proc>>(emptyList()) }
+    var appRows by remember { mutableStateOf<List<AppUsageRow>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var cleaning by remember { mutableStateOf(false) }
+    var usageTick by remember { mutableStateOf(0) }
     var armedPackage by remember { mutableStateOf<String?>(null) }
-    val usage = remember(loaded) { readMemoryUsage(context) }
+    val usage = remember(loaded, usageTick) { readMemoryUsage(context) }
 
     suspend fun reload() {
-        withContext(Dispatchers.IO) { MemoryProcessProbe.snapshot() }.let {
-            procs = it
-            loaded = true
+        // 包名与应用名解析以前放在 composition 里同步跑：每一行两次 PackageManager 调用，
+        // 30 行就是 60 次主线程查询，面板打开会明显卡。现在整段搬到 IO。
+        val (nextProcs, nextRows) = withContext(Dispatchers.IO) {
+            val snapshot = MemoryProcessProbe.snapshot()
+            val usage = MemoryProcessProbe.appUsage(snapshot, MemoryRankLimit)
+            snapshot to resolveAppRows(context, usage, selfPackage)
         }
+        procs = nextProcs
+        appRows = nextRows
+        loaded = true
+        usageTick += 1
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -84,9 +95,8 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
     val children = remember(procs, selfPid) {
         MemoryProcessProbe.descendants(procs, selfPid)
     }
-    val apps = remember(procs, context, selfPackage) {
-        resolveAppRows(context, MemoryProcessProbe.appUsage(procs, MemoryRankLimit), selfPackage)
-    }
+    val builds = remember(procs) { MemoryProcessProbe.buildProcesses(procs) }
+    val apps = appRows
 
     fun terminate(pids: List<Int>) {
         if (pids.isEmpty() || busy) return
@@ -97,6 +107,45 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
             delay(400)
             reload()
             busy = false
+        }
+    }
+
+    fun quickClean() {
+        if (cleaning) return
+        cleaning = true
+        scope.launch {
+            var result = withContext(Dispatchers.IO) { MemoryProcessProbe.quickClean() }
+            if (result.failure == MemoryProcessProbe.CleanFailure.NO_ROOT) {
+                // 之前这里只弹一句"需要 Root"，用户没法在这个界面里恢复；
+                // 现在主动申请一次授权后自动重试。
+                withContext(Dispatchers.IO) { RootAccess.request(context).join() }
+                result = withContext(Dispatchers.IO) { MemoryProcessProbe.quickClean() }
+            }
+            delay(300)
+            reload()
+            cleaning = false
+            // 失败原因分开提示：以前"没授权"和"脚本没跑完"共用一句话，误报过很多次。
+            val message = when {
+                result.failure == MemoryProcessProbe.CleanFailure.NO_ROOT ->
+                    context.getString(R.string.memory_sheet_clean_no_root)
+                result.failure == MemoryProcessProbe.CleanFailure.DENIED ->
+                    context.getString(R.string.memory_sheet_clean_denied)
+                result.failure == MemoryProcessProbe.CleanFailure.TIMEOUT ->
+                    context.getString(R.string.memory_sheet_clean_timeout)
+                result.failure != null ->
+                    context.getString(R.string.memory_sheet_clean_script)
+                result.killedDaemons > 0 && result.killFailed > 0 ->
+                    context.getString(R.string.memory_sheet_clean_partial, result.killedDaemons, result.killFailed)
+                result.killedDaemons == 0 && result.killFailed > 0 ->
+                    context.getString(R.string.memory_sheet_clean_partial, 0, result.killFailed)
+                result.killedDaemons == 0 ->
+                    context.getString(R.string.memory_sheet_clean_none)
+                result.cacheFlushed ->
+                    context.getString(R.string.memory_sheet_clean_ok, result.killedDaemons, result.cacheFreedMb)
+                else ->
+                    context.getString(R.string.memory_sheet_clean_ok_no_cache, result.killedDaemons)
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -144,7 +193,7 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
             )
         }
         Spacer(Modifier.height(6.dp))
-        UsageSummary(usage)
+        UsageSummary(usage = usage, cleaning = cleaning, onClean = ::quickClean)
         Spacer(Modifier.height(10.dp))
         LazyColumn(
             modifier = Modifier
@@ -152,6 +201,21 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
                 .fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 8.dp),
         ) {
+            if (builds.isNotEmpty()) {
+                item(key = "build-title") {
+                    SectionTitle(
+                        stringResource(R.string.memory_sheet_build_title),
+                        trailing = stringResource(
+                            R.string.memory_sheet_build_count,
+                            builds.size,
+                            formatMegabytes(builds.sumOf { it.rssBytes }),
+                        ),
+                    )
+                }
+                items(items = builds, key = { "b-${it.pid}" }) { proc ->
+                    TaskRow(proc = proc, onKill = { terminate(listOf(proc.pid)) })
+                }
+            }
             item(key = "rank-title") {
                 SectionTitle(
                     stringResource(R.string.memory_sheet_rank_title),
@@ -193,6 +257,20 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
                 )
             }
         }
+        if (builds.isNotEmpty()) {
+            TextButton(
+                text = stringResource(R.string.memory_sheet_build_kill_all, builds.size),
+                onClick = { terminate(builds.map { it.pid }) },
+                enabled = !busy,
+                minWidth = 0.dp,
+                minHeight = 36.dp,
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                insideMargin = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+            )
+        }
         if (children.isNotEmpty()) {
             TextButton(
                 text = stringResource(R.string.memory_sheet_kill_all, children.size),
@@ -212,6 +290,9 @@ private fun MemorySheetCard(onDismiss: () -> Unit) {
 
 private const val MemoryRankLimit = 8
 
+/** 超过这个使用率就把「立即清理」标出来，和胶囊/守护脚本的口径一致。 */
+private const val HIGH_PRESSURE_PERCENT = 85
+
 /** 排行里的一行：解析成应用名，并判断能不能释放。 */
 private data class AppUsageRow(
     val packageName: String,
@@ -227,17 +308,22 @@ private fun resolveAppRows(
 ): List<AppUsageRow> {
     val pm = context.packageManager
     return usage.map { item ->
-        val info = runCatching {
-            pm.getPackageInfo(item.packageName, 0).applicationInfo
-        }.getOrNull()
-        val label = info
-            ?.let { app -> runCatching { pm.getApplicationLabel(app).toString() }.getOrNull() }
-            ?.takeIf { it.isNotBlank() }
-            ?: item.packageName
-        // 系统应用（含系统应用更新后的版本）不给释放入口；查不到包信息的进程同样只读。
-        val systemApp = info == null ||
-            (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
-            (info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        // 包名 -> (显示名, 是否系统应用) 缓存：同一包在多次刷新间不再重复查询。
+        val cached = appInfoCache[item.packageName] ?: run {
+            val info = runCatching {
+                pm.getPackageInfo(item.packageName, 0).applicationInfo
+            }.getOrNull()
+            val label = info
+                ?.let { app -> runCatching { pm.getApplicationLabel(app).toString() }.getOrNull() }
+                ?.takeIf { it.isNotBlank() }
+                ?: item.packageName
+            val systemApp = info == null ||
+                (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
+                (info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+            (label to systemApp).also { appInfoCache[item.packageName] = it }
+        }
+        val label = cached.first
+        val systemApp = cached.second
         AppUsageRow(
             packageName = item.packageName,
             label = label,
@@ -248,7 +334,7 @@ private fun resolveAppRows(
 }
 
 @Composable
-private fun UsageSummary(usage: MemoryUsage) {
+private fun UsageSummary(usage: MemoryUsage, cleaning: Boolean, onClean: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -285,6 +371,42 @@ private fun UsageSummary(usage: MemoryUsage) {
                     .fillMaxWidth(usage.usedPercent / 100f)
                     .height(6.dp)
                     .background(MiuixTheme.colorScheme.primary, RoundedCornerShape(3.dp)),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.memory_sheet_percent, usage.usedPercent),
+                style = MiuixTheme.textStyles.body2,
+                fontWeight = FontWeight.Medium,
+                color = MiuixTheme.colorScheme.onSurface,
+            )
+            if (usage.usedPercent >= HIGH_PRESSURE_PERCENT) {
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.memory_sheet_pressure_high),
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.error,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                text = stringResource(
+                    if (cleaning) R.string.memory_sheet_quick_cleaning else R.string.memory_sheet_quick_clean,
+                ),
+                onClick = onClean,
+                enabled = !cleaning,
+                minWidth = 0.dp,
+                minHeight = 30.dp,
+                insideMargin = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+            )
+        }
+        if (usage.usedPercent >= HIGH_PRESSURE_PERCENT) {
+            Text(
+                text = stringResource(R.string.memory_sheet_pressure_note),
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.8f),
             )
         }
         if (usage.swapTotalBytes > 0L) {
@@ -438,3 +560,6 @@ private fun TaskRow(proc: MemoryProcessProbe.Proc, onKill: () -> Unit) {
         )
     }
 }
+
+/** 包名解析缓存：面板每次刷新都重新查 PackageManager 会拖慢打开速度。 */
+private val appInfoCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Boolean>>()

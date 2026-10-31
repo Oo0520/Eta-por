@@ -71,11 +71,12 @@ internal object AgentRunCheckpointStore {
         event: AgentEvent,
         now: Long = System.currentTimeMillis(),
     ) {
+        val durableEvent = event.recoveryProjection() ?: return
         val dao = EtaDatabase.get(context.applicationContext).runtimeRunDao()
         val row = RuntimeInFlightEventEntity(
             runId = runId,
             sortIndex = sortIndex,
-            eventJson = AgentEventJsonCodec.encode(event),
+            eventJson = AgentEventJsonCodec.encode(durableEvent),
         )
         try {
             runBlocking(Dispatchers.IO) { dao.appendInFlightEvent(row, now) }
