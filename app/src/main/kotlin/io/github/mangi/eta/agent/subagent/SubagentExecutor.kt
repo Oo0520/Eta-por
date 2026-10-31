@@ -144,12 +144,16 @@ internal class SubagentExecutor(
                 io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
             }.allowModelSelection
         }.getOrDefault(false)
-        if (allowModelPick && requestedModel != null) {
-            val allowed = runCatching {
+        val allowed = if (allowModelPick) {
+            runCatching {
                 kotlinx.coroutines.runBlocking {
                     io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
                 }.allowedModelIds
             }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        if (allowModelPick && requestedModel != null) {
             // 模型 id 可能带服务商前缀（cn: / openai: …），比较时去掉前缀再比，避免勾选后仍被判未授权。
             val target = normalizeModelId(requestedModel)
             val matched = allowed.isEmpty() || allowed.any { normalizeModelId(it) == target }
@@ -161,6 +165,15 @@ internal class SubagentExecutor(
                     "模型 $requestedModel 没有在子智能体设置里授权；请让用户在「授权模型」里勾选后再派发。",
                 )
             }
+        }
+        if (allowModelPick && allowed.isNotEmpty() && requestedModel == null) {
+            SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+            controllerBinding.close()
+            return errorResult(
+                "SUBAGENT_MODEL_REQUIRED",
+                "已开启「允许主 Agent 为子智能体选择模型」，本次派发必须显式指定 model。" +
+                    "可选：${allowed.joinToString(", ")}；请按任务挑选后重试。",
+            )
         }
         val useOverride = allowModelPick && configForOverride != null &&
             (requestedModel != null || requestedEffort != null)
@@ -193,7 +206,7 @@ internal class SubagentExecutor(
             val encoded = tracker.snapshot().encode()
             latestSnapshots[toolCall.id] = encoded
             // 消息层的更新在切走会话时可能被丢掉，这里再存一份供界面兜底读取。
-            SubagentRunRegistry.publishSnapshot(subagentId, encoded)
+            SubagentRunRegistry.publishSnapshot(subagentId, toolCall.id, encoded)
             onProgress(
                 AgentEvent.SubagentProgress(
                     round = parentRound,

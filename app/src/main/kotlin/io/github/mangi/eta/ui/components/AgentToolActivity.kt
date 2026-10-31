@@ -121,16 +121,32 @@ internal fun ToolActivityRow(
                 output = message.resultSummary.orEmpty(),
             )
         }
-        // 切走会话时进度事件可能被丢掉，气泡就会一直停在旧状态；运行中直接读进程内最新快照。
+        // 切走会话时进度事件可能被丢掉：消息里的快照会停在很早的状态，甚至解析失败退化成
+        // 只有「完成 · N 次工具调用」的占位。所以这里按 toolCallId 从进程内注册表兜底，
+        // 且不受消息状态限制——已结束的子代理同样需要把步骤补回来。
+        val toolCallId = remember(message.id) {
+            Regex("^.*-tool-\\d+-(.+)$").find(message.id)?.groupValues?.getOrNull(1).orEmpty()
+        }
         var liveJson by remember(message.id) { mutableStateOf<String?>(null) }
-        LaunchedEffect(message.id, snapshot.subagentId, snapshot.status) {
-            val id = snapshot.subagentId
-            if (id.isBlank() || snapshot.status != SubagentActivitySnapshot.STATUS_RUNNING) {
+        LaunchedEffect(message.id, toolCallId, snapshot.subagentId, snapshot.status) {
+            if (toolCallId.isBlank() && snapshot.subagentId.isBlank()) {
                 liveJson = null
                 return@LaunchedEffect
             }
             while (true) {
-                liveJson = SubagentRunRegistry.latestSnapshot(id)
+                val live = if (toolCallId.isNotBlank()) {
+                    SubagentRunRegistry.snapshotForToolCall(toolCallId)
+                } else {
+                    SubagentRunRegistry.latestSnapshot(snapshot.subagentId)
+                }
+                if (live != null) liveJson = live
+                val liveStatus = SubagentActivitySnapshot.decode(liveJson)?.status
+                val messageDone = snapshot.status != SubagentActivitySnapshot.STATUS_RUNNING
+                if (messageDone && liveStatus != null &&
+                    liveStatus != SubagentActivitySnapshot.STATUS_RUNNING
+                ) {
+                    return@LaunchedEffect
+                }
                 delay(1000)
             }
         }

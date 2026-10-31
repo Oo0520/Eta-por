@@ -67,11 +67,17 @@ internal object SubagentRunRegistry {
     /** 每个子智能体最近一次进度快照（进程内）。会话切走导致消息更新丢失时，界面靠它兜底。 */
     private val latestSnapshots = ConcurrentHashMap<String, String>()
 
-    fun publishSnapshot(subagentId: String, snapshotJson: String) {
+    /** toolCallId → 最新快照：界面拿到的是工具消息 id，用它反查更可靠。 */
+    private val snapshotByToolCall = ConcurrentHashMap<String, String>()
+
+    fun publishSnapshot(subagentId: String, toolCallId: String?, snapshotJson: String) {
         latestSnapshots[subagentId] = snapshotJson
+        if (!toolCallId.isNullOrBlank()) snapshotByToolCall[toolCallId] = snapshotJson
     }
 
     fun latestSnapshot(subagentId: String): String? = latestSnapshots[subagentId]
+
+    fun snapshotForToolCall(toolCallId: String): String? = snapshotByToolCall[toolCallId]
 
     fun screenOwner(): String? = screenOwnerId
 
