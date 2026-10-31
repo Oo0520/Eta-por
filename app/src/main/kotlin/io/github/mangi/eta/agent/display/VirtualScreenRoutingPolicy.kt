@@ -51,9 +51,10 @@ internal class VirtualScreenRoutingPolicy(initiallyRouted: Boolean = false) {
             "open_system_panel",
             "set_alarm",
             "set_timer",
-            "browser_use",
         )
-        val unavailableTools = setOf("open_system_panel", "set_alarm", "set_timer", "browser_use")
+        // browser_use 操作的是 App 内自有的离屏 WebView，不经虚拟屏窗口转发，
+        // 因此不应算作 UI 工具，也不能因为虚拟屏开启而被判为不可用。
+        val unavailableTools = setOf("open_system_panel", "set_alarm", "set_timer")
         val coordinateTools = setOf(
             "observe_screen",
             "tap",

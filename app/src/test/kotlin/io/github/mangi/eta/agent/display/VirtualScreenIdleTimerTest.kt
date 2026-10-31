@@ -42,7 +42,8 @@ class VirtualScreenIdleTimerTest {
         assertFalse(timer.expired())
         timer.update(20, false)
         assertTrue(timer.expired())
-        assertEquals(20, VirtualScreenIdleTimeout.normalize(-1))
-        assertEquals(listOf(10, 20, 60, 0), VirtualScreenIdleTimeout.options)
+        // 空闲清理默认固定 5 分钟：非法值统一收敛到 5，选项里也保留 5 这一档。
+        assertEquals(5, VirtualScreenIdleTimeout.normalize(-1))
+        assertEquals(listOf(5, 10, 20, 60, 0), VirtualScreenIdleTimeout.options)
     }
 }

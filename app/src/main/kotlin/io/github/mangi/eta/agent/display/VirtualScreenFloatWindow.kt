@@ -38,7 +38,21 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.app.PendingIntent
 import io.github.mangi.eta.R
+import io.github.mangi.eta.agent.display.dashboard.AgentControlMode
+import io.github.mangi.eta.agent.display.dashboard.AgentControlStore
+import io.github.mangi.eta.agent.display.dashboard.AgentDashboardView
+import io.github.mangi.eta.agent.display.dashboard.AgentInjectionGate
+import io.github.mangi.eta.agent.display.dashboard.AgentLiveActivityBridge
+import io.github.mangi.eta.agent.display.dashboard.AgentLiveCoordinator
+import io.github.mangi.eta.agent.display.dashboard.AgentVisionState
+import io.github.mangi.eta.agent.display.dashboard.DashboardEffect
+import io.github.mangi.eta.agent.display.dashboard.DashboardEvent
+import io.github.mangi.eta.agent.display.dashboard.VisionTouch
+import io.github.mangi.eta.agent.runtime.AgentRuntimeService
+import io.github.mangi.eta.agent.runtime.RunControl
+import io.github.mangi.eta.agent.runtime.RunProgressNotifier
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.model.Settings
 import kotlinx.coroutines.CoroutineScope
@@ -72,8 +86,21 @@ internal object VirtualScreenFloatWindow {
     private var borderDrawable: GradientDrawable? = null
     private var surfaceView: VirtualScreenSurfaceView? = null
     private var triggerBar: View? = null
-    private var actionBar: View? = null
     private var dotsButton: View? = null
+
+    // 仪表盘：控制权状态机 + Compose 叠层。浮窗只做宿主，不自己判状态。
+    private var controlStore: AgentControlStore? = null
+    private var dashboardView: AgentDashboardView? = null
+    private var dashboardJob: Job? = null
+    /** 接管全屏期间压住浮窗：否则 overlay 会盖在查看页上面。 */
+    private var suppressed = false
+    /** 接管态：浮窗自己铺满整屏，触摸直通；退出时恢复原来的档位。 */
+    private var takeoverFull = false
+    private var savedW = 0
+    private var savedH = 0
+    private var savedX = 0
+    private var savedY = 0
+    private val dashboardExpanded = kotlinx.coroutines.flow.MutableStateFlow(false)
     /** 凸在窗口上沿外侧的“半圆小帽子”，独立浮层，不被小窗边界裁剪。 */
     private var dotsHat: View? = null
     private var dotsHatParams: WindowManager.LayoutParams? = null
@@ -83,7 +110,7 @@ internal object VirtualScreenFloatWindow {
             rootView?.postDelayed(this, 200L)
         }
     }
-    private val longPress = Runnable { showControlMenu() }
+    private val longPress = Runnable { enterTakeoverFullScreen() }
 
     // 触控直通：单指在画面里就是真手指，两指仍旧缩放小窗，移动小窗改成拖白边框。
     private var touchStreamActive = false
@@ -106,6 +133,13 @@ internal object VirtualScreenFloatWindow {
 
     private var collapsed = false
     private var collapsedSide = SIDE_LEFT
+    /** 贴边后 2 秒无操作再收成一条圆弧。 */
+    private var sinkEnabled = true
+    private var sinked = false
+    /** 上一次看到的运行 id：用于判断任务是否刚结束。 */
+    private var lastRunId: String? = null
+    private var swallowingBubble = false
+    private val sinkRunnable = Runnable { sinkToEdge() }
     /** 拖拽途中已经折叠过：松手不再重复吸附。 */
     private var collapsedDuringDrag = false
     /** 实机键盘桥：虚拟屏要键盘但系统没弹时，用主屏隐形编辑区申请真机输入法。 */
@@ -129,7 +163,6 @@ internal object VirtualScreenFloatWindow {
     private var miniDownWinX = 0
     private var miniDownWinY = 0
 
-    private var isFullScreenActive = false
     private var savedFloatWinX = 16
     private var savedFloatWinY = 120
 
@@ -137,6 +170,13 @@ internal object VirtualScreenFloatWindow {
     private var curWidthDp = 0
     private var curHeightDp = 0
     private val minWidthDp = 72
+
+    /**
+     * 悬浮窗固定档位（内容区短边 dp）。双击在四档间循环，
+     * 不再靠捏合微调，免得每次都得重新掰到「勉强能看清」的大小。
+     */
+    private val sizeTiersDp = listOf(96, 144, 200, 272)
+    private var tierIndex = 0
 
     /** 常规大小档：内容短边 160dp，够手指点按，又不占满屏。 */
     private val NORMAL_INNER_DP = 160f
@@ -146,7 +186,7 @@ internal object VirtualScreenFloatWindow {
     private val maxWidthDp = 420
 
     /** surface 四周留出的边框宽度（dp，单边），窗口尺寸换算时必须扣掉，否则内容区比例 ≠ 内容比例会出现信箱黑边。 */
-    private val BORDER_DP = 6f
+    private val BORDER_DP = 0f
 
     /** 长边最多占屏幕对应边长的比例；留出余量，保证横屏后单指拖拽仍有可移动空间。 */
     private val MAX_LONG_SCREEN_RATIO = 0.85f
@@ -209,6 +249,12 @@ internal object VirtualScreenFloatWindow {
         if (context != null) return
         context = appContext.applicationContext
         context?.registerComponentCallbacks(configCallback)
+        if (controlStore == null) {
+            val store = AgentControlStore()
+            controlStore = store
+            AgentLiveCoordinator.attach(store)
+            scope.launch { store.effects.collect { handleEffect(it) } }
+        }
         observeJob = scope.launch {
             combine(SettingsDataStore.settingsFlow(), VirtualScreenSession.state) { s, v -> s to v }
                 .collect { (settings, vsState) ->
@@ -216,14 +262,25 @@ internal object VirtualScreenFloatWindow {
                     edgeCollapseEnabled = settings.virtualScreenFloatEdgeCollapseEnabled
                     windowAlpha = settings.virtualScreenFloatWindowAlpha.coerceIn(0.1f, 1.0f)
                     val next = vsState.display
+                    // 任务刚结束（有 run → 无 run）就主动收起浮窗，别把最后一帧留在屏幕上。
+                    val runId = vsState.activeRunId
+                    if (runId == null && lastRunId != null && !takeoverFull) {
+                        VscrDiag.line("任务结束，收起浮窗")
+                        lastRunId = null
+                        hide()
+                        return@collect
+                    }
+                    lastRunId = runId
                     when {
+                        suppressed -> Unit
                         !settings.virtualScreenFloatWindowEnabled || next == null -> hide()
-                        isFullScreenActive -> Unit
                         next.sessionId != info?.sessionId -> show(next, settings)
                         else -> {
                             val shapeChanged = info?.let { it.width != next.width || it.height != next.height } == true
                             info = next
-                            rootView?.alpha = windowAlpha
+                            // 接管态要 100% 不透明；这里如果无脑写回 windowAlpha，
+                            // 会话状态每变一次就把透明度打回 0.85（实测就是这个原因）。
+                            rootView?.alpha = if (takeoverFull) 1f else windowAlpha
                             // 虚拟屏横竖变了，画面控件必须同步拿到新尺寸：TextureView 的默认缓冲尺寸按它设置，
                             // 留着旧的竖屏尺寸就会把横屏合成结果塞进竖缓冲里，看着只有左边一条。
                             surfaceView?.setDisplayInfo(next)
@@ -231,37 +288,8 @@ internal object VirtualScreenFloatWindow {
                             if (shapeChanged) fitContentShape(next)
                         }
                     }
+                    syncControl(vsState)
                 }
-        }
-    }
-
-    private fun enterFullScreen() {
-        val p = lp ?: return
-        savedFloatWinX = p.x
-        savedFloatWinY = p.y
-        isFullScreenActive = true
-        hide()
-        runCatching {
-            context?.startActivity(
-                Intent(context, VirtualScreenViewerActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        }
-    }
-
-    fun exitFullScreen() {
-        if (!isFullScreenActive) return
-        isFullScreenActive = false
-        val display = VirtualScreenSession.state.value.display
-        val settings = cachedSettings ?: return
-        if (display != null) {
-            show(display, settings)
-            lp?.let { p ->
-                p.x = savedFloatWinX
-                p.y = savedFloatWinY
-                runCatching { wm?.updateViewLayout(rootView, p) }
-            }
-            clampToScreen()
         }
     }
 
@@ -328,7 +356,8 @@ internal object VirtualScreenFloatWindow {
         borderDrawable = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = cornerRadiusPx(dp(curWidthDp.toFloat()), dp(curHeightDp.toFloat()))
-            setColor(0xB3FFFFFF.toInt())
+            // 无边框：只留形状给圆角裁剪用，颜色全透明。
+            setColor(0x00000000)
         }
         root.background = borderDrawable
         root.alpha = windowAlpha
@@ -343,7 +372,9 @@ internal object VirtualScreenFloatWindow {
         surface.setOnTouchListener { _, ev -> onSurfaceTouch(ev) }
         val appContext = ctx.applicationContext
         surface.onHostSurface = { host ->
-            VirtualScreenHostSurfaces.attach("float", host)
+            VirtualScreenHostSurfaces.attach(
+                VirtualScreenSession.currentOwner().orEmpty(), "float", host,
+            )
             val live = VirtualScreenHostSurfaces.live && host != null
             surface.post { surface.setDirectMode(live) }
             if (VirtualScreenHostSurfaces.live) {
@@ -363,105 +394,20 @@ internal object VirtualScreenFloatWindow {
                 setColor(0xCC3D3D3D.toInt())
                 setStroke(dp(1f), 0x55FFFFFF.toInt())
             }
+            // 收起时换成应用图标：必须裁成圆形，方形图标贴在屏幕上很突兀。
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            clipToOutline = true
         }
         // 气泡态：整块都是“点开 / 上下拖”；展开态仍是原来的拖动把手。
         trigger.setOnTouchListener { _, ev -> if (collapsed) onBubbleTouch(ev) else onTriggerTouch(ev); true }
         root.addView(trigger, FrameLayout.LayoutParams(dp(35f), dp(35f), Gravity.START or Gravity.CENTER_VERTICAL))
 
-        // 顶部中间的“⋮”：点一下弹出【全屏／常规大小／关闭】。
-        val dots = object : View(ctx) {
-            private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-            override fun onDraw(canvas: android.graphics.Canvas) {
-                val w = width.toFloat()
-                val h = height.toFloat()
-                // 画一个直径=宽度的圆，下半个被窗口裁掉，露出来的正好是上半圆“小帽子”。
-                paint.style = android.graphics.Paint.Style.FILL
-                paint.color = 0xCC1C1C1E.toInt()
-                canvas.drawRoundRect(0f, 0f, w, w, w / 2f, w / 2f, paint)
-                paint.color = 0xFFFFFFFF.toInt()
-                val r = h * 0.09f
-                val gap = w * 0.10f
-                val cy = h * 0.50f
-                canvas.drawCircle(w / 2f - gap, cy, r, paint)
-                canvas.drawCircle(w / 2f, cy, r, paint)
-                canvas.drawCircle(w / 2f + gap, cy, r, paint)
-            }
-        }.apply { alpha = 0.9f; isClickable = true }
-        // 轻点“⋮”＝菜单；长按（或原地拖 12px）＝搬小窗，松手只在对齐屏幕边缘时才吸附。
-        dots.setOnTouchListener { _, ev ->
-            val win = lp ?: return@setOnTouchListener false
-            // 折叠态 ⋮ 是隐藏的，真漏进来也交给气泡逻辑，别让它吃掉手势。
-            if (collapsed) return@setOnTouchListener onBubbleTouch(ev)
-            when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    dots.animate().alpha(1f).setDuration(120L).start()
-                    dotsDragMode = false
-                    downRawX = ev.rawX; downRawY = ev.rawY
-                    downWinX = win.x; downWinY = win.y; dragMoved = false
-                    dots.postDelayed(dotsLongPress, 450L)
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (ev.rawX - downRawX).roundToInt()
-                    val dy = (ev.rawY - downRawY).roundToInt()
-                    if (!dotsDragMode && (abs(dx) > 12 || abs(dy) > 12)) {
-                        dots.removeCallbacks(dotsLongPress)
-                        dotsDragMode = true
-                    }
-                    if (dotsDragMode) {
-                        if (abs(dx) > 3 || abs(dy) > 3) dragMoved = true
-                        win.x = (downWinX + dx).coerceIn(0, (screenW() - win.width).coerceAtLeast(0))
-                        win.y = (downWinY + dy).coerceIn(0, (screenH() - win.height).coerceAtLeast(0))
-                        runCatching { wm?.updateViewLayout(rootView, win) }
-                        // 碰到左右边缘立刻收成气泡，不用等松手。
-                        if (collapseIfAtEdge()) {
-                            collapsedDuringDrag = true; dragMoved = true
-                            dots.removeCallbacks(dotsLongPress)
-                        }
-                    }
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    dots.animate().alpha(0.9f).setDuration(700L).start()
-                    dots.removeCallbacks(dotsLongPress)
-                    if (dotsDragMode) {
-                        val snapped = collapsedDuringDrag
-                        collapsedDuringDrag = false
-                        if (!snapped && dragMoved) snapToEdge()
-                    } else if (ev.actionMasked == MotionEvent.ACTION_UP) {
-                        if (actionBar != null) hideActionBar() else showControlMenu()
-                    }
-                    dotsDragMode = false
-                }
-            }
-            true
-        }
-        val hatParams = WindowManager.LayoutParams(
-            dp(44f), dp(22f),
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-        // 帽子优先内嵌到小窗顶部：不依赖独立 overlay 窗口，横竖屏都必然可见。
-        var hatOk = runCatching {
-            root.addView(dots, FrameLayout.LayoutParams(dp(44f), dp(22f), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        }.isSuccess
-        VscrDiag.line("帽子 内嵌=" + hatOk)
-        if (!hatOk) {
-            hatOk = try {
-                wm?.addView(dots, hatParams); true
-            } catch (t: Throwable) {
-                VscrDiag.line("帽子 浮层 addView 失败 " + t)
-                false
-            }
-            if (hatOk) {
-                dotsHat = dots
-                dotsHatParams = hatParams
-            } else {
-                VscrDiag.line("帽子 两种挂法都失败")
-            }
-        }
-        dotsButton = dots
+        // 旧的“⋮”帽子（全屏/常规大小/键盘/关闭）已彻底移除：
+        // 入口改为顶部状态栏 + 长按白边框，避免再留下点不动的装饰。
 
         // 实机键盘桥：隐形编辑区只负责向系统申请真机输入法，提交的文字再回灌虚拟屏。
         val imeSink = ImeSinkView(ctx, { text -> forwardText(text) }, { code -> forwardKey(code) }).apply {
@@ -471,6 +417,8 @@ internal object VirtualScreenFloatWindow {
         }
         root.addView(imeSink, FrameLayout.LayoutParams(dp(1f), dp(1f), Gravity.TOP or Gravity.START))
         imeSinkView = imeSink
+        runCatching { attachDashboard(root, next) }
+            .onFailure { VscrDiag.line("仪表盘挂载失败 " + it) }
         // 只认系统 inset：IME 真的在屏上才算“键盘出来了”。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             root.setOnApplyWindowInsetsListener { _, insets ->
@@ -514,7 +462,11 @@ internal object VirtualScreenFloatWindow {
         rootView?.let { runCatching { wm?.removeView(it) } }
         dotsHat?.let { v -> runCatching { wm?.removeView(v) } }
         dotsHat = null; dotsHatParams = null
-        rootView = null; surfaceView = null; triggerBar = null; lp = null; actionBar = null; dotsButton = null
+        dashboardJob?.cancel()
+        dashboardJob = null
+        dashboardView = null
+        dashboardExpanded.value = false
+        rootView = null; surfaceView = null; triggerBar = null; lp = null; dotsButton = null
         info = null; lastFrameId = 0; collapsed = false; frameAspect = 0f
         stopTouchPump()
         stopTiltWatcher()
@@ -635,27 +587,29 @@ internal object VirtualScreenFloatWindow {
      * 触控直通：画面里的单指就是真手指，点按、长按、拖动都由虚拟屏里的应用处理。
      * 两指仍旧缩放小窗；移动小窗改成拖白边框。
      */
+    /**
+     * 画面区触摸。
+     *
+     * 小窗只做观察：单指拖动搬窗、点一下展开工具栏，绝不把手指灌进虚拟屏里的 App
+     * （误触会真的点掉别人的按钮）。要亲手操作，点「接管控制」进全屏。
+     * 双指仍然缩放窗口尺寸。
+     */
+    /**
+     * 画面区触摸。
+     *
+     * - 普通态：只观察。单指拖动搬窗、双击切换档位、长按进全屏接管；绝不注入。
+     * - 接管态：全屏铺开，手指直通虚拟屏（只有这一种情况会注入）。
+     * 双指缩放已移除：大小改用固定档位循环。
+     */
     private fun onSurfaceTouch(ev: MotionEvent): Boolean {
         if (collapsed) return false
-        if (ev.pointerCount >= 2) {
-            if (touchStreamActive) {
-                touchStreamActive = false
-                sendTouch("cancel", lastTouchX, lastTouchY)
-            }
-            scaleDetector.onTouchEvent(ev)
-            return true
-        }
-        if (scaleDetector.isInProgress && ev.actionMasked != MotionEvent.ACTION_DOWN) return true
-        // 小窗（最小档）下彻底关闭触控直通：单指只搬动小窗，点一下=放大，双指=缩放窗口尺寸。
-        // 只有放大到常规大小后，单指才重新直通给虚拟屏里的应用。
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) miniGesture = isMinimalSize()
-        if (miniGesture) {
-            if (touchStreamActive) {
-                touchStreamActive = false
-                sendTouch("cancel", lastTouchX, lastTouchY)
-            }
-            return onMiniTouch(ev)
-        }
+        if (takeoverFull) return onTakeoverTouch(ev)
+        if (ev.pointerCount >= 2) return true
+        return onObserveTouch(ev)
+    }
+
+    /** 接管态直通：只有这里会把手指写进虚拟屏。 */
+    private fun onTakeoverTouch(ev: MotionEvent): Boolean {
         val view = surfaceView ?: return false
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -664,10 +618,7 @@ internal object VirtualScreenFloatWindow {
                 lastTouchY = pt.y.toFloat()
                 touchStreamActive = true
                 sendTouch("down", lastTouchX, lastTouchY)
-                // 点了内容之后核对一次：虚拟屏要键盘而系统没弹，就由主屏接手。
-                offerImeBridge()
             }
-
             MotionEvent.ACTION_MOVE -> {
                 if (!touchStreamActive) return true
                 val pt = view.toDisplay(ev.x, ev.y, clamp = true) ?: return true
@@ -675,7 +626,6 @@ internal object VirtualScreenFloatWindow {
                 lastTouchY = pt.y.toFloat()
                 sendTouch("move", lastTouchX, lastTouchY)
             }
-
             MotionEvent.ACTION_UP -> {
                 if (!touchStreamActive) return true
                 view.toDisplay(ev.x, ev.y, clamp = true)?.let {
@@ -685,17 +635,56 @@ internal object VirtualScreenFloatWindow {
                 touchStreamActive = false
                 sendTouch("up", lastTouchX, lastTouchY)
             }
+            MotionEvent.ACTION_CANCEL -> cancelTouchStream()
+        }
+        return true
+    }
 
-            MotionEvent.ACTION_CANCEL -> {
-                if (!touchStreamActive) return true
-                touchStreamActive = false
-                sendTouch("cancel", lastTouchX, lastTouchY)
+    /** 观察态手势：拖动 = 搬窗，轻点 = 最小档放大，否则展开/收起工具栏。 */
+    private fun onObserveTouch(ev: MotionEvent): Boolean {
+        val p = lp ?: return true
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                miniDownRawX = ev.rawX; miniDownRawY = ev.rawY
+                miniDownWinX = p.x; miniDownWinY = p.y
+                miniMoved = false
+                rootView?.postDelayed(longPress, 550)
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val dx = (ev.rawX - miniDownRawX).roundToInt()
+                val dy = (ev.rawY - miniDownRawY).roundToInt()
+                if (abs(dx) > 4 || abs(dy) > 4) miniMoved = true
+                if (miniMoved) {
+                    cancelLongPress()
+                    p.x = (miniDownWinX + dx).coerceIn(0, (screenW() - p.width).coerceAtLeast(0))
+                    p.y = (miniDownWinY + dy).coerceIn(0, (screenH() - p.height).coerceAtLeast(0))
+                    runCatching { wm?.updateViewLayout(rootView, p) }
+                    if (collapseIfAtEdge()) collapsedDuringDrag = true
+                }
+            }
+
+            MotionEvent.ACTION_UP -> {
+                cancelLongPress()
+                val snapped = collapsedDuringDrag
+                collapsedDuringDrag = false
+                if (!miniMoved) {
+                    if (detectDoubleTap(ev)) cycleSizeTier()
+                } else if (!snapped) {
+                    savedFloatWinX = p.x; savedFloatWinY = p.y
+                    scope.launch {
+                        runCatching {
+                            SettingsDataStore.updateSettings {
+                                it.copy(virtualScreenFloatWindowPosX = p.x, virtualScreenFloatWindowPosY = p.y)
+                            }
+                        }
+                    }
+                }
             }
         }
         return true
     }
 
-    /** 当前是否最小档（内容区短边≈minWidthDp）。 */
     private fun isMinimalSize(): Boolean {
         val aspect = contentAspect()
         val inner = (if (aspect >= 1f) curHeightDp else curWidthDp) - BORDER_DP * 2f
@@ -730,7 +719,7 @@ internal object VirtualScreenFloatWindow {
                 val snapped = collapsedDuringDrag
                 collapsedDuringDrag = false
                 if (!miniMoved) {
-                    tapToggleSize()
+                    cycleSizeTier()
                 } else {
                     if (!snapped) { if (edgeCollapseEnabled) maybeCollapse() else snapToEdge() }
                     savedFloatWinX = p.x; savedFloatWinY = p.y
@@ -749,7 +738,6 @@ internal object VirtualScreenFloatWindow {
 
     private fun onBorderTouch(ev: MotionEvent): Boolean {
         if (collapsed) return onBubbleTouch(ev)
-        scaleDetector.onTouchEvent(ev)
         val p = lp ?: return true
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -757,16 +745,15 @@ internal object VirtualScreenFloatWindow {
                 downWinX = p.x; downWinY = p.y
                 dragMoved = false
                 // 操作条在就表示用户正要选动作：这一下只用来收起它，不重新计时。
-                if (actionBar != null) hideActionBar() else rootView?.postDelayed(longPress, 550)
+                rootView?.postDelayed(longPress, 550)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = (ev.rawX - downRawX).roundToInt()
                 val dy = (ev.rawY - downRawY).roundToInt()
                 if (abs(dx) > 4 || abs(dy) > 4) dragMoved = true
                 if (dragMoved) cancelLongPress()
-                if (scaleDetector.isInProgress) cancelLongPress()
                 if (collapsedDuringDrag) return true
-                if (dragMoved && !scaleDetector.isInProgress) {
+                if (dragMoved) {
                     // 拖拽全程限制在屏幕内：一碰到左右边缘就立刻收成气泡。
                     p.x = (downWinX + dx).coerceIn(0, (screenW() - p.width).coerceAtLeast(0))
                     p.y = (downWinY + dy).coerceIn(0, (screenH() - p.height).coerceAtLeast(0))
@@ -779,7 +766,7 @@ internal object VirtualScreenFloatWindow {
                 val snapped = collapsedDuringDrag
                 collapsedDuringDrag = false
                 if (!dragMoved) {
-                    if (detectDoubleTap(ev)) enterFullScreen() else tapToggleSize()
+                    if (detectDoubleTap(ev)) cycleSizeTier()
                 } else {
                     if (!snapped) { if (edgeCollapseEnabled) maybeCollapse() else snapToEdge() }
                     savedFloatWinX = p.x; savedFloatWinY = p.y
@@ -1003,6 +990,18 @@ internal object VirtualScreenFloatWindow {
 
     /** 气泡状态：整块都是热区。点一下放大，上下拖仍在同一边贴边。 */
     private fun onBubbleTouch(ev: MotionEvent): Boolean {
+        // 收纳态的第一下只负责恢复成图标气泡，整段手势吞掉，避免同一手势又触发展开。
+        if (sinked && ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            restoreFromSink()
+            swallowingBubble = true
+            return true
+        }
+        if (swallowingBubble) {
+            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
+                swallowingBubble = false
+            }
+            return true
+        }
         val p = lp ?: return true
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -1209,77 +1208,213 @@ internal object VirtualScreenFloatWindow {
         runCatching { rootView?.removeCallbacks(longPress) }
     }
 
-    private fun hideActionBar() {
-        actionBar?.let { bar -> runCatching { wm?.removeView(bar) } }
-        actionBar = null
+    /**
+     * 旧的居中菜单（全屏 / 常规大小 / 键盘 / 关闭）已废弃。
+     * 轻点“⋮”（已隐藏）或长按白边框，统一改到「展开/收起底部工具栏」。
+     */
+    private fun toggleDashboardToolbar() {
+        if (collapsed) return
+        dashboardExpanded.value = !dashboardExpanded.value
+        VscrDiag.line("仪表盘 工具栏展开=" + dashboardExpanded.value)
     }
 
-    /** 顶部“⋮”菜单：全屏 / 常规大小 / 关闭。长按小窗唤出的是同一个菜单。 */
-    private fun showControlMenu() {
-        val root = rootView ?: return
+    /**
+     * 接管：先把控制权收过来（关 AI 注入门、暂停运行时），再把浮窗藏起来，
+     * 拉起全屏查看页让用户亲手操作 —— 小窗里永远不直接注入。
+     */
+    /**
+     * 接管：浮窗自己铺满整屏（不跳转别的界面），触摸直通，顶栏显示「你正在操作」。
+     * 退出（顶栏 ← 或系统返回）时恢复原档位并把控制权交还 AI。
+     */
+    /**
+     * 接管：进独立的全屏接管页（TakeoverActivity），浮窗先收起。
+     * 不再把浮窗拉成全屏 —— 那是这两天反复出问题的根源。
+     */
+    private fun enterTakeoverFullScreen() {
         val ctx = context ?: return
-        if (collapsed) return
-        if (actionBar != null) { hideActionBar(); return }
-        val density = ctx.resources.displayMetrics.density
-        fun dp(v: Float) = (v * density).roundToInt()
-        val menu = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(20f).toFloat()
-                setColor(0xE61C1C1E.toInt())
-                setStroke(dp(1f), 0x1AFFFFFF)
-            }
-            elevation = dp(16f).toFloat()
-            setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
-            var firstItem = true
-            fun add(label: String, onClick: () -> Unit) {
-                if (!firstItem) {
-                    addView(View(ctx).apply { setBackgroundColor(0x1AFFFFFF) },
-                        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1f)).apply {
-                            leftMargin = dp(16f); rightMargin = dp(16f)
-                        })
+        cancelTouchStream()
+        suppressed = true
+        hide()
+        TakeoverActivity.launch(ctx)
+        VscrDiag.line("接管 转独立页")
+    }
+
+    /** 接管页关闭后恢复浮窗（会话仍在时重新出现）。 */
+    fun resumeAfterTakeover() {
+        scope.launch {
+            suppressed = false
+            val display = VirtualScreenSession.state.value.display ?: return@launch
+            val settings = cachedSettings ?: return@launch
+            show(display, settings)
+        }
+    }
+
+    /** 顶栏 ×：结束这次虚拟屏会话并收起浮窗。 */
+    private fun closeVirtualScreen() {
+        val owner = VirtualScreenSession.state.value.display?.owner
+        runCatching {
+            if (owner.isNullOrBlank()) VirtualScreenSession.revokePermission()
+            else VirtualScreenSession.closeOwner(owner)
+        }
+        takeoverFull = false
+        rootView?.alpha = windowAlpha
+        rootView?.background = borderDrawable
+        hide()
+    }
+
+    /**
+     * 兜底看护：会话已经不存在，但浮窗还在屏幕上（定格最后一帧）时强制收起。
+     * 这类状态机漏更新从外部看不出来，只能靠周期校验兜住。
+     */
+    private fun startOrphanWatch() {
+        scope.launch {
+            while (true) {
+                delay(2000)
+                val showing = rootView != null
+                if (!showing) continue
+                if (takeoverFull) continue
+                if (!VirtualScreenSession.isActive()) {
+                    VscrDiag.line("浮窗兜底 会话已结束，收起浮窗")
+                    hide()
                 }
-                firstItem = false
-                addView(actionButton(ctx, label, onClick), LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, dp(44f),
-                ))
-            }
-            add(ctx.getString(R.string.virtual_screen_action_fullscreen)) {
-                hideActionBar()
-                enterFullScreen()
-            }
-            add(ctx.getString(R.string.virtual_screen_action_normal)) {
-                hideActionBar()
-                restoreNormalSize()
-            }
-            add(if (imeVisible) "收起键盘" else "弹出键盘") {
-                hideActionBar()
-                if (imeVisible) closeImeBridge() else openImeBridge()
-            }
-            add(ctx.getString(R.string.virtual_screen_action_close)) {
-                hideActionBar()
-                val owner = VirtualScreenSession.state.value.display?.owner
-                if (owner.isNullOrBlank()) VirtualScreenSession.revokePermission()
-                else VirtualScreenSession.closeOwner(owner)
-                hide()
             }
         }
-        val anchor = lp
-        val menuW = dp(148f)
-        val menuParams = WindowManager.LayoutParams(
-            menuW, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = ((anchor?.x ?: 0) + (expandedWidthPx() - menuW) / 2).coerceIn(0, (screenW() - menuW).coerceAtLeast(0))
-            y = ((anchor?.y ?: 0) + dp(36f)).coerceIn(0, (screenH() - dp(240f)).coerceAtLeast(0))
+    }
+
+    private fun attachDashboard(root: FrameLayout, display: VirtualDisplayInfo) {
+        val ctx = context ?: return
+        val store = controlStore ?: return
+        if (dashboardView != null) return
+        val view = AgentDashboardView(ctx).apply {
+            onExit = { closeVirtualScreen() }
+            onClose = { closeVirtualScreen() }
+            // 接管 / 终止已挪到流体云；长按画面进全屏由 onObserveTouch 处理。
         }
-        runCatching { wm?.addView(menu, menuParams) }
-        actionBar = menu
-        // 不自动消失：留着直到点了某一项，或点小窗别处收起。
+        root.addView(
+            view,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        dashboardView = view
+        dashboardJob?.cancel()
+        dashboardJob = scope.launch {
+            combine(store.state, VirtualScreenSession.state, dashboardExpanded) { s, v, e -> Triple(s, v, e) }
+                .collect { (dash, vs, isExpanded) ->
+                    val target = vs.display ?: display
+                    view.render(dash, visionOf(vs), target.width, target.height, isExpanded, takeoverFull)
+                }
+        }
+    }
+
+    /** 会话里的手势就是 Agent 的“视线”：最近 1.2 秒内的落点画成 ripple。 */
+    private fun visionOf(vs: VirtualScreenViewerState): AgentVisionState {
+        val display = vs.display ?: return AgentVisionState()
+        val gesture = vs.gesture
+        val age = if (gesture != null) SystemClock.elapsedRealtime() - gesture.startedAt else Long.MAX_VALUE
+        return AgentVisionState(
+            displayWidth = display.width,
+            displayHeight = display.height,
+            touch = if (gesture != null && age in 0..1200L) {
+                VisionTouch(gesture.x, gesture.y, gesture.startedAt, gesture.action)
+            } else {
+                null
+            },
+        )
+    }
+
+    private fun handleEffect(effect: DashboardEffect) {
+        val ctx = context ?: return
+        when (effect) {
+            DashboardEffect.CloseInjectionGate -> AgentInjectionGate.close()
+            DashboardEffect.OpenInjectionGate -> AgentInjectionGate.open()
+            DashboardEffect.CancelInflightTouch -> cancelTouchStream()
+            // 按会话下发：并发时只动自己这一条，别把别人的 run 一起暂停/停掉。
+            DashboardEffect.PauseRuntime -> withRunId { runId ->
+                if (!RunControl.state.value.isPaused(runId)) {
+                    sendRuntimeAction(AgentRuntimeService.ACTION_PAUSE_RUN, runId)
+                }
+            }
+            DashboardEffect.ResumeRuntime -> withRunId { runId ->
+                if (RunControl.state.value.isPaused(runId)) {
+                    sendRuntimeAction(AgentRuntimeService.ACTION_RESUME_RUN, runId)
+                }
+            }
+            DashboardEffect.StopRuntime -> withRunId { runId ->
+                sendRuntimeAction(AgentRuntimeService.ACTION_STOP_RUN, runId)
+            }
+            is DashboardEffect.PublishLive -> AgentLiveActivityBridge.publish(ctx, effect.spec)
+            DashboardEffect.ClearLive -> AgentLiveActivityBridge.clear(ctx)
+            // 半屏确认页与指令回传属于下一批：先把浮窗入口跑通。
+            is DashboardEffect.OpenConfirmSheet -> Unit
+            is DashboardEffect.EmitSteer -> Unit
+            is DashboardEffect.Notice -> Unit
+        }
+    }
+
+    /** 仪表盘 effect 只作用于当前这张卡对应的 run；没有 runId 就什么也不做。 */
+    private inline fun withRunId(block: (String) -> Unit) {
+        val runId = controlStore?.state?.value?.runId.orEmpty()
+        if (runId.isNotBlank()) block(runId)
+    }
+
+    /** 主屏侧发运行时动作：和流体云按钮同一条通道，避免多一条状态路径。 */
+    private fun sendRuntimeAction(action: String, runId: String = "") {
+        val ctx = context ?: return
+        scope.launch {
+            runCatching {
+                val intent = Intent(ctx, AgentRuntimeService::class.java).setAction(action)
+                if (runId.isNotBlank()) {
+                    intent.putExtra(AgentRuntimeService.EXTRA_RUN_ID, runId)
+                }
+                PendingIntent.getService(
+                    ctx,
+                    (action + runId).hashCode(),
+                    intent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ).send()
+            }.onFailure { VscrDiag.line("运行时动作失败 " + action + " " + it) }
+        }
+    }
+
+    private fun cancelTouchStream() {
+        if (!touchStreamActive) return
+        touchStreamActive = false
+        sendTouch("cancel", lastTouchX, lastTouchY)
+    }
+
+    /** 用户一碰画面就抢占控制权：先关 AI 的门，再让这一下照常直通。 */
+    private fun preemptForUser() {
+        val store = controlStore ?: return
+        if (store.state.value.mode == AgentControlMode.AI_RUNNING) {
+            store.dispatch(DashboardEvent.UserPressedContent)
+        }
+    }
+
+    /** 会话状态 → 仪表盘状态：只在阶段切换时发事件，别每帧都改。 */
+    private fun syncControl(vs: VirtualScreenViewerState) {
+        val store = controlStore ?: return
+        val current = store.state.value
+        val runId = vs.activeRunId
+        if (vs.taskPhase == VirtualScreenTaskPhase.RUNNING && runId != null && current.runId != runId) {
+            // 会话 key 取自 RunControl 的绑定表：接管卡与进度卡据此落到同一个通知 ID。
+            store.dispatch(
+                DashboardEvent.RunStarted(
+                    runId = runId,
+                    sessionId = vs.display?.sessionId.orEmpty(),
+                    conversationKey = RunControl.state.value.conversationOfRun[runId].orEmpty(),
+                ),
+            )
+            RunProgressNotifier.delegateToVirtualScreen(runId, true)
+        } else if (vs.taskPhase != VirtualScreenTaskPhase.RUNNING && current.runId != null) {
+            val finishedRunId = current.runId.orEmpty()
+            store.dispatch(DashboardEvent.RunFinished(vs.taskPhase == VirtualScreenTaskPhase.COMPLETED))
+            RunProgressNotifier.delegateToVirtualScreen(finishedRunId, false)
+        }
+        val step = vs.operations.lastOrNull()?.name
+        if (vs.taskPhase == VirtualScreenTaskPhase.RUNNING && !step.isNullOrBlank() && step != current.step) {
+            store.dispatch(DashboardEvent.StepChanged(step, vs.operations.size, 0))
+        }
     }
 
     /** 回到“常规大小”（内容短边 160dp）：放大后单指触控才恢复直通。 */
@@ -1296,27 +1431,6 @@ internal object VirtualScreenFloatWindow {
         applySize()
         clampToScreen()
         VscrDiag.line("常规大小 外框=" + curWidthDp + "x" + curHeightDp + "dp")
-    }
-
-    private fun actionButton(ctx: Context, label: String, onClick: () -> Unit): TextView {
-        val density = ctx.resources.displayMetrics.density
-        fun dp(v: Float) = (v * density).roundToInt()
-        val pressedBg = GradientDrawable().apply { cornerRadius = dp(14f).toFloat(); setColor(0x14FFFFFF) }
-        val normalBg = GradientDrawable().apply { cornerRadius = dp(14f).toFloat(); setColor(0x00000000) }
-        val bgStates = StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_pressed), pressedBg)
-            addState(intArrayOf(), normalBg)
-        }
-        return TextView(ctx).apply {
-            text = label
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 14f
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16f), 0, dp(16f), 0)
-            background = bgStates
-            isClickable = true
-            setOnClickListener { onClick() }
-        }
     }
 
     /**
@@ -1341,10 +1455,10 @@ internal object VirtualScreenFloatWindow {
         runCatching { wm?.updateViewLayout(v, hp) }
     }
 
+    /** 旧的“⋮”帽子已由顶部状态栏取代，恒隐藏；调用点保留，折叠/展开流程不用改。 */
     private fun setDotsHatVisible(on: Boolean) {
         val v = dotsHat ?: dotsButton ?: return
-        v.visibility = if (on) View.VISIBLE else View.GONE
-        if (on) syncDotsHat()
+        v.visibility = View.GONE
     }
 
     private fun collapse(side: Int) {
@@ -1353,6 +1467,20 @@ internal object VirtualScreenFloatWindow {
         collapsed = true; collapsedSide = side
         preCollapseX = p.x; preCollapseY = p.y
         surfaceView?.visibility = View.GONE
+        // 气泡只有 35dp：仪表盘不藏起来会盖满整个气泡，点哪儿都像没反应。
+        dashboardView?.visibility = View.GONE
+        // 收起后用被投屏应用的图标，而不是一个灰圆；取不到就退回 Eta 自己的图标（一定有）。
+        runCatching {
+            val icon = focusedAppIcon() ?: context?.let { ctx ->
+                runCatching { ctx.packageManager.getApplicationIcon(ctx.packageName) }.getOrNull()
+            }
+            if (icon != null) {
+                triggerBar?.background = icon
+                VscrDiag.line("收气泡 图标=" + (VirtualScreenSession.state.value.display?.focusedPackage ?: "self"))
+            } else {
+                VscrDiag.line("收气泡 图标为空")
+            }
+        }
         triggerBar?.visibility = View.VISIBLE
         (triggerBar?.layoutParams as? FrameLayout.LayoutParams)?.gravity =
             if (side == SIDE_LEFT) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.END or Gravity.CENTER_VERTICAL
@@ -1365,13 +1493,19 @@ internal object VirtualScreenFloatWindow {
         // 气泡阶段 ⋮ 藏起来，整块热区都归“点开 / 上下拖”。
         setDotsHatVisible(false)
         closeImeBridge()
+        sinked = false
+        rootView?.removeCallbacks(sinkRunnable)
+        if (sinkEnabled) rootView?.postDelayed(sinkRunnable, 2000L)
         VscrDiag.line("折叠成气泡 side=" + side + " 位置=" + p.x + "," + p.y + " 边长=" + bubble + " 屏宽=" + screenW() + " 窗宽=" + p.width)
     }
 
     private fun expand() {
         val p = lp ?: return
+        rootView?.removeCallbacks(sinkRunnable)
+        sinked = false
         collapsed = false
         surfaceView?.visibility = View.VISIBLE
+        dashboardView?.visibility = View.VISIBLE
         triggerBar?.visibility = View.GONE
         setDotsHatVisible(true)
         VscrDiag.line("气泡展开 " + curWidthDp + "x" + curHeightDp + "dp")
@@ -1381,6 +1515,92 @@ internal object VirtualScreenFloatWindow {
         p.x = preCollapseX.coerceIn(0, (screenW() - p.width).coerceAtLeast(0))
         p.y = preCollapseY.coerceIn(0, (screenH() - p.height).coerceAtLeast(0))
         runCatching { wm?.updateViewLayout(rootView, p) }
+    }
+
+    /** 当前被投屏应用（虚拟屏里的前台应用）的图标。 */
+    private fun focusedAppIcon(): android.graphics.drawable.Drawable? {
+        val pkg = VirtualScreenSession.state.value.display?.focusedPackage ?: return null
+        return runCatching { context?.packageManager?.getApplicationIcon(pkg) }.getOrNull()
+    }
+
+    /**
+     * 贴边收纳：窗口收成一条细圆弧，只露出边缘一小截。
+     * 点它或往外拖就展开回气泡。
+     */
+    private fun sinkToEdge() {
+        val p = lp ?: return
+        if (!collapsed) return
+        val d = context?.resources?.displayMetrics?.density ?: 1f
+        val thin = (8f * d).roundToInt()
+        val tall = (36f * d).roundToInt()
+        sinked = true
+        p.width = thin
+        p.height = tall
+        p.x = if (collapsedSide == SIDE_LEFT) 0 else (screenW() - thin).coerceAtLeast(0)
+        p.y = p.y.coerceIn(0, (screenH() - tall).coerceAtLeast(0))
+        borderDrawable?.let { it.cornerRadius = thin / 2f }
+        // 收纳态必须自己有一条底色，否则透明背景下这条细边等于隐形。
+        // 颜色取应用图标的四个角色色做横向渐变，整体 50% 透明。
+        rootView?.background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            sinkedGradientColors(),
+        ).apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = thin / 2f
+        }
+        rootView?.invalidateOutline()
+        runCatching { wm?.updateViewLayout(rootView, p) }
+        // 只露圆弧：图标先藏起来，避免 12dp 宽里糊成一团。
+        triggerBar?.alpha = 0f
+        VscrDiag.line("贴边收纳 thin=" + thin)
+    }
+
+    /**
+     * 收纳条的渐变色：从当前应用图标上采四个点，作为四个角色色。
+     * 统一 50% 透明（alpha=128），四色缺省时退回蓝色系。
+     */
+    private fun sinkedGradientColors(): IntArray {
+        val fallback = intArrayOf(0x807BD8FF.toInt(), 0x805FE08C.toInt(), 0x80FFC44D.toInt(), 0x80E5484D.toInt())
+        val ctx = context ?: return fallback
+        val icon = focusedAppIcon() ?: runCatching {
+            ctx.packageManager.getApplicationIcon(ctx.packageName)
+        }.getOrNull() ?: return fallback
+        return runCatching {
+            val size = 48
+            val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+            icon.setBounds(0, 0, size, size)
+            icon.draw(canvas)
+            val points = arrayOf(12 to 12, 36 to 12, 12 to 36, 36 to 36)
+            val colors = IntArray(4) { index ->
+                val (x, y) = points[index]
+                val c = bmp.getPixel(x, y)
+                // 保留 RGB，统一 50% 透明；全透明像素说明那角没内容，退回兜底色。
+                if (android.graphics.Color.alpha(c) < 8) fallback[index]
+                else (c and 0x00FFFFFF) or 0x80000000.toInt()
+            }
+            bmp.recycle()
+            colors
+        }.getOrDefault(fallback)
+    }
+
+    /** 从收纳态回到气泡态。 */
+    private fun restoreFromSink() {
+        if (!sinked) return
+        sinked = false
+        val p = lp ?: return
+        val d = context?.resources?.displayMetrics?.density ?: 1f
+        val bubble = (35f * d).roundToInt()
+        p.width = bubble
+        p.height = bubble
+        p.x = if (collapsedSide == SIDE_LEFT) 0 else (screenW() - bubble).coerceAtLeast(0)
+        borderDrawable?.let { it.cornerRadius = cornerRadiusPx(p.width, p.height) }
+        rootView?.invalidateOutline()
+        runCatching { wm?.updateViewLayout(rootView, p) }
+        triggerBar?.alpha = 1f
+        rootView?.background = borderDrawable
+        rootView?.removeCallbacks(sinkRunnable)
+        if (sinkEnabled) rootView?.postDelayed(sinkRunnable, 2000L)
     }
 
     /** 真实帧尺寸回报：比例一变就重算窗口，保证内容区比例等于投影比例。 */
@@ -1427,25 +1647,40 @@ internal object VirtualScreenFloatWindow {
      * 点一下小窗：在“最小档”和“最小档 +1/3”之间来回切。
      * 已经比这一档大（自己捏过）时，点一下回到最小档。
      */
-    private fun tapToggleSize() {
+    /**
+     * 双击悬浮窗：在固定档位间循环（96 → 144 → 200 → 272 → 96）。
+     * 按内容短边定位档位，横竖屏用同一套大小；切换后按内容比例重算外框，不留黑边。
+     */
+    private fun cycleSizeTier() {
         if (collapsed) return
         val aspect = contentAspect()
-        val border = (BORDER_DP * 2f).roundToInt()
-        val stepInner = minWidthDp * TAP_GROW_SCALE
-        if (aspect > 0f) {
-            val landscape = aspect >= 1f
-            val innerShort = if (landscape) curHeightDp - border else curWidthDp - border
-            setFromInnerShort(if (innerShort >= stepInner - 1f) minWidthDp.toFloat() else stepInner, aspect)
-        } else {
-            val current = minOf(curWidthDp, curHeightDp).coerceAtLeast(1)
-            val target = if (current <= minWidthDp + border + 1) stepInner.roundToInt() + border else minWidthDp + border
-            val scale = target.toFloat() / current
-            curWidthDp = (curWidthDp * scale).roundToInt().coerceAtLeast(1)
-            curHeightDp = (curHeightDp * scale).roundToInt().coerceAtLeast(1)
-            normalizeSize()
-        }
+        if (aspect <= 0f) return
+        val border = BORDER_DP * 2f
+        val currentShort = innerShortDp.takeIf { it > 0f }
+            ?: ((if (aspect >= 1f) curHeightDp else curWidthDp) - border)
+        // 停在两档之间（被捏合过）时先归到最近档，再往下走。
+        val nearest = sizeTiersDp.indices.minByOrNull { abs(sizeTiersDp[it] - currentShort) } ?: 0
+        val next = nearest + 1
+        tierIndex = if (next >= sizeTiersDp.size) 0 else next
+        setFromInnerShort(sizeTiersDp[tierIndex].toFloat(), aspect)
         applySize()
         clampToScreen()
+        storeSizeTier()
+        VscrDiag.line("双击切档 " + sizeTiersDp[tierIndex] + "dp 外框=" + curWidthDp + "x" + curHeightDp)
+    }
+
+    /** 记住当前档位，下次浮窗出现还用它。 */
+    private fun storeSizeTier() {
+        scope.launch {
+            runCatching {
+                SettingsDataStore.updateSettings {
+                    it.copy(
+                        virtualScreenFloatWindowWidthDp = curWidthDp,
+                        virtualScreenFloatWindowHeightDp = curHeightDp,
+                    )
+                }
+            }
+        }
     }
 
     /** 松手时贴边吸附：只有真的碰到屏幕边缘（留 1px 取整容差）才齐边，差一点就保持原位。 */
@@ -1488,12 +1723,15 @@ internal object VirtualScreenFloatWindow {
         runCatching { wm?.updateViewLayout(rootView, p) }
     }
 
-    /** 圆角半径（px）：随窗口短边轻微缩放（16–24dp），横竖屏看到的是同一种角。 */
+    /**
+     * 圆角半径（px）：贴齐真实屏幕的 R 角观感 —— 短边约 7%，并收在 8–18dp。
+     * 以前固定 16–24dp，小窗上看着像一枚圆钮，不像一块屏幕。
+     */
     private fun cornerRadiusPx(widthPx: Int, heightPx: Int): Float {
         val d = context?.resources?.displayMetrics?.density ?: 1f
-        if (widthPx <= 0 || heightPx <= 0) return 22f * d
+        if (widthPx <= 0 || heightPx <= 0) return 12f * d
         val shortDp = min(widthPx, heightPx) / d
-        return (shortDp * 0.09f).coerceIn(16f, 24f) * d
+        return (shortDp * 0.07f).coerceIn(8f, 18f) * d
     }
 
     private fun expandedWidthPx() = (curWidthDp * (context?.resources?.displayMetrics?.density ?: 1f)).roundToInt()

@@ -25,7 +25,7 @@ internal object VirtualScreenNotification {
                 CHANNEL, context.getString(R.string.virtual_screen_notification_channel), NotificationManager.IMPORTANCE_LOW,
             ))
             val open = PendingIntent.getActivity(context, 0,
-                Intent(context, VirtualScreenViewerActivity::class.java)
+                android.content.Intent(context, io.github.mangi.eta.ui.MainActivity::class.java)
                     .setData(Uri.parse("eta-virtual-screen://view/$sessionId"))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
