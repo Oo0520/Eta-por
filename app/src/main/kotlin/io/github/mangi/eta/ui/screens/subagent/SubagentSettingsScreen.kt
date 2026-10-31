@@ -383,21 +383,21 @@ internal fun SubagentSettingsScreen(
 
             EtaWindowDialog(
                 show = showRepeatDialog,
-                title = "重复动作中止",
+                title = "连续失败中止",
                 onDismissRequest = { showRepeatDialog = false },
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     TextField(
                         value = repeatDraft,
                         onValueChange = { input -> repeatDraft = input.filter(Char::isDigit).take(2) },
-                        label = "连续重复次数（0–50，0 为关闭）",
+                        label = "连续失败次数（0–50，0 为关闭）",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "同一个工具连着用同样的参数调用，通常说明它已经卡住了（比如反复搜同一个" +
-                            "关键词、反复点同一个按钮）。达到次数就中止并回报，把问题交回给主 Agent。",
+                        text = "只统计「失败的」工具调用，连续失败到这个次数就中止并回报，把问题交回给" +
+                            "主 Agent。滑屏、翻页这类正常重复动作不计入，所以不会误杀正常任务。",
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurface,
                     )
@@ -408,10 +408,10 @@ internal fun SubagentSettingsScreen(
                         colors = ButtonDefaults.textButtonColorsPrimary(),
                         onClick = {
                             val chosen = repeatDraft.toIntOrNull()?.coerceIn(0, 50)
-                                ?: subagentSettings.repeatAbortThreshold
+                                ?: subagentSettings.failureAbortThreshold
                             scope.launch {
                                 RuntimeConfigRepository.setSubagentSettings(
-                                    subagentSettings.copy(repeatAbortThreshold = chosen),
+                                    subagentSettings.copy(failureAbortThreshold = chosen),
                                 )
                             }
                             showRepeatDialog = false
@@ -581,11 +581,11 @@ internal fun SubagentSettingsScreen(
                 )
                 EtaPreferenceDivider()
                 EtaArrowPreference(
-                    title = "重复动作中止",
-                    summary = if (subagentSettings.repeatAbortThreshold <= 0) {
-                        "已关闭：不会因为重复动作自动中止"
+                    title = "连续失败中止",
+                    summary = if (subagentSettings.failureAbortThreshold <= 0) {
+                        "已关闭：不会因为连续失败自动中止"
                     } else {
-                        "同一动作连续重复 ${subagentSettings.repeatAbortThreshold} 次就中止并回报"
+                        "连续 ${subagentSettings.failureAbortThreshold} 次工具调用失败就中止并回报"
                     },
                     enabled = subagentEnabled,
                     startAction = {
@@ -595,7 +595,7 @@ internal fun SubagentSettingsScreen(
                         )
                     },
                     onClick = {
-                        repeatDraft = subagentSettings.repeatAbortThreshold.toString()
+                        repeatDraft = subagentSettings.failureAbortThreshold.toString()
                         showRepeatDialog = true
                     },
                 )
