@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import io.github.mangi.eta.data.model.SubagentModelGrant
+import io.github.mangi.eta.data.model.SubagentProfileDefault
 import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -185,6 +186,8 @@ internal fun SubagentSettingsScreen(
     var grantDraft by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
     // 每个授权模型真实支持的档位；空表示未知，退回通用全集。
     var modelEfforts by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    var showProfileDefaults by remember { mutableStateOf(false) }
+    var expandedProfile by remember { mutableStateOf<String?>(null) }
     var parallelDraft by remember { mutableStateOf("8") }
     var showRoundsDialog by remember { mutableStateOf(false) }
     var roundsDraft by remember { mutableStateOf("12") }
@@ -335,6 +338,127 @@ internal fun SubagentSettingsScreen(
                                 showAuthorizedSheet = false
                             },
                         )
+                    }
+                }
+            }
+
+            OverlayBottomSheet(
+                show = showProfileDefaults,
+                title = "按类型默认模型",
+                onDismissRequest = { showProfileDefaults = false },
+                insideMargin = DpSize(0.dp, 0.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = "主 Agent 未指定模型时，按子智能体类型取这里的默认；都没设就用授权列表第一个。" +
+                            "档位留空表示用该模型默认值。",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    val authorizedIds = subagentSettings.effectiveGrants.map { it.modelId }
+                    SubagentProfileCatalog.listAll().forEach { profile ->
+                        val current = subagentSettings.profileDefaults[profile.name]
+                        val expanded = expandedProfile == profile.name
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        expandedProfile = if (expanded) null else profile.name
+                                    },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = profile.name,
+                                    style = MiuixTheme.textStyles.body1,
+                                    color = MiuixTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = buildString {
+                                        val m = current?.modelId.orEmpty()
+                                        append(if (m.isBlank()) "未设置" else m)
+                                        val e = current?.effort.orEmpty()
+                                        if (e.isNotBlank()) append(" · ").append(e)
+                                    },
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            }
+                            if (expanded) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    authorizedIds.forEach { id ->
+                                        val active = current?.modelId == id
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(50))
+                                                .background(
+                                                    if (active) MiuixTheme.colorScheme.primary
+                                                    else MiuixTheme.colorScheme.surfaceContainerHigh,
+                                                )
+                                                .clickable {
+                                                    val next = subagentSettings.copy(
+                                                        profileDefaults = subagentSettings.profileDefaults +
+                                                            (profile.name to SubagentProfileDefault(
+                                                                modelId = if (active) "" else id,
+                                                                effort = current?.effort.orEmpty(),
+                                                            )),
+                                                    )
+                                                    scope.launch { RuntimeConfigRepository.setSubagentSettings(next) }
+                                                }
+                                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                                        ) {
+                                            Text(
+                                                text = id,
+                                                style = MiuixTheme.textStyles.footnote2,
+                                                color = if (active) MiuixTheme.colorScheme.onPrimary
+                                                else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                            )
+                                        }
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    ReasoningEffort.entries
+                                        .filter { it != ReasoningEffort.DEFAULT }
+                                        .forEach { effort ->
+                                            val active = current?.effort == effort.wireValue
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(50))
+                                                    .background(
+                                                        if (active) MiuixTheme.colorScheme.primary
+                                                        else MiuixTheme.colorScheme.surfaceContainerHigh,
+                                                    )
+                                                    .clickable {
+                                                        val next = subagentSettings.copy(
+                                                            profileDefaults = subagentSettings.profileDefaults +
+                                                                (profile.name to SubagentProfileDefault(
+                                                                    modelId = current?.modelId.orEmpty(),
+                                                                    effort = if (active) "" else effort.wireValue,
+                                                                )),
+                                                        )
+                                                        scope.launch { RuntimeConfigRepository.setSubagentSettings(next) }
+                                                    }
+                                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                                            ) {
+                                                Text(
+                                                    text = effort.wireValue,
+                                                    style = MiuixTheme.textStyles.footnote2,
+                                                    color = if (active) MiuixTheme.colorScheme.onPrimary
+                                                    else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                                )
+                                            }
+                                        }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -692,6 +816,23 @@ internal fun SubagentSettingsScreen(
                         repeatDraft = subagentSettings.failureAbortThreshold.toString()
                         showRepeatDialog = true
                     },
+                )
+                EtaPreferenceDivider()
+                EtaArrowPreference(
+                    title = "按类型默认模型",
+                    summary = if (subagentSettings.profileDefaults.isEmpty()) {
+                        "未设置：未指定模型时用授权列表第一个"
+                    } else {
+                        "已为 ${subagentSettings.profileDefaults.size} 个类型指定默认"
+                    },
+                    enabled = subagentEnabled && subagentSettings.allowModelSelection,
+                    startAction = {
+                        EtaPreferenceIcon(
+                            icon = Icons.Rounded.AccountTree,
+                            tint = EtaPreferenceColors.Blue,
+                        )
+                    },
+                    onClick = { showProfileDefaults = true },
                 )
                 EtaPreferenceDivider()
                 EtaSwitchPreference(

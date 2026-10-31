@@ -15,6 +15,13 @@ internal data class SubagentModelGrant(
     val allowedEfforts: List<String> = emptyList(),
 )
 
+/** 某个子智能体类型的默认选择：模型 + 思考强度；都为空表示不设置。 */
+@Serializable
+internal data class SubagentProfileDefault(
+    val modelId: String = "",
+    val effort: String = "",
+)
+
 @Serializable
 internal data class SubagentSettings(
     val modelId: String? = null,
@@ -27,6 +34,8 @@ internal data class SubagentSettings(
     val allowedModelIds: List<String> = emptyList(),
     /** 每个授权模型可用的思考强度档位；为空时沿用 [allowedModelIds]（视为不限档位）。 */
     val allowedGrants: List<SubagentModelGrant> = emptyList(),
+    /** 按子智能体类型（explore / coder / plan / screen …）指定默认模型与强度。 */
+    val profileDefaults: Map<String, SubagentProfileDefault> = emptyMap(),
     /** 单个子智能体单次派发允许的最大思考轮次；超过即中止并向主 Agent 回报。 */
     val maxRounds: Int = 40,
     /**

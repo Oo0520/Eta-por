@@ -201,19 +201,25 @@ internal class SubagentExecutor(
                 }
             }
         }
-        // 未指定模型时不要报错：那是第一轮必失败、还得让主 Agent 重试一轮，体验很差。
-        // 这里从授权列表里取第一个，并在结果里标明「自动选择」，用户仍能看到用了什么。
-        val autoPickedModel = if (allowModelPick && requestedModel == null && allowed.isNotEmpty()) {
-            allowed.first()
+        // 未指定模型时不报错，按「该类型的默认模型 → 授权列表第一个」兜底，
+        // 并在结果里标明「自动选择」，用户仍能看到用了什么。
+        val profileDefault = subagentSettings?.profileDefaults?.get(profile.name)
+        val profileDefaultModel = profileDefault?.modelId
+            ?.takeIf { it.isNotBlank() && (allowed.isEmpty() || it in allowed) }
+        val autoPickedModel = if (allowModelPick && requestedModel == null) {
+            profileDefaultModel ?: allowed.firstOrNull()
         } else {
             null
         }
+        // 类型默认强度只在主 Agent 没指定时生效，且必须是该模型允许的档位。
+        val effectiveEffort = requestedEffort
+            ?: profileDefault?.effort?.takeIf { it.isNotBlank() }
         val effectiveModelId = requestedModel ?: autoPickedModel
         val useOverride = allowModelPick && configForOverride != null &&
-            (effectiveModelId != null || requestedEffort != null)
+            (effectiveModelId != null || effectiveEffort != null)
         val resolvedConfig = runCatching {
             if (useOverride) {
-                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(effectiveModelId, requestedEffort) }
+                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(effectiveModelId, effectiveEffort) }
             } else {
                 configProvider()
             }

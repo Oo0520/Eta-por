@@ -56,6 +56,13 @@ internal object AgentSubagentToolCatalog {
         }
         val description = buildString {
             append("Launch a subagent in an isolated context to handle an autonomous subtask and return a concise summary. ")
+            if (authorizedModels.isNotEmpty()) {
+                append("When authorized models are available, ALWAYS pick a model explicitly for each `subagent` call — ")
+                append("match it to the subtask (cheap/fast model for lookups and summarization, stronger model for reasoning and code). ")
+                append("Also set `reasoning_effort` when the chosen model exposes more than one level. ")
+                append("Example: {\"prompt\":\"...\",\"description\":\"...\",\"subagent_type\":\"explore\",\"model\":\"<one of the authorized ids>\",\"reasoning_effort\":\"low\"}. ")
+                append("If you omit `model`, the runtime falls back to the per-type default, which may not fit the task.\n")
+            }
             append("You can freely spawn as many specialized ephemeral subagents as needed for the conversation without saving them to disk, ")
             append("or use one of the preset types below. When multiple independent subtasks can run in parallel, issue multiple `subagent` tool calls in the same turn — the runtime executes them concurrently.\n\n")
             append("Writing the prompt:\n")
