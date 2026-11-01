@@ -66,7 +66,12 @@ Every comparison below is against **upstream 3.3.3**; it may drift as upstream m
 - Speech output supports Gemini and MiniMax, with per-service voice settings.
 - **Voice recognition can be disabled entirely**; the microphone entries in the input bar and overlay disappear with it.
 
-### Build and size
+### Testing & Community
+
+- **QQ group: 1132120965** — test builds are handed out there, and bug reports / discussions happen there too.
+- Issues on this repo work as well, but reproduction is usually faster in the group.
+
+## Build and size
 
 - **ARM64 native libraries only**, which shrinks the APK noticeably.
 - Lower memory use for long conversations.
