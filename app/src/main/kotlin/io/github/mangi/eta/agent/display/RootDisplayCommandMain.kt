@@ -58,6 +58,41 @@ internal object RootDisplayCommandMain {
     }
 
     /**
+     * Android 17（SDK 37）起，`IWindowManager` 这类「可缓存」系统接口在客户端要读
+     * `com.android.internal.os.ApplicationSharedMemory` 的 nonce，而这块内存只由 AMS 在
+     * bindApplication 时下发的 fd 初始化。helper 是 su 起的裸 app_process，没走过
+     * bindApplication，`getInstance()` 直接抛 IllegalStateException（实测：KeyguardManager.<init>
+     * → WindowManagerGlobal.getWindowManagerService），建屏第一步就挂。
+     *
+     * 这里自建一块私有共享内存顶上：system_server 不会往里写 nonce，缓存永远判过期，
+     * 退化成普通 binder 调用——只是不再吃缓存，能力是全的。初始化失败不阻断建屏。
+     */
+    private fun initApplicationSharedMemory() {
+        val cls = runCatching {
+            Class.forName("com.android.internal.os.ApplicationSharedMemory")
+        }.getOrNull()
+        if (cls == null) {
+            hlog("asm: class absent")
+            return
+        }
+        if (runCatching { cls.getMethod("getInstance").invoke(null) }.isSuccess) {
+            hlog("asm: already initialized")
+            return
+        }
+        val done = runCatching {
+            val instance = cls.getMethod("create").invoke(null)
+            cls.getMethod("setInstance", cls).invoke(null, instance)
+        }
+        hlog("asm: init=" + done.isSuccess + (done.exceptionOrNull()?.let { " err=" + it } ?: ""))
+    }
+
+    /** helper 拿不到 KeyguardManager（Android 17）时，用 App 主进程下发的锁屏状态兜底。 */
+    @Volatile private var mainScreenLockedHint = false
+
+    private fun mainScreenLocked(keyguard: KeyguardManager?): Boolean =
+        runCatching { keyguard?.isDeviceLocked }.getOrNull() ?: mainScreenLockedHint
+
+    /**
      * 宿主包名与取面 provider 的 authority。
      * 不能写死：正式版是 io.github.mangi.eta，测试版是 io.github.mangi.eta.beta，
      * 硬编码会让其中一边永远拉不到 Surface（日志表现为 pull NPE → create direct=false）。
@@ -149,6 +184,8 @@ internal object RootDisplayCommandMain {
         try {
             require(Process.myUid() == 0) { "ROOT_REQUIRED" }
             if (Looper.myLooper() == null) Looper.prepareMainLooper()
+            // Android 17：先把进程级共享内存装上，否则第一次碰 IWindowManager 就抛异常。
+            initApplicationSharedMemory()
             val activityThread = Class.forName("android.app.ActivityThread")
             val thread = activityThread.getDeclaredMethod("systemMain").invoke(null)
             val context =
@@ -165,6 +202,7 @@ internal object RootDisplayCommandMain {
             // 灵屏刷新率跟随用户选的出帧档位（60/90/120/144/165），越高越跟手。
             val refreshRate = setup.optInt("refreshRate", 165).coerceIn(60, 165).toFloat()
             val allowOff = setup.optBoolean("allowScreenOff", false)
+            mainScreenLockedHint = setup.optBoolean("mainScreenLocked", false)
             val idleTimer = VirtualScreenIdleTimer(setup.optInt("idleTimeoutMinutes", 20),
                 SystemClock::elapsedRealtime, setup.optBoolean("activeRun"))
             var frameIntervalMs = setup.optInt("frameIntervalMs", 16).coerceIn(8, 66)
@@ -176,7 +214,10 @@ internal object RootDisplayCommandMain {
                 }
             }.apply { name = "eta-root-display-idle"; isDaemon = true; start() }
             val displayManager = context.getSystemService(DisplayManager::class.java)
-            val keyguard = context.getSystemService(KeyguardManager::class.java)
+            // Android 17 上 KeyguardManager 构造会碰 WindowManagerGlobal：拿不到时不能让整块屏起不来。
+            val keyguard = runCatching { context.getSystemService(KeyguardManager::class.java) }
+                .onFailure { hlog("keyguard unavailable: " + it) }
+                .getOrNull()
             val power = context.getSystemService(PowerManager::class.java)
             frames = HandlerThread("eta-virtual-frames").apply { start() }
             val handler = Handler(frames.looper)
@@ -378,7 +419,7 @@ internal object RootDisplayCommandMain {
                         break
                     }
                     // allowScreenOff=false 时跟随手机屏：手机熄屏或锁屏就让灵屏睡回去。
-                    if (!allowOff && (!power.isInteractive || keyguard.isDeviceLocked)) continue
+                    if (!allowOff && (!power.isInteractive || mainScreenLocked(keyguard))) continue
                     runCatching { lock.acquire(DISPLAY_WAKE_HOLD_MS) }
                 }
             }.apply { name = "eta-display-wakelock"; isDaemon = true; start() }
@@ -403,7 +444,7 @@ internal object RootDisplayCommandMain {
                 }
                 try {
                     require(displayManager.getDisplay(id) != null) { "DISPLAY_GONE" }
-                    require(allowOff || (power.isInteractive && !keyguard.isDeviceLocked)) { "SCREEN_OFF_PERMISSION_REQUIRED" }
+                    require(allowOff || (power.isInteractive && !mainScreenLocked(keyguard))) { "SCREEN_OFF_PERMISSION_REQUIRED" }
                     runCatching { syncShape() }
                     val result = when (request.getString("action")) {
                         "host_surface" -> {
@@ -417,6 +458,10 @@ internal object RootDisplayCommandMain {
                         }
                         "lifecycle" -> {
                             idleTimer.update(request.optInt("idleTimeoutMinutes", 20), request.optBoolean("activeRun"))
+                            // Android 17 上 helper 自己问不到锁屏状态，由 App 主进程顺带下发。
+                            if (request.has("mainScreenLocked")) {
+                                mainScreenLockedHint = request.optBoolean("mainScreenLocked")
+                            }
                             if (request.has("frameIntervalMs")) frameIntervalMs = request.optInt("frameIntervalMs", frameIntervalMs).coerceIn(4, 66)
                             if (request.has("jpegQuality")) jpegQuality = request.optInt("jpegQuality", jpegQuality).coerceIn(40, 100)
                             JSONObject().put("ok", true).put("displayId", id)
