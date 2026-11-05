@@ -167,6 +167,7 @@ private fun InfoLine(label: String, value: String) {
         Text(
             text = value,
             style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
     }

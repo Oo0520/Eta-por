@@ -83,6 +83,7 @@ internal fun toolDisplayNameResource(name: String): Int? = when (name) {
     "open_system_panel" -> R.string.tool_open_system_panel
     "search_apps" -> R.string.tool_search_apps
     "launch_app" -> R.string.tool_launch_app
+    "lingscreen_open_app" -> R.string.tool_lingscreen_open_app
     "open_uri" -> R.string.tool_open_uri
     "browser_use" -> R.string.tool_browser_use
     "web_search" -> R.string.tool_web_search

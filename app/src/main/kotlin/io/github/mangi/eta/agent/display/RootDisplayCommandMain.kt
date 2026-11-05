@@ -649,14 +649,35 @@ internal object RootDisplayCommandMain {
                             val packageName = component.substringBefore('/')
                             val target = ComponentName.unflattenFromString(component)
                                 ?: error("INVALID_COMPONENT")
-                            val info = context.packageManager.getActivityInfo(target, 0)
-                            val resizeMode =
+                            // 组件解析不到就不是「不支持灵屏」：应用没装、组件名写错属于另一类问题。
+                            val info = runCatching { context.packageManager.getActivityInfo(target, 0) }
+                                .getOrElse { error("APP_NOT_FOUND") }
+                            val resizeMode = runCatching {
                                 ActivityInfo::class.java.getField("resizeMode").getInt(info)
-                            val resizable = ActivityInfo::class.java.getDeclaredMethod(
-                                "isResizeableMode",
-                                Int::class.javaPrimitiveType
-                            ).invoke(null, resizeMode) as Boolean
-                            require(info.enabled && info.exported && resizable && info.launchMode <= ActivityInfo.LAUNCH_SINGLE_TASK) { "DISPLAY_APP_UNSUPPORTED" }
+                            }.getOrNull()
+                            val resizable = resizeMode?.let { mode ->
+                                runCatching {
+                                    ActivityInfo::class.java.getDeclaredMethod(
+                                        "isResizeableMode",
+                                        Int::class.javaPrimitiveType
+                                    ).invoke(null, mode) as Boolean
+                                }.getOrNull()
+                            } ?: true
+                            // 这四项原先被一条 require 捆在一起，任一不满足就报「该应用不支持灵屏」。
+                            // 小米系闪屏壳（resizeableActivity=false）因此整片被误杀：实测手工 am start 之后
+                            // 渲染、点击、读屏全部正常。现在逐项判定，只有确实投不上去才拦。
+                            require(info.enabled && info.exported) { "APP_NOT_LAUNCHABLE" }
+                            require(info.launchMode <= ActivityInfo.LAUNCH_SINGLE_TASK) { "DISPLAY_APP_UNSUPPORTED" }
+                            // helper 跑在独立进程里，VscrDiag 的落盘目标只有 App 进程初始化过；
+                            // 这里走 stderr，由 App 侧 HelperExitLog 收进诊断包。
+                            System.err.println(
+                                "ETA_LAUNCH_CHECK component=$component enabled=${info.enabled} " +
+                                    "exported=${info.exported} resizeMode=${resizeMode ?: -1} " +
+                                    "resizeable=$resizable launchMode=${info.launchMode}"
+                            )
+                            if (!resizable) {
+                                System.err.println("ETA_LAUNCH_CHECK $component resizeable=false，仅记录不拦截")
+                            }
                             // Allow re-entry to our own display, but never migrate a user's task.
                             val runningElsewhere = runningTasks().any {
                                 (it.baseActivity?.packageName == packageName || it.topActivity?.packageName == packageName) && taskDisplayId(it) != id
@@ -691,6 +712,7 @@ internal object RootDisplayCommandMain {
                             }) { "DISPLAY_LAUNCH_MISMATCH" }
                             JSONObject().put("ok", true).put("displayId", id)
                                 .put("component", component)
+                                .put("resizeable", resizable)
                         }
 
                         "touch" -> {

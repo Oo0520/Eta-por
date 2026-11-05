@@ -707,6 +707,7 @@ internal class AgentAppState(
     }
 
     private suspend fun importArchivedExternalRuns() {
+        backfillExternalSourceCategories()
         val archivedRuns = withContext(Dispatchers.IO) {
             AgentRunArchiveStore.list(appContext)
                 .filter { AgentExternalArchivePayload.from(it.handoff.payload) != null }
@@ -771,6 +772,13 @@ internal class AgentAppState(
                     !it.isStreaming
             }
         if (alreadyImported) return runId
+
+        // 小布等外部入口进来的会话自动归到对应分类；用户已经手动归类过的不覆盖。
+        if (conversationCategoryIds[conversationId] == null) {
+            autoCategoryForSource(archivedRun.handoff.source)?.let { categoryId ->
+                conversationCategoryIds = conversationCategoryIds + (conversationId to categoryId)
+            }
+        }
 
         if (conversationTitles[conversationId].isNullOrBlank()) {
             conversationTitles = conversationTitles + (conversationId to payload.title)
@@ -1710,6 +1718,40 @@ internal class AgentAppState(
                 .onFailure { error -> AndroidAgentLogger.warn("Conversation category create failed: type=${error.safeLogType()}") }
         }
         return category.id
+    }
+
+    /**
+     * 外部入口来源对应的自动归属分类：按名字找，找不到就新建一个。
+     * 来源不在白名单里时返回 null，会话保持未分类。
+     */
+    private fun autoCategoryForSource(source: String): String? {
+        val name = externalSourceCategoryNames[source] ?: return null
+        conversationCategories.firstOrNull { it.name == name }?.let { return it.id }
+        return createConversationCategory(name)
+    }
+
+    /**
+     * 存量补归属：升级前的归档会话 id 是来源哈希，反推不出来源，只能按标题形态认。
+     * 只执行一次，之后用户手动改分类不会在下次启动被打回。
+     */
+    private suspend fun backfillExternalSourceCategories() {
+        val prefs = appContext.getSharedPreferences(CATEGORY_BACKFILL_PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(CATEGORY_BACKFILL_KEY, false)) return
+        withContext(Dispatchers.Main) {
+            val legacyBreenoIds = conversationTitles
+                .filterValues { title -> title.isLegacyBreenoTitle() }
+                .keys
+                .filter { conversationId -> conversationCategoryIds[conversationId] == null }
+            if (legacyBreenoIds.isNotEmpty()) {
+                autoCategoryForSource(BREENO_HANDOFF_SOURCE)?.let { categoryId ->
+                    conversationCategoryIds = conversationCategoryIds +
+                        legacyBreenoIds.associateWith { categoryId }
+                    refreshConversationSummaries()
+                    persistConversations()
+                }
+            }
+            prefs.edit().putBoolean(CATEGORY_BACKFILL_KEY, true).apply()
+        }
     }
 
     /** 重命名分类；名字为空、未变化或与其它分类重名时忽略。 */
@@ -3316,6 +3358,23 @@ private data class ContentMatchCacheEntry(
 
 private fun archiveConversationId(source: String, conversationKey: String): String =
     AgentExternalArchivePayload.conversationId(source, conversationKey)
+
+/** 小布（Breeno）交付来源标识，与 hook 侧的 handoff.source 保持一致。 */
+private const val BREENO_HANDOFF_SOURCE = "breeno"
+
+/** 外部入口来源 → 自动归属的会话分类名；不在此表里的来源保持未分类。 */
+private val externalSourceCategoryNames: Map<String, String> = mapOf(
+    BREENO_HANDOFF_SOURCE to "小布",
+)
+
+/** 存档中的小布会话标题形态（BreenoHooks.archiveTitle 生成），仅用于给升级前的存量会话补归属。 */
+private fun String.isLegacyBreenoTitle(): Boolean {
+    val trimmed = trim()
+    return trimmed.startsWith("小布：") || trimmed == "小布对话"
+}
+
+private const val CATEGORY_BACKFILL_PREFS = "eta_conversation_category_backfill"
+private const val CATEGORY_BACKFILL_KEY = "external_source_categories_backfilled_v1"
 
 private fun agentBooleanForUi(key: String): Boolean {
     return Prefs.isEnabled(key)

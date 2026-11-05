@@ -67,6 +67,8 @@ import io.github.mangi.eta.ui.components.topBarContainerColor
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import io.github.mangi.eta.ui.navigation.AppRoute
+import io.github.mangi.eta.ui.onboarding.OnboardingHost
+import io.github.mangi.eta.ui.onboarding.SurfaceKey
 import top.yukonga.miuix.kmp.basic.DropdownImpl
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
@@ -141,6 +143,8 @@ internal fun AgentAppShell(
     workspaceContent: (@Composable () -> Unit)? = null,
     /** 顶栏放不下的低频状态提示，改在 ⋯ 菜单里以文字列出。 */
     conversationTrimmed: Pair<Int, Int>? = null,
+    /** 会话导航面板是否打开：手势教练「上滑小白条」那一步的完成条件。 */
+    navigatorOpen: Boolean = false,
     modifier: Modifier = Modifier,
     homeCharacter: RoleplayChatUi? = null,
     onOpenCharacter: () -> Unit = {},
@@ -250,6 +254,18 @@ internal fun AgentAppShell(
         } else {
             pageContent()
         }
+
+        // 新手引导层：必须在 Box 的最末尾，才能盖住页面、侧栏与工作区。
+        // Dialog 是独立 window，天然在这层之上，不需要额外处理。
+        OnboardingHost(
+            currentRoute = currentRoute,
+            surface = when {
+                isConversationPaneOpen -> SurfaceKey.Sidebar
+                workspaceVisible -> SurfaceKey.Workspace
+                else -> null
+            },
+            navigatorOpen = navigatorOpen,
+        )
     }
 }
 

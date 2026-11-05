@@ -71,6 +71,9 @@ internal class WorkspaceFileStore(
     }
 
     /** 把相对路径解析成 root 内的 File，并校验没有越出 root。 */
+    /** 相对路径 → 绝对路径。图片预览这类需要真实路径的地方用。 */
+    fun absolutePath(path: String): String = resolveFile(path).absolutePath
+
     private fun resolveFile(path: String): File {
         val candidate = if (path.isBlank()) root else File(root, path)
         val canonical = candidate.canonicalFile

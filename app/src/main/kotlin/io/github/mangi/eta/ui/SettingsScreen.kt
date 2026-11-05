@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SettingsVoice
@@ -91,6 +92,7 @@ import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.config.PowerAssistantTarget
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.data.datastore.SettingsDataStore
+import io.github.mangi.eta.ui.onboarding.OnboardingKeys
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.systemizer.GoogleAppSystemizerInstaller
@@ -299,6 +301,32 @@ private fun SettingsPageContent(
                         key = Prefs.Keys.AGENT_THINKING_ENABLED,
                         icon = Icons.Rounded.Psychology,
                         iconTint = EtaPreferenceColors.Blue,
+                    )
+
+                    EtaPreferenceDivider()
+                    EtaArrowPreference(
+                        title = "重置新手引导",
+                        summary = "重新播放手势教学与侧栏 / 工作区提示",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.Refresh,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = {
+                            coroutineScope.launch {
+                                SettingsDataStore.updateSettings { current ->
+                                    current.copy(
+                                        seenTourPacks = current.seenTourPacks - OnboardingKeys.All,
+                                    )
+                                }
+                                Toast.makeText(
+                                    context,
+                                    "已重置，回到聊天页后会重新出现",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
                     )
                 }
             }

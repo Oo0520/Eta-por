@@ -312,6 +312,7 @@ internal class AgentLocalTools(
                 "get_current_context" -> textResult(DeviceContextTool.current(context))
                 "search_apps" -> textResult(searchApps(args))
                 "launch_app" -> textResult(launchApp(args))
+                "lingscreen_open_app" -> textResult(launchApp(args, inLingscreen = true))
                 "open_uri" -> textResult(openUri(args))
                 "browser_use" -> browserUse(args, toolCall.id)
                 "web_search", "fetch_url" -> {
@@ -852,7 +853,7 @@ internal class AgentLocalTools(
             .toString()
     }
 
-    private fun launchApp(args: JSONObject): String {
+    private fun launchApp(args: JSONObject, inLingscreen: Boolean = false): String {
         val packageName = args.optString("package_name").trim().ifBlank { null }
         val appName = args.optString("app_name").trim().ifBlank { null }
 
@@ -889,16 +890,27 @@ internal class AgentLocalTools(
                 message = "应用不可启动或未安装：${app.packageName}"
             )
         }
-        if (virtualRouting.shouldRoute("launch_app", virtualScreenSettings().virtualScreenEnabled)) {
+        if (inLingscreen) {
+            // 仅在显式选择「在灵屏里打开」时才建虚拟屏会话。
+            if (!virtualScreenSettings().virtualScreenEnabled) {
+                return errorResult(
+                    "LINGSCREEN_DISABLED",
+                    "灵屏未开启，无法在灵屏里打开应用。想直接在手机上打开请改用 launch_app。",
+                )
+            }
+            virtualRouting.shouldRoute("lingscreen_open_app", true)
             val component = launchIntent.component ?: return errorResult("NO_ACTIVITY", "没有确定的启动 Activity")
             return virtualUiTools.launchComponent(component.flattenToString()).content
         }
+        // 默认路径：真机直接打开。不建虚拟屏、不触发灵屏路由，
+        // 后续的点击/滑动也留在主屏——用户说「打开微信」就该看到微信本身。
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         context.startActivity(launchIntent)
         logger.info("Agent local tool action=launch_app outcome=started")
         return JSONObject()
             .put("ok", true)
             .put("tool", "launch_app")
+            .put("target", "main_screen")
             .put("app_name", app.appName)
             .put("package_name", app.packageName)
             .toString()

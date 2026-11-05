@@ -199,11 +199,30 @@ internal class AgentRuntimeRunExecutor(
                     entrySurfaceGuard?.consumeScreenshotExcludedPackages().orEmpty()
                 },
                 beforeToolExecution = { toolName ->
-                    if (io.github.mangi.eta.agent.automation.AgentTaskScheduler.isRegistered(request.runId) &&
-                        (toolName in io.github.mangi.eta.agent.automation.AgentTaskTools.names || toolName in setOf("terminal", "run_command") ||
-                            (!session.mainScreenFallbackApproved.get() && (AgentToolRequirements.requiresAccessibility(toolName) ||
-                                AgentOverlayVisibilityPolicy.isForegroundOperationTool(toolName) || toolName == "browser_use")))) {
-                        ToolExecutionDecision.Reject("AUTOMATION_ACTION_UNAVAILABLE", "自动任务暂不支持创建其他任务或操作主屏；需要独立灵屏执行环境")
+                    val automated =
+                        io.github.mangi.eta.agent.automation.AgentTaskScheduler.isRegistered(request.runId)
+                    // 自动任务没有前台入口：另建任务与操作主屏都没有依据。
+                    // 但 shell、文件、检索、记忆这类不碰界面的工具与"没有前台"无关，不能一起禁掉
+                    // （曾把 terminal 混在这条里，导致自动任务里连 `bash 脚本` 都发不出去）。
+                    val automationRejection = when {
+                        !automated -> null
+                        toolName in io.github.mangi.eta.agent.automation.AgentTaskTools.names ->
+                            ToolExecutionDecision.Reject(
+                                "AUTOMATION_TASK_TOOL_UNAVAILABLE",
+                                "自动任务不能创建或修改其他自动任务；本次调用未执行",
+                            )
+                        !session.mainScreenFallbackApproved.get() &&
+                            (AgentToolRequirements.requiresAccessibility(toolName) ||
+                                AgentOverlayVisibilityPolicy.isForegroundOperationTool(toolName) ||
+                                toolName == "browser_use") ->
+                            ToolExecutionDecision.Reject(
+                                "AUTOMATION_FOREGROUND_UNAVAILABLE",
+                                "自动任务没有前台入口，操作主屏需要用户批准；请改用灵屏工具，或先从前台发起",
+                            )
+                        else -> null
+                    }
+                    if (automationRejection != null) {
+                        automationRejection
                     } else {
                         val requiresAccessibility =
                             AgentToolRequirements.requiresAccessibility(toolName)

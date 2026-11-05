@@ -1,9 +1,11 @@
 package io.github.mangi.eta.ui.components
 
 import android.content.ContentValues
+import android.graphics.BitmapFactory
 import android.content.Context
 import android.content.Intent
 import android.os.Environment
+import android.net.Uri
 import android.provider.MediaStore
 import android.util.Base64
 import androidx.compose.foundation.Image
@@ -38,7 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -80,13 +84,19 @@ internal fun ImagePreviewOverlay(
         }
     }
 
+    // 换一张图就回到 1x：否则第二张会带着上一张的放大倍数和位移进来。
+    LaunchedEffect(pagerState.currentPage) {
+        scale = 1f
+        offset = Offset.Zero
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false),
     ) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.96f))) {
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                val bitmap = rememberDataUrlBitmap(images[page])
+                val bitmap = rememberMediaBitmap(images[page])
                 if (bitmap != null) {
                     Image(
                         bitmap = bitmap,
@@ -184,7 +194,11 @@ internal fun ImagePreviewOverlay(
                 ) {
                     PreviewMenuRow("保存到相册") {
                         menuVisible = false
-                        hint = if (saveDataUrlToGallery(context, images[pagerState.currentPage])) {
+                        val source = images[pagerState.currentPage]
+                        hint = if (!source.startsWith("data:image")) {
+                            // 文件/相册来源的图本来就在本地，不需要再存一份。
+                            "这张图已经在本地了"
+                        } else if (saveDataUrlToGallery(context, source)) {
                             "已保存到相册 Pictures/Eta"
                         } else {
                             "保存失败"
@@ -267,4 +281,58 @@ internal fun shareDataUrlImage(context: Context, dataUrl: String) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(send, "分享图片"))
+}
+
+/**
+ * 统一取图：dataUrl、`file://`、`content://` 与绝对路径都能解。
+ *
+ * 文件与相册来源用 `BitmapFactory` + `inSampleSize` 降采样：
+ * 4000×3000 的原图直接解码要吃几十 MB，低端机当场 OOM。
+ */
+@Composable
+private fun rememberMediaBitmap(source: String): ImageBitmap? {
+    val context = LocalContext.current
+    return remember(source) { decodeMediaBitmap(context, source) }
+}
+
+private fun decodeMediaBitmap(
+    context: Context,
+    source: String,
+    maxPx: Int = 2048,
+): ImageBitmap? = runCatching {
+    when {
+        source.startsWith("data:image") -> decodeDataUrlBitmap(source)
+        source.startsWith("content://") ->
+            context.contentResolver.openInputStream(Uri.parse(source))?.use { input ->
+                val bytes = input.readBytes()
+                decodeByteArraySampled(bytes, maxPx)
+            }
+        else -> {
+            val path = if (source.startsWith("file://")) Uri.parse(source).path else source
+            if (path.isNullOrBlank()) null else decodeFileSampled(path, maxPx)
+        }
+    }
+}.getOrNull()
+
+private fun decodeFileSampled(path: String, maxPx: Int): ImageBitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    val sample = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxPx)
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    return BitmapFactory.decodeFile(path, opts)?.asImageBitmap()
+}
+
+private fun decodeByteArraySampled(bytes: ByteArray, maxPx: Int): ImageBitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val sample = sampleSizeFor(bounds.outWidth, bounds.outHeight, maxPx)
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
+}
+
+private fun sampleSizeFor(width: Int, height: Int, maxPx: Int): Int {
+    var sample = 1
+    val longest = maxOf(width, height)
+    while (longest > 0 && longest / (sample * 2) >= maxPx) sample *= 2
+    return sample
 }

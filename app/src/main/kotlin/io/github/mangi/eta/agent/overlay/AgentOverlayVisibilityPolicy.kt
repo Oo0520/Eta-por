@@ -64,6 +64,7 @@ internal object AgentOverlayVisibilityPolicy {
 
     private val foregroundDrivingTools = setOf(
         "launch_app",
+        "lingscreen_open_app",
         "open_uri",
         "tap",
         "tap_area",

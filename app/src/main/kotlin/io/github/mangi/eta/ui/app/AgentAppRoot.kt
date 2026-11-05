@@ -409,6 +409,7 @@ fun AgentAppRoot(
         AgentAppShell(
             currentRoute = route,
             isCurrentRoute = backStack.lastOrNull() == route,
+            navigatorOpen = conversationNavigatorOpen,
             conversationPaneState = agentState.conversationPaneState,
             isConversationPaneOpen = conversationPaneOpen,
             conversationStatus = {
@@ -559,6 +560,7 @@ fun AgentAppRoot(
                         isPaused = agentState.runPaused,
                         state = agentState.homeState,
                         modelPickerState = agentState.modelPickerState,
+                        onOpenModelProviders = { pushRoute(AppRoute.ModelProviders) },
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
                         commands = agentState.agentCommands,
                         commandResult = agentState.homeState.commandResult,

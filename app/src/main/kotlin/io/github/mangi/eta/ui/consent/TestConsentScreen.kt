@@ -107,12 +107,14 @@ internal fun TestConsentScreen(
             Text(
                 text = title.ifBlank { "Eta 测试版 · 使用须知" },
                 style = MiuixTheme.textStyles.headline1,
+                // 不显式给颜色时，暗色主题下会落到纯黑，整行看不见
+                color = MiuixTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 text = "${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）· ${BuildConfig.APPLICATION_ID}",
                 style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurface,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
             Spacer(Modifier.height(2.dp))
             Text(
@@ -142,6 +144,7 @@ internal fun TestConsentScreen(
                         Text(
                             text = section.title,
                             style = MiuixTheme.textStyles.body1,
+                            color = MiuixTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f),
                         )
                         Text(

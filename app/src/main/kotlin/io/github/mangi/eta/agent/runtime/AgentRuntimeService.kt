@@ -761,6 +761,20 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 RunProgressNotifier.removeRun(session.runId, pinned = fluidPinned())
                 RunProgressNotifier.noteConcurrency(runningSessionCount())
             }
+            // 完成通知必须无条件发：needsOverlay 为假（会话被接管过 / 被替换）时提前 return，
+            // 之前它排在那句 return 后面，等于永远不发——实测通知渠道压根没被创建过。
+            io.github.mangi.eta.core.EtaTrace.log(
+                "completion.route",
+                "routed=" + session.virtualUiRouted.get() + " ok=" + result.ok + " runId=" + session.runId,
+            )
+            if (session.virtualUiRouted.get()) {
+                VirtualScreenNotification.showCompletion(
+                    this,
+                    result.ok,
+                    if (result.ok) result.content.trim() else result.error.orEmpty(),
+                    stopped = !result.ok && result.error == "已停止",
+                )
+            }
             if (!needsOverlay) return@post
             io.github.mangi.eta.core.EtaTrace.log(
                 "run.end",
@@ -768,13 +782,6 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                     "${AgentMemoryGate.sessionLimit()}",
             )
             syncRunningSessions()
-            if (session.virtualUiRouted.get()) {
-                VirtualScreenNotification.showCompletion(
-                    this,
-                    result.ok,
-                    if (result.ok) result.content.trim() else result.error.orEmpty(),
-                )
-            }
             runCatching {
                 if (result.ok) {
                     enterFinalState(
