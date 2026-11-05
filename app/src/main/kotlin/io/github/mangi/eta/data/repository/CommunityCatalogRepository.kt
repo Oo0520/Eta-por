@@ -121,7 +121,8 @@ internal object CommunityCatalogRepository {
             id = UUID.randomUUID().toString(),
             name = selection.name,
             baseUrl = selection.baseUrl,
-            isEnabled = false,
+            // 用户主动导入就是要用它；默认关闭会导致「导入了却在模型面板里看不到」。
+            isEnabled = true,
             models = models.mapIndexed { index, model ->
                 Model(
                     id = UUID.randomUUID().toString(),

@@ -21,6 +21,10 @@ internal object ProviderSourceRegistry {
         ProviderSourceTypes.STEPFUN,
         ProviderSourceTypes.SILICONFLOW,
         ProviderSourceTypes.OPENROUTER,
+        ProviderSourceTypes.ZHIPU,
+        ProviderSourceTypes.VOLCENGINE,
+        ProviderSourceTypes.QIANFAN,
+        ProviderSourceTypes.HUNYUAN,
     )
 
     fun normalize(sourceType: String?): String {
@@ -69,6 +73,10 @@ internal object ProviderSourceRegistry {
             BuiltinProviders.STEPFUN_ID -> ProviderSourceTypes.STEPFUN
             BuiltinProviders.SILICONFLOW_ID -> ProviderSourceTypes.SILICONFLOW
             BuiltinProviders.OPENROUTER_ID -> ProviderSourceTypes.OPENROUTER
+            BuiltinProviders.ZHIPU_ID -> ProviderSourceTypes.ZHIPU
+            BuiltinProviders.VOLCENGINE_ID -> ProviderSourceTypes.VOLCENGINE
+            BuiltinProviders.QIANFAN_ID -> ProviderSourceTypes.QIANFAN
+            BuiltinProviders.HUNYUAN_ID -> ProviderSourceTypes.HUNYUAN
             else -> null
         }
 
@@ -88,6 +96,10 @@ internal object ProviderSourceRegistry {
             httpUrl.host == "dashscope.aliyuncs.com" -> ProviderSourceTypes.BAILIAN
             httpUrl.host.endsWith(".maas.aliyuncs.com") -> ProviderSourceTypes.BAILIAN
             httpUrl.host == "api.siliconflow.cn" -> ProviderSourceTypes.SILICONFLOW
+            httpUrl.host == "open.bigmodel.cn" -> ProviderSourceTypes.ZHIPU
+            httpUrl.host == "ark.cn-beijing.volces.com" -> ProviderSourceTypes.VOLCENGINE
+            httpUrl.host == "qianfan.baidubce.com" -> ProviderSourceTypes.QIANFAN
+            httpUrl.host == "api.hunyuan.cloud.tencent.com" -> ProviderSourceTypes.HUNYUAN
             httpUrl.host == "openrouter.ai" -> ProviderSourceTypes.OPENROUTER
             else -> null
         }

@@ -571,7 +571,6 @@ fun AgentAppRoot(
                                     agentState.updateReasoningEffort(action.effort)
                                 AgentHomeAction.CompactContext -> agentState.compactCurrentContext()
                                 is AgentHomeAction.ModelSelected -> agentState.selectModel(action.modelId)
-                                is AgentHomeAction.OpenConversation -> agentState.selectConversation(action.conversationKey)
                                 is AgentHomeAction.SubmitMessage -> { requestExecutionNotifications(); agentState.sendCurrentMessage(action.text) }
                                 is AgentHomeAction.InterruptAndSubmitMessage -> { requestExecutionNotifications(); agentState.interruptAndSendCurrentMessage(action.text) }
                                 is AgentHomeAction.QueueMessage -> { requestExecutionNotifications(); agentState.queueCurrentMessage(action.text) }
@@ -957,6 +956,9 @@ fun AgentAppRoot(
             }
             entry<AppRoute.SelfCheck>(swipeDismiss = swipeDismiss) {
                 io.github.mangi.eta.ui.screens.selfcheck.FeatureSelfCheckScreen(onBack = { popRoute() })
+            }
+            entry<AppRoute.Support>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.support.SupportScreen(onBack = { popRoute() })
             }
             entry<AppRoute.DiagnosticsPatrol>(swipeDismiss = swipeDismiss) {
                 io.github.mangi.eta.ui.screens.selfcheck.DiagnosticsPatrolScreen(onBack = { popRoute() })

@@ -37,6 +37,10 @@ internal object ProviderSourceTypes {
     const val STEPFUN = "stepfun"
     const val SILICONFLOW = "siliconflow"
     const val OPENROUTER = "openrouter"
+    const val ZHIPU = "zhipu"
+    const val VOLCENGINE = "volcengine"
+    const val QIANFAN = "qianfan"
+    const val HUNYUAN = "hunyuan"
 }
 
 @Serializable
@@ -162,8 +166,8 @@ internal val ProviderSetting.typeLabel: String
     get() = when (this) {
         is AnthropicProviderSetting -> "Anthropic Messages"
         is GeminiProviderSetting -> "Gemini Interactions"
-        is OpenAiCompatibleProviderSetting -> "OpenAI-compatible"
-        is CustomProviderSetting -> "Custom OpenAI-compatible"
+        is OpenAiCompatibleProviderSetting -> "OpenAI 兼容"
+        is CustomProviderSetting -> "自定义 OpenAI 兼容"
     }
 
 internal val ProviderSetting.displayApiKeySummary: String
