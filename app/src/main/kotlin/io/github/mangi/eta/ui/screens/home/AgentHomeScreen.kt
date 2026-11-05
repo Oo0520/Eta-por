@@ -39,6 +39,8 @@ internal fun AgentHomeScreen(
     /** 输入框上方两个入口用的工具/技能开关状态。 */
     toolAccess: ToolAccessUiState = ToolAccessUiState(),
     onRefreshToolAccess: () -> Unit = {},
+    /** 未接入模型时，空状态卡与提示条上的「去接入」。 */
+    onOpenModelProviders: () -> Unit = {},
     isDrawerOpen: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -48,6 +50,7 @@ internal fun AgentHomeScreen(
             messages = state.messages,
             draftKey = conversationKey,
             modelPickerState = modelPickerState,
+            onOpenModelProviders = onOpenModelProviders,
             isCompacting = state.isCompacting,
             input = state.input,
             isStreaming = state.isStreaming,

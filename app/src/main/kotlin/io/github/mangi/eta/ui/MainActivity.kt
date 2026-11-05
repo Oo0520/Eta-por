@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
                     onResolvedDarkModeChange = ::updateSystemBars,
                 ) {
                   ProvideEtaTextToolbar {
+                    io.github.mangi.eta.ui.consent.TestConsentGate {
                     AgentAppRoot(
                         assistantConversationKey = assistantConversationKey,
                         assistantConversationSource = assistantConversationSource,
@@ -100,6 +101,7 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                     io.github.mangi.eta.agent.display.VirtualScreenAppConflictDialog()
+                    }
                   }
                 }
             }

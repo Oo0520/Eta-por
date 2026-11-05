@@ -151,7 +151,11 @@ internal object DiagnosticsBundle {
             append("主屏回退：").append(settings.virtualScreenFallbackEnabled).append('\n')
             append("换应用自动重启：").append(settings.virtualScreenAutoRestartApps).append('\n')
             append("空闲回收：").append(settings.virtualScreenIdleTimeoutMinutes).append(" 分钟\n")
-            append("目标帧率：").append(settings.virtualScreenFrameRate).append('\n')
+            append("出帧档位：")
+                .append(
+                    io.github.mangi.eta.agent.display.VirtualScreenSession.currentFrameIntervalMs()
+                )
+                .append("ms\n")
             append("小窗：").append(settings.virtualScreenFloatWindowEnabled)
                 .append("，贴边折叠：").append(settings.virtualScreenFloatEdgeCollapseEnabled).append('\n')
         }

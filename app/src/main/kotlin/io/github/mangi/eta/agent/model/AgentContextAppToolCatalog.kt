@@ -50,7 +50,7 @@ internal object AgentContextAppToolCatalog {
             .put(
                 AgentToolSchema.function(
                     name = "launch_app",
-                    description = "启动一个已安装 Android 应用。优先提供 package_name；只有应用名时允许模糊匹配，匹配多个会返回候选而不会启动。",
+                    description = "在【真机】上启动一个已安装 Android 应用，用户能立刻在自己手机上看到。用户说「打开微信」「切到某应用」这类一次性指令时用它。不会创建灵屏会话，后续点击也留在真机。优先提供 package_name；只有应用名时允许模糊匹配，匹配多个会返回候选而不会启动。",
                     parameters = JSONObject()
                         .put("type", "object")
                         .put(
@@ -67,6 +67,30 @@ internal object AgentContextAppToolCatalog {
                                     JSONObject()
                                         .put("type", "string")
                                         .put("description", "应用显示名，例如 QQ")
+                                )
+                        )
+                )
+            )
+            .put(
+                AgentToolSchema.function(
+                    name = "lingscreen_open_app",
+                    description = "在【灵屏】（独立虚拟屏）里打开应用，画面出现在悬浮窗中，真机屏幕不受影响。仅在需要在该应用内连续操作（点击、输入、翻页、下单、填写表单）时使用；需要用户亲眼确认或只需打开看一眼时，改用 launch_app。调用后本次任务的后续 UI 工具都会作用于灵屏。灵屏未开启时返回 LINGSCREEN_DISABLED。",
+                    parameters = JSONObject()
+                        .put("type", "object")
+                        .put(
+                            "properties",
+                            JSONObject()
+                                .put(
+                                    "package_name",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("description", "精确 Android 包名，例如 com.tencent.mm")
+                                )
+                                .put(
+                                    "app_name",
+                                    JSONObject()
+                                        .put("type", "string")
+                                        .put("description", "应用显示名，例如 微信")
                                 )
                         )
                 )

@@ -13,7 +13,11 @@ internal data class AgentModelPickerUiState(
     val providerGroups: List<AgentModelProviderGroupUi> = emptyList(),
     val selectedModel: AgentModelOptionUi? = null,
     val isChanging: Boolean = false,
-)
+) {
+    /** 有选中模型且至少有一个可用 provider 组，才算真的能发消息。 */
+    val hasUsableModel: Boolean
+        get() = selectedModel != null && providerGroups.isNotEmpty()
+}
 
 @Immutable
 internal data class AgentModelProviderGroupUi(

@@ -78,6 +78,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -191,6 +192,8 @@ internal fun AgentChatBody(
     onSuggestionClick: (String) -> Unit,
     onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
+    /** 空状态卡与输入框提示条上的「去接入」：跳到模型服务页。 */
+    onOpenModelProviders: () -> Unit = {},
     characterName: String? = null,
     /** 草稿键（会话 id）：转给输入框，让未发送的文字按会话存下来。 */
     draftKey: String? = null,
@@ -309,6 +312,7 @@ internal fun AgentChatBody(
             visibleMessages = visibleMessages,
             draftKey = draftKey,
             hasMessages = visibleMessages.isNotEmpty(),
+            onOpenModelProviders = onOpenModelProviders,
             scrollState = scrollState,
             input = input,
             modelPickerState = modelPickerState,
@@ -403,6 +407,8 @@ private fun AgentChatScaffold(
     draftKey: String? = null,
     visibleMessages: List<AgentChatMessageUi>,
     hasMessages: Boolean,
+    /** 未接入模型时的「去接入」入口：一路透传到空状态卡与输入框提示条。 */
+    onOpenModelProviders: () -> Unit = {},
     scrollState: LazyListState,
     input: String,
     modelPickerState: AgentModelPickerUiState,
@@ -500,6 +506,7 @@ private fun AgentChatScaffold(
                 messageBackdrop = messageBackdrop.takeIf { frostEnabled },
                 input = input,
                 modelPickerState = modelPickerState,
+                onOpenModelProviders = onOpenModelProviders,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
                 showContextUsage = hasMessages,
@@ -567,6 +574,8 @@ private fun AgentChatScaffold(
                 EmptyChatState(
                     showSuggestions = showEmptySuggestions,
                     onSuggestionClick = onSuggestionClick,
+                    modelReady = modelPickerState.hasUsableModel,
+                    onOpenModelProviders = onOpenModelProviders,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -1148,6 +1157,8 @@ private fun AgentChatBottomBar(
     messageBackdrop: LayerBackdrop?,
     input: String,
     modelPickerState: AgentModelPickerUiState,
+    /** 未接入模型时输入框上方提示条的「去接入」。 */
+    onOpenModelProviders: () -> Unit = {},
     isCompacting: Boolean,
     contextUsage: AgentContextUsageUi,
     showContextUsage: Boolean,
@@ -1293,6 +1304,7 @@ private fun AgentChatBottomBar(
                 input = input,
                 draftKey = draftKey,
                 modelPickerState = modelPickerState,
+                onOpenModelProviders = onOpenModelProviders,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
                 showContextUsage = showContextUsage,
@@ -1385,6 +1397,9 @@ internal fun shouldRequestInitialBottom(
 private fun EmptyChatState(
     showSuggestions: Boolean,
     onSuggestionClick: (String) -> Unit,
+    /** 有可用模型才显示建议词；没模型时先解决「发不出去」的问题。 */
+    modelReady: Boolean,
+    onOpenModelProviders: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val character = LocalRoleplayChat.current
@@ -1440,7 +1455,11 @@ private fun EmptyChatState(
                 )
             } else {
                 Text(
-                    text = stringResource(R.string.ui_how_can_i_help_you_e75391),
+                    text = if (modelReady) {
+                        stringResource(R.string.ui_how_can_i_help_you_e75391)
+                    } else {
+                        "先接入一个模型"
+                    },
                     style = MiuixTheme.textStyles.headline1,
                     color = MiuixTheme.colorScheme.onSurface,
                 )
@@ -1448,8 +1467,15 @@ private fun EmptyChatState(
 
             Spacer(modifier = Modifier.height(32.dp))
 
+            if (!modelReady) {
+                ModelSetupCard(
+                    onOpenModelProviders = onOpenModelProviders,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+            }
+
             AnimatedVisibility(
-                visible = showSuggestions && !isCharacterConversation,
+                visible = showSuggestions && !isCharacterConversation && modelReady,
                 enter = fadeIn(
                     animationSpec = tween(durationMillis = 220)
                 ) + slideInVertically(
@@ -1484,6 +1510,50 @@ private fun EmptyChatState(
                 }
             }
         }
+    }
+}
+
+/**
+ * 空会话 + 没有可用模型时的引导卡。
+ *
+ * 为什么不用气泡 tour：配置模型要跨三层页面、还要填 Key，
+ * 气泡挡着反而不好操作；这里直接把入口摆在首屏正中间，一步进目录。
+ */
+@Composable
+private fun ModelSetupCard(
+    onOpenModelProviders: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // 不用 EtaCard：它的 insideMargin 在这张「标题 + 两行说明 + 按钮」的卡上会让首行
+    // 贴到圆角内沿，实测被白色圆角裁掉半行。这里改成自绘容器 + 显式 padding，
+    // 内边距由 padding 保证，内容一定落在 surface 之内。
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .squircleSurface(color = MiuixTheme.colorScheme.surface, cornerRadius = 20.dp)
+            .squircleBorder(
+                width = 0.5.dp,
+                color = MiuixTheme.colorScheme.outline.copy(alpha = 0.5f),
+                cornerRadius = 20.dp,
+            )
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+    ) {
+        Text(
+            text = "还没有可用的模型",
+            style = MiuixTheme.textStyles.body1,
+            fontWeight = FontWeight.SemiBold,
+            color = MiuixTheme.colorScheme.onSurface,
+        )
+        Text(
+            text = "接入一个供应商和模型就能开始对话。目录里有一批现成配置，填个 Key 就行。",
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
+        )
+        EtaTextButton(
+            text = "从目录添加",
+            onClick = onOpenModelProviders,
+        )
     }
 }
 

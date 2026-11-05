@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.accessibility
 
+import io.github.mangi.eta.BuildConfig
 import android.net.Uri
 import android.os.Bundle
 
@@ -12,12 +13,15 @@ import android.os.Bundle
 internal object AccessibilityProtectionProtocol {
     const val VERSION = 1
 
-    const val ACTION_SET =
-        "io.github.mangi.eta.action.SET_ACCESSIBILITY_PROTECTION"
-    const val ACTION_RECOVER =
-        "io.github.mangi.eta.action.RECOVER_ACCESSIBILITY_SERVICE"
-    const val PERMISSION =
-        "io.github.mangi.eta.permission.CONTROL_ACCESSIBILITY_PROTECTION"
+    // 包名由安装身份决定（正式版 io.github.mangi.eta / 测试版 .beta），
+    // 这里不能写字面量：测试版必须与自己的 manifest、自己的 provider 一致，
+    // 否则跨进程校验会指向另一个包。BuildConfig 不是编译期常量，故用 val。
+    val ACTION_SET =
+        "${BuildConfig.APPLICATION_ID}.action.SET_ACCESSIBILITY_PROTECTION"
+    val ACTION_RECOVER =
+        "${BuildConfig.APPLICATION_ID}.action.RECOVER_ACCESSIBILITY_SERVICE"
+    val PERMISSION =
+        "${BuildConfig.APPLICATION_ID}.permission.CONTROL_ACCESSIBILITY_PROTECTION"
     const val RECEIVER_PACKAGE = "android"
 
     const val EXTRA_PROTOCOL_VERSION = "protocol_version"
@@ -30,7 +34,7 @@ internal object AccessibilityProtectionProtocol {
     const val SETTING_NAME = "eta_accessibility_protection_enabled"
     const val DEFAULT_ENABLED = false
 
-    const val HEALTH_AUTHORITY = "io.github.mangi.eta.accessibility.health"
+    val HEALTH_AUTHORITY = "${BuildConfig.APPLICATION_ID}.accessibility.health"
     const val HEALTH_METHOD = "accessibility_health"
     const val HEALTH_STATUS = "status"
     const val HEALTH_STATUS_CONNECTED = "connected"

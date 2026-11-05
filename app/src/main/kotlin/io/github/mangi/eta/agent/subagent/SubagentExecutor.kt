@@ -8,6 +8,9 @@ import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.skill.SkillContext
+import io.github.mangi.eta.data.model.ReasoningEffort
+import io.github.mangi.eta.data.model.enabledModel
+import io.github.mangi.eta.data.model.enabledModelByApiId
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
 import io.github.mangi.eta.agent.tool.AgentToolCapabilities
 import java.util.concurrent.ConcurrentHashMap
@@ -17,6 +20,18 @@ import org.json.JSONObject
 /**
  * 执行单次 `subagent` 工具调用：管理独立子上下文、过滤工具目录、实时镜像内部步骤，并向父 Agent 返回结构化摘要。
  */
+/**
+ * 授权模型解析结果：内部 id（UUID，存储用）↔ 对外 modelId（主 Agent 看到并传回的）↔ 显示名。
+ *
+ * 两者混用是之前「授权了却选不中」「面板显示一串 UUID」的根因，这里统一收口。
+ */
+private data class GrantedModel(
+    val uuid: String,
+    val apiId: String,
+    val displayName: String,
+    val allowedEfforts: List<String>,
+)
+
 internal class SubagentExecutor(
     private val conversationKey: String,
     private val parentController: AgentRunController,
@@ -139,34 +154,93 @@ internal class SubagentExecutor(
             it.isNotBlank() && it.lowercase() !in setOf("default", "primary", "inherit", "auto")
         }
         val requestedEffort = args.optString("reasoning_effort").trim().takeIf { it.isNotBlank() }
-        val allowModelPick = runCatching {
+        val subagentSettings = runCatching {
             kotlinx.coroutines.runBlocking {
                 io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
-            }.allowModelSelection
-        }.getOrDefault(false)
+            }
+        }.getOrNull()
+        val allowModelPick = subagentSettings?.allowModelSelection == true
+        val grants = if (allowModelPick) subagentSettings?.effectiveGrants.orEmpty() else emptyList()
+
+        // 授权里存的是模型内部 id（UUID），主 Agent 看到并传回来的是对外 modelId（如 cn:hy3）。
+        // 这里解析一次，后续统一用 GrantedModel，避免两套 id 混用。
+        val providerModels = runCatching {
+            kotlinx.coroutines.runBlocking {
+                io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                io.github.mangi.eta.data.repository.ProviderRepository.allProviders()
+            }
+        }.getOrDefault(emptyList())
+        val granted = grants.mapNotNull { grant ->
+            // 优先按对外 id 解析（新数据），回退按内部 UUID（旧数据）。
+            val resolved = providerModels.enabledModelByApiId(grant.modelId)
+                ?: providerModels.enabledModel(grant.modelId)
+                ?: return@mapNotNull null
+            val selectable = resolved.model.reasoningCapabilities
+                ?.selectableEfforts?.map { it.wireValue }.orEmpty()
+            GrantedModel(
+                // 内部调用仍需要真实 UUID；对外一律用 apiId。
+                uuid = resolved.model.id,
+                apiId = resolved.model.modelId,
+                displayName = resolved.model.displayName.ifBlank { resolved.model.modelId },
+                allowedEfforts = if (grant.allowedEfforts.isEmpty()) {
+                    selectable
+                } else {
+                    selectable.filter { it in grant.allowedEfforts }
+                },
+            )
+        }
+
+        val requestedGrant = requestedModel?.let { raw ->
+            val target = normalizeModelId(raw)
+            granted.firstOrNull { normalizeModelId(it.apiId) == target || it.uuid == raw }
+        }
         if (allowModelPick && requestedModel != null) {
-            val allowed = runCatching {
-                kotlinx.coroutines.runBlocking {
-                    io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings()
-                }.allowedModelIds
-            }.getOrDefault(emptyList())
-            // 模型 id 可能带服务商前缀（cn: / openai: …），比较时去掉前缀再比，避免勾选后仍被判未授权。
-            val target = normalizeModelId(requestedModel)
-            val matched = allowed.isEmpty() || allowed.any { normalizeModelId(it) == target }
-            if (!matched) {
+            if (granted.isNotEmpty() && requestedGrant == null) {
                 SubagentSessionStore.releaseRunning(conversationKey, subagentId)
                 controllerBinding.close()
                 return errorResult(
                     "MODEL_NOT_AUTHORIZED",
-                    "模型 $requestedModel 没有在子智能体设置里授权；请让用户在「授权模型」里勾选后再派发。",
+                    "模型 $requestedModel 没有在子智能体设置里授权；只能从这些里挑：" +
+                        granted.joinToString(", ") { it.apiId } + "。",
                 )
             }
+            // 思考强度必须落在「该模型支持的档位 ∩ 用户授权给它的档位」里；否则明确报错。
+            if (requestedEffort != null) {
+                val options = requestedGrant?.allowedEfforts.orEmpty()
+                val wire = ReasoningEffort.fromWireValue(requestedEffort)?.wireValue ?: requestedEffort
+                val label = requestedGrant?.apiId ?: requestedModel
+                if (options.isEmpty()) {
+                    SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+                    controllerBinding.close()
+                    return errorResult(
+                        "SUBAGENT_EFFORT_UNSUPPORTED",
+                        "模型 $label 没有可用的思考强度档位；本次请省略 reasoning_effort，或换一个支持思考强度的模型。",
+                    )
+                }
+                if (wire !in options) {
+                    SubagentSessionStore.releaseRunning(conversationKey, subagentId)
+                    controllerBinding.close()
+                    return errorResult(
+                        "SUBAGENT_EFFORT_UNSUPPORTED",
+                        "模型 $label 不支持思考强度 $requestedEffort；可选：${options.joinToString(", ")}。",
+                    )
+                }
+            }
         }
+        // 未指定模型时不报错，按「该类型的默认模型 → 授权列表第一个」兜底。
+        // 「按类型默认模型」已移除：不再读取 profileDefaults，未指定时统一用授权列表第一个。
+        val autoGrant = if (allowModelPick && requestedModel == null) {
+            granted.firstOrNull()
+        } else {
+            null
+        }
+        val effectiveModelId = requestedGrant?.uuid ?: autoGrant?.uuid
+        val effectiveEffort = requestedEffort
         val useOverride = allowModelPick && configForOverride != null &&
-            (requestedModel != null || requestedEffort != null)
+            (effectiveModelId != null || effectiveEffort != null)
         val resolvedConfig = runCatching {
             if (useOverride) {
-                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(requestedModel, requestedEffort) }
+                kotlinx.coroutines.runBlocking { configForOverride!!.invoke(effectiveModelId, effectiveEffort) }
             } else {
                 configProvider()
             }
@@ -176,12 +250,14 @@ internal class SubagentExecutor(
             return errorResult("SUBAGENT_CONFIG_ERROR", throwable.message ?: "无法加载 Subagent 模型配置")
         }
         val modelLabel = resolvedConfig.modelDisplayName.ifBlank { resolvedConfig.model }
+        val effortLabel = resolvedConfig.effectiveReasoningEffort.wireValue
         val tracker = StepTracker(
             subagentId = subagentId,
             subagentType = profile.name,
             description = description,
             prompt = prompt,
             model = modelLabel,
+            effort = effortLabel,
             resumed = isResume,
         )
 
@@ -193,7 +269,7 @@ internal class SubagentExecutor(
             val encoded = tracker.snapshot().encode()
             latestSnapshots[toolCall.id] = encoded
             // 消息层的更新在切走会话时可能被丢掉，这里再存一份供界面兜底读取。
-            SubagentRunRegistry.publishSnapshot(subagentId, encoded)
+            SubagentRunRegistry.publishSnapshot(subagentId, toolCall.id, encoded)
             onProgress(
                 AgentEvent.SubagentProgress(
                     round = parentRound,
@@ -310,6 +386,8 @@ internal class SubagentExecutor(
                     .put("subagent_type", profile.name)
                     .put("description", description)
                     .put("model", modelLabel)
+                    .put("effort", effortLabel)
+                    .put("model_auto_selected", autoGrant != null)
                     .put("status", SubagentActivitySnapshot.STATUS_COMPLETED)
                     .put("tool_calls", tracker.toolCount())
                     .put("summary", response.content)
@@ -532,6 +610,7 @@ internal class SubagentExecutor(
         private val description: String,
         private val prompt: String,
         private val model: String,
+        private val effort: String,
         private val resumed: Boolean,
     ) {
         private val lock = Any()
@@ -702,6 +781,7 @@ internal class SubagentExecutor(
                 description = description,
                 prompt = prompt,
                 model = model,
+                effort = effort,
                 resumed = resumed,
                 status = status,
                 currentAction = currentAction,

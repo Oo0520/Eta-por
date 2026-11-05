@@ -240,7 +240,14 @@ private fun SubagentInspectorContent(
             }
             if (snapshot.model.isNotBlank()) {
                 Text(
-                    text = "· ${snapshot.model}",
+                    text = buildString {
+                        append("· ")
+                        append(snapshot.model)
+                        if (snapshot.effort.isNotBlank()) {
+                            append(" · ")
+                            append(snapshot.effort)
+                        }
+                    },
                     style = MiuixTheme.textStyles.footnote2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.75f),
                     maxLines = 1,

@@ -67,6 +67,8 @@ import io.github.mangi.eta.ui.components.topBarContainerColor
 import io.github.mangi.eta.ui.model.ConversationPaneUiState
 import io.github.mangi.eta.ui.model.ConversationSummaryUi
 import io.github.mangi.eta.ui.navigation.AppRoute
+import io.github.mangi.eta.ui.onboarding.OnboardingHost
+import io.github.mangi.eta.ui.onboarding.SurfaceKey
 import top.yukonga.miuix.kmp.basic.DropdownImpl
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
@@ -104,7 +106,7 @@ internal fun AgentAppShell(
     onNewConversationInCategory: (String?) -> Unit = { _ -> onNewConversation() },
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
-    kimiWebLabel: String,
+    kimiWebLabel: String?,
     canStopKimiWeb: Boolean,
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
@@ -141,6 +143,8 @@ internal fun AgentAppShell(
     workspaceContent: (@Composable () -> Unit)? = null,
     /** 顶栏放不下的低频状态提示，改在 ⋯ 菜单里以文字列出。 */
     conversationTrimmed: Pair<Int, Int>? = null,
+    /** 会话导航面板是否打开：手势教练「上滑小白条」那一步的完成条件。 */
+    navigatorOpen: Boolean = false,
     modifier: Modifier = Modifier,
     homeCharacter: RoleplayChatUi? = null,
     onOpenCharacter: () -> Unit = {},
@@ -250,6 +254,18 @@ internal fun AgentAppShell(
         } else {
             pageContent()
         }
+
+        // 新手引导层：必须在 Box 的最末尾，才能盖住页面、侧栏与工作区。
+        // Dialog 是独立 window，天然在这层之上，不需要额外处理。
+        OnboardingHost(
+            currentRoute = currentRoute,
+            surface = when {
+                isConversationPaneOpen -> SurfaceKey.Sidebar
+                workspaceVisible -> SurfaceKey.Workspace
+                else -> null
+            },
+            navigatorOpen = navigatorOpen,
+        )
     }
 }
 
@@ -263,7 +279,7 @@ private fun AgentTopBar(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
-    kimiWebLabel: String,
+    kimiWebLabel: String?,
     canStopKimiWeb: Boolean,
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
@@ -399,7 +415,7 @@ private fun TopBarOverflowMenu(
     onNewConversation: () -> Unit,
     onOpenTerminal: () -> Unit,
     onLaunchKimiWeb: () -> Unit,
-    kimiWebLabel: String,
+    kimiWebLabel: String?,
     canStopKimiWeb: Boolean,
     onStopKimiWeb: () -> Unit,
     onRefreshKimiWeb: () -> Unit,
@@ -486,7 +502,8 @@ private fun TopBarOverflowMenu(
                         },
                     ) to onOpenBranchGraph,
                 )
-                // Kimi Code 只占一个位置：没跑给启动（未装则跳去安装页），跑着给停止。
+                // Kimi Code 只有本机已安装时才占一个位置：没跑给「启动 Kimi Web」，跑着给「停止」。
+                // 未安装或还在检测（label 为 null）时菜单里不出现，安装入口留在「Linux 环境」页。
                 if (canStopKimiWeb) {
                     add(
                         DropdownItem(
@@ -501,18 +518,20 @@ private fun TopBarOverflowMenu(
                         ) to onStopKimiWeb,
                     )
                 } else {
-                    add(
-                        DropdownItem(
-                            text = kimiWebLabel,
-                            icon = { modifier ->
-                                Icon(
-                                    imageVector = kimiMenuIcon,
-                                    contentDescription = null,
-                                    modifier = modifier.size(TopBarMenuIconSize),
-                                )
-                            },
-                        ) to onLaunchKimiWeb,
-                    )
+                    kimiWebLabel?.let { label ->
+                        add(
+                            DropdownItem(
+                                text = label,
+                                icon = { modifier ->
+                                    Icon(
+                                        imageVector = kimiMenuIcon,
+                                        contentDescription = null,
+                                        modifier = modifier.size(TopBarMenuIconSize),
+                                    )
+                                },
+                            ) to onLaunchKimiWeb,
+                        )
+                    }
                 }
                 // 以下两类只展示状态，点了只关菜单。
                 conversationTrimmed?.let { (_, count) ->

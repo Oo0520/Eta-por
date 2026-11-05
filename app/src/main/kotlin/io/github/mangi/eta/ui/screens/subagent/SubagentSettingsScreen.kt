@@ -45,6 +45,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import io.github.mangi.eta.data.model.SubagentModelGrant
+import io.github.mangi.eta.data.model.SubagentProfileDefault
+import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -177,6 +182,23 @@ internal fun SubagentSettingsScreen(
     var showParallelDialog by remember { mutableStateOf(false) }
     var showAuthorizedSheet by remember { mutableStateOf(false) }
     var authorizedDraft by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // 每个授权模型允许的思考强度；空集合表示「该模型全部档位」。
+    var grantDraft by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
+    // 每个授权模型真实支持的档位；空表示未知，退回通用全集。
+    var modelEfforts by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    // 内部 UUID → 显示名：授权列表与类型默认都按 UUID 存，展示时必须换成名字。
+    // 授权与类型默认统一存【对外 modelId】（cn:hy3）；这里同时准备：
+    // 1) apiId → 显示名；2) 历史 UUID → apiId 的迁移映射。
+    val nameByApiId = remember(providers) {
+        providers.flatMap { it.models }.associate { it.modelId to it.displayName }
+    }
+    val apiIdByUuid = remember(providers) {
+        providers.flatMap { it.models }.associate { it.id to it.modelId }
+    }
+    fun canonicalModelId(id: String): String =
+        if (id in nameByApiId) id else apiIdByUuid[id] ?: id
+    fun modelDisplayName(id: String): String =
+        nameByApiId[id] ?: nameByApiId[apiIdByUuid[id].orEmpty()] ?: id
     var parallelDraft by remember { mutableStateOf("8") }
     var showRoundsDialog by remember { mutableStateOf(false) }
     var roundsDraft by remember { mutableStateOf("12") }
@@ -209,7 +231,39 @@ internal fun SubagentSettingsScreen(
                 onDismissRequest = { showAuthorizedSheet = false },
                 insideMargin = DpSize(0.dp, 0.dp),
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+                    LaunchedEffect(authorizedDraft) {
+                        val ids = authorizedDraft.toList()
+                        modelEfforts = if (ids.isEmpty()) {
+                            emptyMap()
+                        } else {
+                            withContext(Dispatchers.IO) {
+                                runCatching {
+                                    io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                                    val all = io.github.mangi.eta.data.repository.ProviderRepository.allProviders()
+                                    ids.associateWith { id ->
+                                        all.enabledModel(id)?.model?.reasoningCapabilities
+                                            ?.selectableEfforts?.map { it.wireValue }.orEmpty()
+                                    }
+                                }.getOrDefault(emptyMap())
+                            }
+                        }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                    val invalidGrants = authorizedDraft.filter {
+                        it !in nameByApiId && apiIdByUuid[it] == null
+                    }
+                    if (invalidGrants.isNotEmpty()) {
+                        EtaTextButton(
+                            text = "清理 ${invalidGrants.size} 个失效授权",
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { authorizedDraft = authorizedDraft - invalidGrants.toSet() },
+                        )
+                    }
                     SubagentModelMultiPickerContent(
                         pickerState = pickerState,
                         selectedIds = authorizedDraft,
@@ -218,6 +272,7 @@ internal fun SubagentSettingsScreen(
                             else authorizedDraft + id
                         },
                     )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -233,9 +288,15 @@ internal fun SubagentSettingsScreen(
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             onClick = {
                                 val snapshot = authorizedDraft.toList()
+                                // 档位不再由用户逐项配置：留空＝该模型支持的全部档位，
+                                // 具体用哪一档交给主 Agent 按任务决定。
+                                val grants = snapshot.map { id -> SubagentModelGrant(modelId = id) }
                                 scope.launch {
                                     RuntimeConfigRepository.setSubagentSettings(
-                                        subagentSettings.copy(allowedModelIds = snapshot),
+                                        subagentSettings.copy(
+                                            allowedModelIds = snapshot,
+                                            allowedGrants = grants,
+                                        ),
                                     )
                                 }
                                 showAuthorizedSheet = false
@@ -245,7 +306,7 @@ internal fun SubagentSettingsScreen(
                 }
             }
 
-            val currentProfile = inspectedProfile
+                        val currentProfile = inspectedProfile
             OverlayBottomSheet(
                 show = currentProfile != null,
                 title = currentProfile?.name.orEmpty(),
@@ -600,6 +661,7 @@ internal fun SubagentSettingsScreen(
                     },
                 )
                 EtaPreferenceDivider()
+                EtaPreferenceDivider()
                 EtaSwitchPreference(
                     title = "允许主 Agent 为子智能体选择模型",
                     summary = "开启后，主 Agent 可以从下方授权模型中，为每个子智能体选择提供方、模型和推理强度；" +
@@ -636,7 +698,11 @@ internal fun SubagentSettingsScreen(
                         )
                     },
                     onClick = {
-                        authorizedDraft = subagentSettings.allowedModelIds.toSet()
+                        authorizedDraft = subagentSettings.allowedModelIds
+                            .map { canonicalModelId(it) }.toSet()
+                        grantDraft = subagentSettings.effectiveGrants.associate {
+                            canonicalModelId(it.modelId) to it.allowedEfforts.toSet()
+                        }
                         showAuthorizedSheet = true
                     },
                 )
@@ -795,12 +861,12 @@ private fun SubagentModelMultiPickerContent(
                 }
                 items(
                     items = group.models,
-                    key = { model -> "pick:${model.providerId}:${model.id}" },
+                    key = { model -> "pick:${model.providerId}:${model.modelId}" },
                 ) { model ->
                     SubagentModelOptionRow(
                         model = model,
-                        selected = model.id in selectedIds,
-                        onClick = { onToggle(model.id) },
+                        selected = model.modelId in selectedIds,
+                        onClick = { onToggle(model.modelId) },
                     )
                 }
             }

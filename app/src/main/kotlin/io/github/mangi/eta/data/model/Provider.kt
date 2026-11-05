@@ -217,6 +217,18 @@ internal fun List<ProviderSetting>.enabledModel(modelId: String?): ProviderModel
     return null
 }
 
+/** 按【对外 modelId】查找（如 cn:hy3）：授权与配置里一律用对外 id，避免内部 UUID 失效。 */
+internal fun List<ProviderSetting>.enabledModelByApiId(apiId: String?): ProviderModel? {
+    apiId ?: return null
+    for (provider in this) {
+        if (!provider.isEnabled) continue
+        provider.models.firstOrNull { it.isEnabled && it.modelId == apiId }?.let {
+            return ProviderModel(provider, it)
+        }
+    }
+    return null
+}
+
 internal fun ProviderSetting.selectedOrFirstModel(modelId: String?): Model? =
     models.firstOrNull { it.id == modelId && it.isEnabled }
         ?: models.filter { it.isEnabled }.minByOrNull { it.sortOrder }

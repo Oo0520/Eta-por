@@ -8,6 +8,20 @@ import kotlinx.serialization.Serializable
  * [modelId] 为空表示跟随主 Agent 当前生效的模型；指定具体 Model.id 且对应服务商与模型仍启用时，
  * Subagent 优先使用该模型运行。
  */
+/** 单个模型的授权范围：[allowedEfforts] 为空表示该模型支持的全部档位。 */
+@Serializable
+internal data class SubagentModelGrant(
+    val modelId: String = "",
+    val allowedEfforts: List<String> = emptyList(),
+)
+
+/** 某个子智能体类型的默认选择：模型 + 思考强度；都为空表示不设置。 */
+@Serializable
+internal data class SubagentProfileDefault(
+    val modelId: String = "",
+    val effort: String = "",
+)
+
 @Serializable
 internal data class SubagentSettings(
     val modelId: String? = null,
@@ -18,6 +32,10 @@ internal data class SubagentSettings(
     val allowModelSelection: Boolean = false,
     /** 授权给主 Agent 挑选的模型 id 列表；为空表示不限制（可选全部已启用模型）。 */
     val allowedModelIds: List<String> = emptyList(),
+    /** 每个授权模型可用的思考强度档位；为空时沿用 [allowedModelIds]（视为不限档位）。 */
+    val allowedGrants: List<SubagentModelGrant> = emptyList(),
+    /** 按子智能体类型（explore / coder / plan / screen …）指定默认模型与强度。 */
+    val profileDefaults: Map<String, SubagentProfileDefault> = emptyMap(),
     /** 单个子智能体单次派发允许的最大思考轮次；超过即中止并向主 Agent 回报。 */
     val maxRounds: Int = 40,
     /**
@@ -30,4 +48,12 @@ internal data class SubagentSettings(
 ) {
     val resolvedReasoningEffort: ReasoningEffort?
         get() = ReasoningEffort.fromWireValue(reasoningEffort)
+
+    /** 生效的授权列表：优先新字段，旧字段自动展开为「不限档位」。 */
+    val effectiveGrants: List<SubagentModelGrant>
+        get() = if (allowedGrants.isNotEmpty()) {
+            allowedGrants.filter { it.modelId.isNotBlank() }
+        } else {
+            allowedModelIds.filter { it.isNotBlank() }.map { SubagentModelGrant(it) }
+        }
 }

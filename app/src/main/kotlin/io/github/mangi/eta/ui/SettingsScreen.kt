@@ -29,9 +29,11 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SettingsVoice
@@ -90,6 +92,7 @@ import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.config.PowerAssistantTarget
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.data.datastore.SettingsDataStore
+import io.github.mangi.eta.ui.onboarding.OnboardingKeys
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.systemizer.GoogleAppSystemizerInstaller
@@ -148,6 +151,7 @@ private fun SettingsPageContent(
     var hasConnectedFramework by remember { mutableStateOf(enhancementHistory.hasConnected) }
     var hasUsedSystemizer by remember { mutableStateOf(enhancementHistory.hasUsedSystemizer) }
     var showSystemizerDialog by remember { mutableStateOf(false) }
+    var showTestConsent by remember { mutableStateOf(false) }
     var installingSystemizer by remember { mutableStateOf(false) }
 
     // 悬浮窗权限状态：授权后从系统设置返回时（ON_RESUME）刷新。
@@ -249,14 +253,16 @@ private fun SettingsPageContent(
         DropdownItem(text = target.displayName(context))
     }
 
-    // 设置项搜索：顶部关键字过滤分组，关键词表见文件末尾 SETTINGS_SEARCH_INDEX。
+    // 设置项搜索：顶部关键字过滤分组。可搜文本 = 分组标题（按当前语言取文案）+ 手写别名，
+    // 索引见文件末尾 SETTINGS_SEARCH_INDEX；这里一次性拼好，过滤与「无结果」判断共用同一口径。
     var settingsQuery by remember { mutableStateOf("") }
     val settingsKeyword = settingsQuery.trim().lowercase()
+    val searchHaystacks = rememberSettingsSearchHaystacks()
     val sectionVisible: (String) -> Boolean = { key ->
-        settingsKeyword.isEmpty() || settingsMatched(key, settingsKeyword)
+        settingsKeyword.isEmpty() || (searchHaystacks[key]?.contains(settingsKeyword) ?: true)
     }
     val settingsNoHit = settingsKeyword.isNotEmpty() &&
-        SETTINGS_SEARCH_INDEX.none { it.keywords.lowercase().contains(settingsKeyword) }
+        searchHaystacks.values.none { it.contains(settingsKeyword) }
 
     MiuixScaffoldPage(
         title = stringResource(R.string.ui_set_up_7debf9),
@@ -296,6 +302,32 @@ private fun SettingsPageContent(
                         icon = Icons.Rounded.Psychology,
                         iconTint = EtaPreferenceColors.Blue,
                     )
+
+                    EtaPreferenceDivider()
+                    EtaArrowPreference(
+                        title = "重置新手引导",
+                        summary = "重新播放手势教学与侧栏 / 工作区提示",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.Refresh,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = {
+                            coroutineScope.launch {
+                                SettingsDataStore.updateSettings { current ->
+                                    current.copy(
+                                        seenTourPacks = current.seenTourPacks - OnboardingKeys.All,
+                                    )
+                                }
+                                Toast.makeText(
+                                    context,
+                                    "已重置，回到聊天页后会重新出现",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                    )
                 }
             }
 
@@ -312,10 +344,6 @@ private fun SettingsPageContent(
                         icon = Icons.Rounded.Layers,
                         iconTint = EtaPreferenceColors.Blue,
                     )
-
-                    // 流体云常驻紧跟自动压缩：属于全局流体云行为，与灵屏无关。
-                    EtaPreferenceDivider()
-                    FluidPinnedPref()
 
                     EtaPreferenceDivider()
                     EtaArrowPreference(
@@ -747,6 +775,13 @@ private fun SettingsPageContent(
                             enabled = prefs != null && !accessibilityProtectionPending,
                         )
                     }
+
+                    // 流体云属于「通知可见性」范畴，跟权限放一起：常驻与降级是同一类开关。
+                    EtaPreferenceDivider()
+                    FluidPinnedPref()
+
+                    EtaPreferenceDivider()
+                    FluidDowngradePref()
                 }
             }
 
@@ -812,6 +847,21 @@ private fun SettingsPageContent(
                         onClick = { onNavigate(AppRoute.SelfCheck) },
                     )
 
+                    if (io.github.mangi.eta.BuildConfig.BETA_BUILD) {
+                    EtaPreferenceDivider()
+                    EtaArrowPreference(
+                        title = "测试与隐私",
+                        summary = "同意状态、训练用途开关、撤回同意、协议全文",
+                        startAction = {
+                            EtaPreferenceIcon(
+                                icon = Icons.Rounded.VerifiedUser,
+                                tint = EtaPreferenceColors.Blue,
+                            )
+                        },
+                        onClick = { showTestConsent = true },
+                    )
+                    }
+
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.ui_about_feedback_title),
@@ -874,6 +924,12 @@ private fun SettingsPageContent(
                     )
                 }
             }
+        }
+
+        if (showTestConsent) {
+            io.github.mangi.eta.ui.consent.TestConsentSettingsDialog(
+                onDismiss = { showTestConsent = false },
+            )
         }
 
         SystemizerConfirmDialog(
@@ -957,6 +1013,7 @@ private fun FluidPinnedPref() {
     val current = settings ?: return
     EtaSwitchPreference(
         title = stringResource(R.string.lingscreen_fluid_pinned),
+        summary = stringResource(R.string.lingscreen_fluid_pinned_summary),
         checked = current.overlayFluidPinned,
         onCheckedChange = { value ->
             scope.launch {
@@ -970,6 +1027,40 @@ private fun FluidPinnedPref() {
             }
         },
         startAction = { EtaPreferenceIcon(Icons.Rounded.Cloud, tint = EtaPreferenceColors.Green) },
+    )
+}
+
+/**
+ * 流体云通知降级：把进度卡、锁屏胶囊这类通知退化成普通通知。
+ *
+ * 原理是这些通知不再申请 promoted ongoing（[android.app.Notification.Builder.setRequestPromotedOngoing]），
+ * 系统不给提升，ColorOS 就不会把它放进流体云，只在通知栏按常驻通知显示；
+ * 标题、正文、暂停／停止／插入这些按钮都保留。
+ */
+@Composable
+private fun FluidDowngradePref() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val settings by SettingsDataStore.settingsFlow().collectAsState(initial = null)
+    val current = settings ?: return
+    EtaSwitchPreference(
+        title = stringResource(R.string.lingscreen_fluid_downgrade),
+        summary = stringResource(R.string.lingscreen_fluid_downgrade_summary),
+        checked = current.overlayFluidDowngrade,
+        onCheckedChange = { value ->
+            // 先同步进程内策略，避免刷新时通知仍按旧值构建。
+            io.github.mangi.eta.agent.runtime.FluidNotificationPolicy.set(value)
+            scope.launch {
+                SettingsDataStore.updateSettings { it.copy(overlayFluidDowngrade = value) }
+                runCatching {
+                    context.startService(
+                        Intent(context, io.github.mangi.eta.agent.runtime.AgentRuntimeService::class.java)
+                            .setAction(io.github.mangi.eta.agent.runtime.AgentRuntimeService.ACTION_REFRESH_FLUID)
+                    )
+                }
+            }
+        },
+        startAction = { EtaPreferenceIcon(Icons.Rounded.Notifications, tint = EtaPreferenceColors.Orange) },
     )
 }
 
@@ -1086,25 +1177,147 @@ private fun SystemizerInstallResult.toToastMessage(context: Context): String =
             ?: message
     }
 
-/** 设置项搜索词条：一个分组对应一组小写关键词。 */
-private data class SettingsSearchEntry(val sectionKey: String, val keywords: String)
-
-private val SETTINGS_SEARCH_INDEX = listOf(
-    SettingsSearchEntry("section_agent", "llm 提供商 模型 服务商 api 密钥 深度思考"),
-    SettingsSearchEntry("section_context_extensions", "上下文 扩展 自动压缩 记忆"),
-    SettingsSearchEntry("section_tools", "工具 工具档 精简 五档 mcp"),
-    SettingsSearchEntry("system_enhancements", "能力增强 语音 朗读 语速 音调 tts 灵屏 小窗 悬浮窗 折叠 胶囊 常驻"),
-    SettingsSearchEntry("section_assistant_takeover", "系统助手接管 接管 助手"),
-    SettingsSearchEntry("section_oem_assistant_compatibility", "厂商助手兼容 小布 小爱 vivo 蓝心 兼容"),
-    SettingsSearchEntry("section_general", "通用 外观 主题 语言"),
-    SettingsSearchEntry("section_permissions", "权限 无障碍 悬浮窗 通知"),
-    SettingsSearchEntry("section_about", "关于 版本 用量 token 统计 消耗 数据占用 清理 数据库 大小 诊断包 日志 导出 分享 开源 功能自检 自检 体检 崩溃 诊断与日志"),
-    SettingsSearchEntry("section_patrol", "极致自动排查 自动排查 巡检 排查 诊断 崩溃 日志 报告 巡检周期"),
+/**
+ * 设置项搜索索引：一个分组一条。
+ *
+ * 可搜文本由三部分组成，全部小写后比对：
+ * 1. [labels]：该分组在设置页上真实显示的标题（字符串资源）。按当前语言取文案，
+ *    所以「页面上看得见的标题」一定搜得到，不会再出现「页面上有、搜索里没有」；
+ * 2. [labelsRaw]：少数没走字符串资源的硬编码标题，照抄文案；
+ * 3. [keywords]：别名、同义词，以及二级页里的功能名词——搜具体功能也能落到入口分组。
+ *
+ * 新增分组时同步加一条；漏加也不会被搜索藏起来（未登记的分组默认可见）。
+ */
+private data class SettingsSearchEntry(
+    val sectionKey: String,
+    val labels: List<Int> = emptyList(),
+    val labelsRaw: List<String> = emptyList(),
+    val keywords: String = "",
 )
 
-private fun settingsMatched(sectionKey: String, keyword: String): Boolean =
-    SETTINGS_SEARCH_INDEX.firstOrNull { it.sectionKey == sectionKey }
-        ?.keywords?.contains(keyword) == true
+private val SETTINGS_SEARCH_INDEX = listOf(
+    SettingsSearchEntry(
+        sectionKey = "section_agent",
+        labels = listOf(
+            R.string.settings_llm_providers,
+            R.string.ui_model_provider_e8c7f5,
+            R.string.ui_deep_thinking_enabled_by_default_c032d6,
+        ),
+        keywords = "llm 提供商 供应商 模型 服务商 api 密钥 key 接口 地址 baseurl 思考 深度思考 推理 reasoning 默认启用思考 温度 上下文长度",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_context_extensions",
+        labels = listOf(
+            R.string.settings_context_extensions,
+            R.string.settings_auto_compaction,
+            R.string.ui_memory_b55ff5,
+            R.string.automation_title,
+            R.string.lingscreen_entry_title,
+            R.string.route_skills,
+            R.string.route_mcp_servers,
+        ),
+        labelsRaw = listOf("GitHub 账号", "角色"),
+        keywords = "上下文 扩展 自动压缩 压缩 记忆 memory 记忆注入 自动任务 定时 计划 触发 automation 灵屏 灵屏 屏幕 小窗 skills 技能 mcp 服务器 server github 账号 仓库 pr 角色 人设 角色卡",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_tools",
+        labels = listOf(
+            R.string.ui_tool_a72ef1,
+            R.string.settings_tools_list,
+            R.string.ui_enable_web_browsing_tools_8b6b03,
+            R.string.web_tools_settings_title,
+            R.string.ui_enable_device_direct_tools_e2d595,
+            R.string.ui_allow_reading_of_sensitive_device_information_feaec0,
+            R.string.ui_allow_sensitive_device_operation_3d42ea,
+            R.string.ui_enable_terminal_file_tools_18bb43,
+            R.string.ui_linux_tool_environment_314d22,
+        ),
+        keywords = "工具 工具能力 工具档 精简 standard 完整 全部 mcp 网页 搜索 读取 浏览器 browser 抓取 fetch 设备 直达 敏感 设备信息 设备操作 终端 shell 命令行 命令 文件 file linux 发行版 debian 环境 apk 分析 工作区 共享文件夹",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "system_enhancements",
+        labels = listOf(R.string.capability_enhancements),
+        keywords = "root 与系统增强 能力增强 root 授权 超级用户 权限 magisk kernelsu ksu 框架 lsposed xposed 模块 作用域 语音唤醒 系统化 系统应用 gemini 一圈即搜 无障碍保护 受保护数据 文件 小布 超级小爱 接管 终端增强",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_assistant_takeover",
+        labels = listOf(
+            R.string.ui_system_assistant_takes_over_f46043,
+            R.string.ui_eta_system_assistant_003e9b,
+            R.string.ui_long_press_the_power_button_1958d0,
+            R.string.ui_automatically_set_default_assistant_f86963,
+        ),
+        keywords = "系统助手 接管 助手 assistant 数字助理 默认助理 电源键 长按 语音助手 唤醒 唤醒词 默认应用 拨号",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_oem_assistant_compatibility",
+        labels = listOf(
+            R.string.ui_xiaobu_xiaoai_compatible_entrance_ae918a,
+            R.string.ui_enable_vendor_assistant_custom_models_c8e465,
+            R.string.ui_only_take_over_with_agent_prefix_d17556,
+        ),
+        keywords = "厂商助手 兼容 入口 小布 小爱 超级小爱 vivo 蓝心 蓝心小v oppo 自定义模型 前缀 agent 前缀 唤醒词 语音入口 侧键",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_general",
+        labels = listOf(
+            R.string.settings_general,
+            R.string.appearance_title,
+            R.string.speech_settings_title,
+            R.string.data_backup_title,
+        ),
+        keywords = "通用 外观 主题 深色 浅色 夜间 跟随系统 monet 取色 色彩 强调色 纯黑 模糊 顶栏 横移 返回 手势 预测性返回 界面缩放 字号 语言 语音 朗读 播报 tts 音色 语速 音调 发音人 语音识别 自动播报 备份 导入 导出 恢复 自动备份 周期 保留份数 备份格式 备份文件夹",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_permissions",
+        labels = listOf(
+            R.string.ui_permissions_560165,
+            R.string.ui_floating_window_permissions_076b77,
+            R.string.ui_accessibility_enhancement_tools_8fd257,
+            R.string.ui_enforce_accessibility_55e838,
+            R.string.lingscreen_fluid_pinned,
+            R.string.lingscreen_fluid_downgrade,
+        ),
+        keywords = "权限 授权 无障碍 增强工具 强制 保持 悬浮窗 悬浮 通知 提醒 流体云 常驻 降级 胶囊 状态栏 实时活动 live activity 后台 自启动 电量",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_prompt_studio",
+        labels = listOf(R.string.prompt_studio_section, R.string.prompt_studio_title),
+        keywords = "提示词 提示词工坊 工坊 工具 边界 系统提示词 自定义提示词 版本 历史 快照 请求快照 预设 导入 导出 完整性 当前生效 注入 角色卡 对比",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_about",
+        labels = listOf(
+            R.string.ui_about_bed172,
+            R.string.usage_stats_title,
+            R.string.data_usage_title,
+            R.string.ui_about_feedback_title,
+            R.string.ui_about_github_star_title,
+        ),
+        labelsRaw = listOf("功能自检", "测试与隐私", "诊断与日志"),
+        keywords = "关于 版本 版本号 更新 开源 许可 协议全文 用量 统计 token 消耗 花费 数据占用 清理 数据库 缓存 大小 存储 反馈 问题 报错 github star 源代码 仓库 点赞 自检 体检 一致性 测试 隐私 同意 训练 撤回 诊断 日志 崩溃 诊断包 导出 分享",
+    ),
+    SettingsSearchEntry(
+        sectionKey = "section_patrol",
+        labels = listOf(R.string.diag_patrol_group_title, R.string.diag_patrol_title),
+        keywords = "极致自动排查 自动排查 巡检 排查 定时巡检 周期 保留 份数 提醒 异常 报告 崩溃 诊断",
+    ),
+)
+
+/** 把每个分组「能搜到的文本」预拼成小写串；标题按当前语言取，随语言切换重建。 */
+@Composable
+private fun rememberSettingsSearchHaystacks(): Map<String, String> {
+    val context = LocalContext.current
+    return remember(context) {
+        SETTINGS_SEARCH_INDEX.associate { entry ->
+            entry.sectionKey to buildString {
+                append(entry.keywords.lowercase())
+                entry.labels.forEach { append('\u0000').append(context.getString(it).lowercase()) }
+                entry.labelsRaw.forEach { append('\u0000').append(it.lowercase()) }
+            }
+        }
+    }
+}
 
 /** 设置页顶部搜索框：占位提示 + 清除按钮 + 无结果提示。 */
 @Composable

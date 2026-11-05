@@ -327,7 +327,8 @@ internal class DebianEnvironmentInstaller(
             DebianAptMirror(
                 id = "tuna",
                 archiveBaseUrl = "https://mirrors.tuna.tsinghua.edu.cn/debian",
-                securityBaseUrl = "https://security.debian.org/debian-security",
+                // 国内镜像同步 security 仓；security.debian.org 单连接常只有几十 KB/s，会把安装拖过超时。
+                securityBaseUrl = "https://mirrors.tuna.tsinghua.edu.cn/debian-security",
             ),
             DebianAptMirror(
                 id = "official",

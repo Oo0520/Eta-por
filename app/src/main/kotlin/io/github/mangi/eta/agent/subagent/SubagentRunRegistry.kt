@@ -67,11 +67,17 @@ internal object SubagentRunRegistry {
     /** 每个子智能体最近一次进度快照（进程内）。会话切走导致消息更新丢失时，界面靠它兜底。 */
     private val latestSnapshots = ConcurrentHashMap<String, String>()
 
-    fun publishSnapshot(subagentId: String, snapshotJson: String) {
+    /** toolCallId → 最新快照：界面拿到的是工具消息 id，用它反查更可靠。 */
+    private val snapshotByToolCall = ConcurrentHashMap<String, String>()
+
+    fun publishSnapshot(subagentId: String, toolCallId: String?, snapshotJson: String) {
         latestSnapshots[subagentId] = snapshotJson
+        if (!toolCallId.isNullOrBlank()) snapshotByToolCall[toolCallId] = snapshotJson
     }
 
     fun latestSnapshot(subagentId: String): String? = latestSnapshots[subagentId]
+
+    fun snapshotForToolCall(toolCallId: String): String? = snapshotByToolCall[toolCallId]
 
     fun screenOwner(): String? = screenOwnerId
 
@@ -82,7 +88,16 @@ internal object SubagentRunRegistry {
      */
     fun liveIds(conversationKey: String?): List<String> {
         val key = conversationKey?.takeIf { it.isNotBlank() } ?: return emptyList()
-        return controllers.keys.filter { conversationOf[it] == key }
+        return controllers.keys.filter { id ->
+            conversationOf[id] == key && isRunning(id)
+        }
+    }
+
+    /** 快照已进入终态的视为已结束：避免执行完但 unregister 漏掉时，胶囊一直挂在输入框上。 */
+    private fun isRunning(subagentId: String): Boolean {
+        val json = latestSnapshots[subagentId] ?: return true
+        val status = runCatching { SubagentActivitySnapshot.decode(json)?.status }.getOrNull()
+        return status == null || status == SubagentActivitySnapshot.STATUS_RUNNING
     }
 
     /** 该子智能体是否还活着（控制器仍在册）。 */

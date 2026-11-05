@@ -7,6 +7,38 @@ import org.json.JSONObject
 /**
  * 声明给主 Agent 的 `subagent` 与 `subagent_profile` 工具 Schema。
  */
+/** 披露给主 Agent 的单个授权模型：id + 可用档位。 */
+internal data class SubagentModelOption(
+    val modelId: String,
+    val efforts: List<String> = emptyList(),
+    /** 上下文窗口（token）；null 表示未知。 */
+    val contextWindow: Int? = null,
+    /** 是否支持思考强度。 */
+    val supportsThinking: Boolean = false,
+) {
+    /** 给模型看的紧凑描述：只陈述客观事实，不做强弱排序。 */
+    fun describe(): String = buildString {
+        append(modelId)
+        val facts = buildList {
+            contextWindow?.let { add("上下文 " + humanTokens(it)) }
+            when {
+                efforts.isNotEmpty() -> add("档位 " + efforts.joinToString("/"))
+                // 只有 reasoning=true 但没有档位声明：思考固定开/关，传档位会被拒。
+                supportsThinking -> add("思考固定，无档位")
+            }
+            // 官方价目参考（查不到就不写，绝不估算）。
+            ModelPriceCatalog.priceOf(modelId)?.let { add("官方价 " + it.display()) }
+        }
+        if (facts.isNotEmpty()) append("（").append(facts.joinToString("，")).append("）")
+    }
+
+    private fun humanTokens(tokens: Int): String = when {
+        tokens >= 1_000_000 -> (tokens / 1_000_000).toString() + "M"
+        tokens >= 1_000 -> (tokens / 1_000).toString() + "K"
+        else -> tokens.toString()
+    }
+}
+
 internal object AgentSubagentToolCatalog {
     const val TOOL_NAME = "subagent"
     const val PROFILE_TOOL_NAME = "subagent_profile"
@@ -16,20 +48,47 @@ internal object AgentSubagentToolCatalog {
     fun appendSchemas(
         tools: JSONArray,
         profiles: List<SubagentProfile> = SubagentProfileCatalog.listAll(),
+        authorizedModels: List<SubagentModelOption> = emptyList(),
     ) {
-        tools.put(schema(profiles))
+        tools.put(schema(profiles, authorizedModels))
         tools.put(profileToolSchema())
     }
 
     fun schema(
         profiles: List<SubagentProfile> = SubagentProfileCatalog.listAll(),
+        authorizedModels: List<SubagentModelOption> = emptyList(),
     ): JSONObject {
+        // 只告诉模型「必须是被授权的模型」而不给 id，它只能猜或者干脆不传——
+        // 实测就是这个原因导致「允许主 Agent 选模型」看着没生效。
+        val modelHint = if (authorizedModels.isEmpty()) {
+            "Optional model id for THIS subagent; must be one of the models the user authorized in Subagent settings. " +
+                "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings."
+        } else {
+            "Optional model id for THIS subagent. Authorized models: " +
+                authorizedModels.joinToString("；") { it.describe() } +
+                ". 选择规则（主动执行，不必等用户提醒）：" +
+                "① 先看上下文：要读大量材料、多文件或长日志时，只选上下文够大的（192K 装不下 1M 级别的材料）；" +
+                "② 再看能否自动验证：能靠测试/格式校验判定对错的机械任务，用便宜模型或低档位省成本；" +
+                "多步且出错不可回滚（写库、发消息、改动代码）的，给更稳的模型或更高档位；" +
+                "注意：标了「思考固定，无档位」的模型不要传 reasoning_effort，会被拒绝；" +
+                "③ 一次派多个子代理时，主动分散到不同模型，别全部堆在同一个上；" +
+                "④ 想省成本就复用同一个模型 + 低档位，而不是每个子任务换一个。" +
+                "Pick model + reasoning_effort for each subagent based on these constraints. " +
+                "Omit reasoning_effort to use the model default; an unsupported value is rejected with the allowed list."
+        }
         val profileLines = profiles.joinToString("\n") { profile ->
             val tag = if (profile.builtin) "" else " [custom]"
             "- ${profile.name}$tag: ${profile.whenToUse} (Tools: ${profile.toolHighlights.joinToString(", ")})"
         }
         val description = buildString {
             append("Launch a subagent in an isolated context to handle an autonomous subtask and return a concise summary. ")
+            if (authorizedModels.isNotEmpty()) {
+                append("When authorized models are available, ALWAYS pick a model explicitly for each `subagent` call — ")
+                append("match it to the subtask (cheap/fast model for lookups and summarization, stronger model for reasoning and code). ")
+                append("Also set `reasoning_effort` when the chosen model exposes more than one level. ")
+                append("Example: {\"prompt\":\"...\",\"description\":\"...\",\"subagent_type\":\"explore\",\"model\":\"<one of the authorized ids>\",\"reasoning_effort\":\"low\"}. ")
+                append("If you omit `model`, the runtime falls back to the per-type default, which may not fit the task.\n")
+            }
             append("You can freely spawn as many specialized ephemeral subagents as needed for the conversation without saving them to disk, ")
             append("or use one of the preset types below. When multiple independent subtasks can run in parallel, issue multiple `subagent` tool calls in the same turn — the runtime executes them concurrently.\n\n")
             append("Writing the prompt:\n")
@@ -93,11 +152,7 @@ internal object AgentSubagentToolCatalog {
                 JSONObject()
                     .put("type", "string")
                     .put("maxLength", 120)
-                    .put(
-                        "description",
-                        "Optional model id for THIS subagent; must be one of the models the user authorized in Subagent settings. " +
-                            "Only honored when the user enabled \"allow main agent to pick subagent models\" in Subagent settings.",
-                    ),
+                    .put("description", modelHint),
             )
             .put(
                 "reasoning_effort",

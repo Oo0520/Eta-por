@@ -226,6 +226,7 @@ internal object ExperienceReviewPolicy {
         "paste_text",
         "open_app",
         "launch_app",
+        "lingscreen_open_app",
         "wait_for_text",
         "wait_for_package", "virtual_screen"
     )

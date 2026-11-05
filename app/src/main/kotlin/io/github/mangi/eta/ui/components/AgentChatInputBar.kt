@@ -170,6 +170,8 @@ internal fun AgentChatInputBar(
     onAttachFiles: (List<String>) -> Unit,
     onAttachFolder: (String) -> Unit,
     onAttachFilePath: (String) -> Unit,
+    /** 未接入模型时，提示条上的「去接入」：跳到模型服务页。 */
+    onOpenModelProviders: () -> Unit = {},
     onRemoveFileReference: (String) -> Unit,
     onCancelMessageEdit: () -> Unit,
     /** 可用的斜杠命令；为空时输入框不弹命令面板。 */
@@ -296,9 +298,14 @@ internal fun AgentChatInputBar(
     LaunchedEffect(isEditingMessage, recognitionEnabled) { dictation.cancel() }
     var wasEditingMessage by remember { mutableStateOf(isEditingMessage) }
     var syncedVersion by remember { mutableIntStateOf(inputSyncVersion) }
-    val canSend = textFieldState.text.isNotBlank() ||
-        pendingImages.isNotEmpty() ||
-        pendingFileReferences.isNotEmpty()
+    // 没有可用模型时把发送键压灰：放行一个必然失败的动作，比直接拦住更伤。
+    // 为什么用户能知道原因：输入框上方有一条常驻 InlineAlert，不需要点按钮才知道。
+    val modelReady = modelPickerState.hasUsableModel
+    val canSend = modelReady && (
+        textFieldState.text.isNotBlank() ||
+            pendingImages.isNotEmpty() ||
+            pendingFileReferences.isNotEmpty()
+        )
     val density = LocalDensity.current
     val statusBarTopPx = WindowInsets.statusBars.getTop(density)
     var inputContainerTopPx by remember { mutableIntStateOf(0) }
@@ -336,6 +343,15 @@ internal fun AgentChatInputBar(
             .fillMaxWidth(),
     ) {
         if (recognitionEnabled) SpeechInputFeedback(dictation)
+        if (!modelReady) {
+            // 常驻，不自动消失：等用户真的接入了模型，hasUsableModel 变 true 才从这里移除。
+            InlineAlert(
+                text = "还没有可用的模型，消息发不出去",
+                actionLabel = "去接入",
+                onAction = onOpenModelProviders,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
         AnimatedVisibility(
             visible = queuedMessages.isNotEmpty(),
             enter = fadeIn(tween(160)),

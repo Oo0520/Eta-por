@@ -19,6 +19,7 @@ import io.github.mangi.eta.core.EtaTrace
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.data.db.EtaDatabase
 import io.github.mangi.eta.data.db.AgentTaskRunEntity
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
 import io.github.mangi.eta.ui.MainActivity
 import java.util.concurrent.atomic.AtomicBoolean
@@ -71,13 +72,23 @@ internal class AgentTaskJobService : JobService() {
                             deferred = true; return@runBlocking
                         }
                     }
+                    // 入口必须带上用户的工具开关：buildRuntimeConfig 只给模型与凭据，
+                    // 而 Runtime 侧的 AgentRuntimePolicy 只做交集、无法把默认关闭的终端放大回来。
                     val config = RuntimeConfigRepository.currentRuntimeConfig()
-                    if (config == null || config.apiKey.isBlank()) {
+                        ?.let(RuntimeConfigRepository::withEntryToolPermissions)
+                    // 账号登录（OAuth）的凭据不走 apiKey，不能按「key 为空」判成没配置。
+                    if (config == null || (!ProviderAuthModes.isOAuth(config.authMode) && config.apiKey.isBlank())) {
+                        // 静默失败没人看得懂：把原因写进运行记录，用户点开就知道为什么没跑。
                         dao.complete(
                             run,
                             "configuration_required",
                             System.currentTimeMillis(),
-                            ""
+                            if (config == null) {
+                                "没有可用的模型：请先在「模型服务」里选一个已启用的服务商与模型，再重新触发这条任务。"
+                            } else {
+                                "当前模型「${config.modelDisplayName.ifBlank { config.model }}」没有可用凭据：" +
+                                    "请在「模型服务」里补全 API Key，或改用账号登录后重新触发。"
+                            }
                         ); return@runBlocking
                     }
                     if (stopped.get() || dao.claim(

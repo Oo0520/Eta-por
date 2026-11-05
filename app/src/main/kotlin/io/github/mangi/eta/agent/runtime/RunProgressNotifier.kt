@@ -272,6 +272,30 @@ internal object RunProgressNotifier {
         }
     }
 
+    /**
+     * 设置里切换「流体云通知降级」时立即生效。
+     *
+     * 系统对已经在流体云里的卡不会因为「下次 notify 不带提升标记」就立刻撤下去，
+     * 所以这里先撤掉旧通知，再按新策略重画一次：降级后就是普通通知，
+     * 关掉降级则重新申请提升。
+     */
+    fun refreshFluidPolicy(context: Context, pinned: Boolean) {
+        if (!isMainThread()) {
+            handler.post { refreshFluidPolicy(context, pinned) }
+            return
+        }
+        val app = context.applicationContext
+        appContext = app
+        if (active && cards.isNotEmpty()) {
+            cards.keys.toList().forEach { key ->
+                runCatching { manager(app).cancel(SessionNotificationIds.idFor(key)) }
+            }
+            post()
+            return
+        }
+        refreshIdle(app, pinned)
+    }
+
     private fun publishIdle(app: Context) {
         idle = true
         runCatching {
@@ -283,7 +307,8 @@ internal object RunProgressNotifier {
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setContentIntent(launchIntent(app, "", SessionNotificationIds.IDLE_NOTIFICATION_ID))
-            if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
+            // 降级开关打开时不再申请提升：这张卡就只当普通常驻通知留着。
+            if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK && FluidNotificationPolicy.allowsFluid()) {
                 builder.setShortCriticalText("空闲")
                 builder.setRequestPromotedOngoing(true)
             }
@@ -344,7 +369,9 @@ internal object RunProgressNotifier {
                 ),
             )
             .addAction(insertAction(app, card, cardId))
-        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK) {
+        // 会话进度卡才是真正会进流体云的那条，开关开着就必须跳过提升——
+        // 之前只给空闲卡加了判断，这里漏了，导致「通知不进流体云」看着没生效。
+        if (Build.VERSION.SDK_INT >= LIVE_UPDATE_SDK && FluidNotificationPolicy.allowsFluid()) {
             builder.setShortCriticalText(if (paused) "已暂停" else card.actionShort)
             builder.setRequestPromotedOngoing(true)
         }

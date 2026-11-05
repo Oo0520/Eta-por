@@ -53,7 +53,8 @@ internal object AgentToolNaming {
         // 屏幕与界面
         "get_current_context" to "屏幕与界面|读当前时间与位置",
         "search_apps" to "屏幕与界面|查找已装应用",
-        "launch_app" to "屏幕与界面|启动应用",
+        "launch_app" to "屏幕与界面|启动应用（真机）",
+        "lingscreen_open_app" to "屏幕与界面|启动应用（灵屏自动化）",
         "open_uri" to "屏幕与界面|把链接交给其他应用",
         "observe_screen" to "屏幕与界面|观察屏幕",
         "tap" to "屏幕与界面|按坐标点击",

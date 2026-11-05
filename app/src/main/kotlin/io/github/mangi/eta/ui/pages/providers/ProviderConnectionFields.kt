@@ -21,6 +21,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import io.github.mangi.eta.ui.components.InlineAlert
+import io.github.mangi.eta.ui.components.InlineAlertLevel
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
@@ -90,6 +92,20 @@ internal fun ProviderConnectionFields(
             onCancel = onCancel,
         )
     } else {
+        // 本地能判的只有这两条：地址协议、Key 里混了空白/明显太短。
+        // 真正「Key 对不对」要请求才知道，这里不猜。
+        val baseUrlError = when {
+            draft.baseUrl.isBlank() -> null
+            !draft.baseUrl.startsWith("http://") && !draft.baseUrl.startsWith("https://") ->
+                "地址要以 http:// 或 https:// 开头"
+            else -> null
+        }
+        val apiKeyError = when {
+            draft.apiKey.isBlank() -> null
+            draft.apiKey.any { it.isWhitespace() } -> "Key 里有空格或换行，检查是否复制完整"
+            draft.apiKey.length < 8 -> "Key 太短，可能没复制全"
+            else -> null
+        }
         Column(modifier = Modifier.padding(16.dp)) {
             TextField(
                 value = draft.baseUrl,
@@ -99,6 +115,10 @@ internal fun ProviderConnectionFields(
                 enabled = enabled,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (baseUrlError != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                InlineAlert(text = baseUrlError, level = InlineAlertLevel.Warning)
+            }
             Spacer(modifier = Modifier.height(12.dp))
             TextField(
                 value = draft.apiKey,
@@ -117,6 +137,10 @@ internal fun ProviderConnectionFields(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (apiKeyError != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                InlineAlert(text = apiKeyError, level = InlineAlertLevel.Warning)
+            }
             if (provider is AnthropicProviderSetting) {
                 Spacer(modifier = Modifier.height(12.dp))
                 TextField(

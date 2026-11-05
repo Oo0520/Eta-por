@@ -170,12 +170,32 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
 
+    /**
+     * 同意守门只对测试包生效。
+     *
+     * 正式包没有测试协议这回事，若这里不加 BETA_BUILD 判断，
+     * 正式用户的服务会因为「从未同意过测试协议」而被拒，表现为「Agent Runtime 服务绑定失败」。
+     */
+    private fun consentAllowsRuntime(): Boolean =
+        !io.github.mangi.eta.BuildConfig.BETA_BUILD ||
+            io.github.mangi.eta.data.repository.TestConsentRepository.isAccepted()
+
     override fun onBind(intent: Intent): IBinder? {
+        // 未同意就直接拒绝绑定：外部 App 拿不到 Messenger，绕过界面也起不来。
+        if (!consentAllowsRuntime()) {
+            AndroidAgentLogger.info("[consent] 未同意测试协议，拒绝绑定运行时服务")
+            return null
+        }
         if (intent.action != AgentRuntimeWire.ACTION_BIND) return null
         return serviceMessenger.binder
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!consentAllowsRuntime()) {
+            AndroidAgentLogger.info("[consent] 未同意测试协议，运行时服务自停")
+            stopSelf()
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_PAUSE_RUNS -> requestPause(null)
             ACTION_RESUME_RUNS -> requestResume(null)
@@ -741,6 +761,20 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 RunProgressNotifier.removeRun(session.runId, pinned = fluidPinned())
                 RunProgressNotifier.noteConcurrency(runningSessionCount())
             }
+            // 完成通知必须无条件发：needsOverlay 为假（会话被接管过 / 被替换）时提前 return，
+            // 之前它排在那句 return 后面，等于永远不发——实测通知渠道压根没被创建过。
+            io.github.mangi.eta.core.EtaTrace.log(
+                "completion.route",
+                "routed=" + session.virtualUiRouted.get() + " ok=" + result.ok + " runId=" + session.runId,
+            )
+            if (session.virtualUiRouted.get()) {
+                VirtualScreenNotification.showCompletion(
+                    this,
+                    result.ok,
+                    if (result.ok) result.content.trim() else result.error.orEmpty(),
+                    stopped = !result.ok && result.error == "已停止",
+                )
+            }
             if (!needsOverlay) return@post
             io.github.mangi.eta.core.EtaTrace.log(
                 "run.end",
@@ -748,13 +782,6 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                     "${AgentMemoryGate.sessionLimit()}",
             )
             syncRunningSessions()
-            if (session.virtualUiRouted.get()) {
-                VirtualScreenNotification.showCompletion(
-                    this,
-                    result.ok,
-                    if (result.ok) result.content.trim() else result.error.orEmpty(),
-                )
-            }
             runCatching {
                 if (result.ok) {
                     enterFinalState(

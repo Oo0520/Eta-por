@@ -15,7 +15,6 @@ data class Settings(
     val virtualScreenFallbackEnabled: Boolean = false,
     val virtualScreenAutoRestartApps: Boolean = false,
     val virtualScreenIdleTimeoutMinutes: Int = 5,
-    val virtualScreenFrameRate: Int = 3,
     /** 灵屏运行期间保持屏幕常亮（Agent 操作不因息屏中断）。 */
     val virtualScreenKeepScreenOn: Boolean = true,
     val virtualScreenFloatWindowEnabled: Boolean = false,
@@ -63,6 +62,23 @@ data class Settings(
 
     /** 流体云常驻：没有任务时也在流体云保留一条 Eta 入口。 */
     val overlayFluidPinned: Boolean = false,
+
+    /**
+     * 流体云通知降级：开启后进度卡、锁屏胶囊这类通知不再申请「持续提升」，
+     * 只做普通通知留在通知栏，不再占流体云/状态栏胶囊位。
+     */
+    val overlayFluidDowngrade: Boolean = false,
+
+    /**
+     * 新手引导进度：引导包 id → 已看过的版本。
+     *
+     * 为什么不是布尔：文案改版时把包的 version +1，老用户就会被重播一次；
+     * 布尔存不下这个语义，加第二个包时也没地方记。
+     */
+    val seenTourPacks: Map<String, Int> = emptyMap(),
+
+    /** 新手引导总开关：关掉后不再自动弹任何包，设置页仍可手动重播。 */
+    val onboardingEnabled: Boolean = true,
 
     /** 最近打开过的会话 id（逗号分隔，最新在前）：重启后侧栏那一栏还在。 */
     val recentOpenedConversationIds: String = "",
@@ -133,19 +149,3 @@ internal object AutoBackupKeepCount {
     fun normalize(count: Int): Int = count.takeIf { it in MIN..MAX } ?: 5
 }
 
-/** 灵屏出帧目标帧率；越低越省电，越高越跟手。 */
-internal object VirtualScreenFrameRate {
-    /**
-     * 极低帧率优先：灵屏主要给 Agent 读屏用，画面不需要流畅；
-     * 人接管走的是直通 Surface（合成器直出），不受这里限制。
-     */
-    val options = listOf(1, 3, 30, 60)
-    fun normalize(value: Int): Int = value.takeIf { it in options } ?: 3
-    /**
-     * 客户端拉帧节奏（毫秒）。真实出帧由 helper 自适应 1–3fps，
-     * 这里只决定浮窗多久去取一次最新帧。
-     */
-    fun intervalMs(value: Int): Int = 66
-    /** 固定不压缩：灵屏的出帧是给 Agent 看的，文字边缘不能糊。 */
-    fun jpegQuality(value: Int): Int = 100
-}

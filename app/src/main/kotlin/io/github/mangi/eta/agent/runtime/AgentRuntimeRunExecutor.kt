@@ -17,6 +17,8 @@ import io.github.mangi.eta.agent.roleplay.CharacterMemoryTools
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
 import io.github.mangi.eta.agent.subagent.SubagentExecutor
+import io.github.mangi.eta.data.model.enabledModel
+import io.github.mangi.eta.data.model.enabledModelByApiId
 import io.github.mangi.eta.agent.mcp.McpRunSnapshot
 import io.github.mangi.eta.agent.mcp.McpToolExecutor
 import io.github.mangi.eta.agent.mcp.RoutingToolExecutor
@@ -197,11 +199,30 @@ internal class AgentRuntimeRunExecutor(
                     entrySurfaceGuard?.consumeScreenshotExcludedPackages().orEmpty()
                 },
                 beforeToolExecution = { toolName ->
-                    if (io.github.mangi.eta.agent.automation.AgentTaskScheduler.isRegistered(request.runId) &&
-                        (toolName in io.github.mangi.eta.agent.automation.AgentTaskTools.names || toolName in setOf("terminal", "run_command") ||
-                            (!session.mainScreenFallbackApproved.get() && (AgentToolRequirements.requiresAccessibility(toolName) ||
-                                AgentOverlayVisibilityPolicy.isForegroundOperationTool(toolName) || toolName == "browser_use")))) {
-                        ToolExecutionDecision.Reject("AUTOMATION_ACTION_UNAVAILABLE", "自动任务暂不支持创建其他任务或操作主屏；需要独立灵屏执行环境")
+                    val automated =
+                        io.github.mangi.eta.agent.automation.AgentTaskScheduler.isRegistered(request.runId)
+                    // 自动任务没有前台入口：另建任务与操作主屏都没有依据。
+                    // 但 shell、文件、检索、记忆这类不碰界面的工具与"没有前台"无关，不能一起禁掉
+                    // （曾把 terminal 混在这条里，导致自动任务里连 `bash 脚本` 都发不出去）。
+                    val automationRejection = when {
+                        !automated -> null
+                        toolName in io.github.mangi.eta.agent.automation.AgentTaskTools.names ->
+                            ToolExecutionDecision.Reject(
+                                "AUTOMATION_TASK_TOOL_UNAVAILABLE",
+                                "自动任务不能创建或修改其他自动任务；本次调用未执行",
+                            )
+                        !session.mainScreenFallbackApproved.get() &&
+                            (AgentToolRequirements.requiresAccessibility(toolName) ||
+                                AgentOverlayVisibilityPolicy.isForegroundOperationTool(toolName) ||
+                                toolName == "browser_use") ->
+                            ToolExecutionDecision.Reject(
+                                "AUTOMATION_FOREGROUND_UNAVAILABLE",
+                                "自动任务没有前台入口，操作主屏需要用户批准；请改用灵屏工具，或先从前台发起",
+                            )
+                        else -> null
+                    }
+                    if (automationRejection != null) {
+                        automationRejection
                     } else {
                         val requiresAccessibility =
                             AgentToolRequirements.requiresAccessibility(toolName)
@@ -294,7 +315,41 @@ internal class AgentRuntimeRunExecutor(
                 },
             )
             val runTools = JSONArray(mcpTools.toString()).also { tools ->
-                if (subagentAllowed()) AgentSubagentToolCatalog.appendSchemas(tools)
+                if (subagentAllowed()) {
+                    // 把用户勾选的授权模型写进工具描述，否则主 Agent 根本不知道有哪些可选。
+                    val subagentCfg = runCatching {
+                        runBlocking { io.github.mangi.eta.data.datastore.SettingsDataStore.subagentSettings() }
+                    }.getOrNull()
+                    val authorized = if (subagentCfg?.allowModelSelection == true) {
+                        subagentCfg.effectiveGrants.mapNotNull { grant ->
+                            val resolved = runCatching {
+                                runBlocking {
+                                    io.github.mangi.eta.data.repository.ProviderRepository.ensureBuiltInsMerged()
+                                    val all = io.github.mangi.eta.data.repository.ProviderRepository.allProviders()
+                                    all.enabledModelByApiId(grant.modelId) ?: all.enabledModel(grant.modelId)
+                                }
+                            }.getOrNull() ?: return@mapNotNull null
+                            val selectable = resolved.model.reasoningCapabilities
+                                ?.selectableEfforts?.map { it.wireValue }.orEmpty()
+                            val efforts = if (grant.allowedEfforts.isEmpty()) {
+                                selectable
+                            } else {
+                                selectable.filter { it in grant.allowedEfforts }
+                            }
+                            // 主 Agent 只认得对外 modelId（如 cn:hy3），不能给它内部 UUID。
+                            io.github.mangi.eta.agent.subagent.SubagentModelOption(
+                                modelId = resolved.model.modelId,
+                                efforts = efforts,
+                                contextWindow = resolved.model.contextWindowOverride
+                                    ?: resolved.model.contextWindow,
+                                supportsThinking = resolved.model.reasoning == true,
+                            )
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    AgentSubagentToolCatalog.appendSchemas(tools, authorizedModels = authorized)
+                }
                 if (historyTool != null) tools.put(AgentConversationToolCatalog.schema())
                 if (characterMemoryTools != null && memoryEnabled) CharacterMemoryTools.appendSchemas(tools)
             }

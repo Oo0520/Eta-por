@@ -409,6 +409,7 @@ fun AgentAppRoot(
         AgentAppShell(
             currentRoute = route,
             isCurrentRoute = backStack.lastOrNull() == route,
+            navigatorOpen = conversationNavigatorOpen,
             conversationPaneState = agentState.conversationPaneState,
             isConversationPaneOpen = conversationPaneOpen,
             conversationStatus = {
@@ -467,7 +468,7 @@ fun AgentAppRoot(
                     pushRoute(AppRoute.LinuxEnvironment)
                 }
             },
-            kimiWebLabel = appViewModel.kimiWebState.actionLabel(context),
+            kimiWebLabel = appViewModel.kimiWebState.menuLabel(context),
             canStopKimiWeb = appViewModel.kimiWebState.canStop,
             onStopKimiWeb = appViewModel::stopKimiWeb,
             onRefreshKimiWeb = appViewModel::refreshKimiWeb,
@@ -559,6 +560,7 @@ fun AgentAppRoot(
                         isPaused = agentState.runPaused,
                         state = agentState.homeState,
                         modelPickerState = agentState.modelPickerState,
+                        onOpenModelProviders = { pushRoute(AppRoute.ModelProviders) },
                         conversationKey = agentState.conversationPaneState.selectedConversationId,
                         commands = agentState.agentCommands,
                         commandResult = agentState.homeState.commandResult,
