@@ -5,6 +5,7 @@ import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.provider.ProviderSourceRegistry
+import io.github.mangi.eta.data.provider.isLocalEndpoint
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -13,7 +14,25 @@ internal data class AgentModelPickerUiState(
     val providerGroups: List<AgentModelProviderGroupUi> = emptyList(),
     val selectedModel: AgentModelOptionUi? = null,
     val isChanging: Boolean = false,
-)
+    /**
+     * 是否已经真正投影过一次（providers 从数据库读出来的结果）。
+     *
+     * 初值是空 state，冷启动时 provider 表还没读出来，此时「没有模型」和「还没加载完」
+     * 长得一模一样。不加这个标志，首帧会闪一条「还没有可用的模型」，DB 慢时能闪一秒。
+     */
+    val loaded: Boolean = false,
+) {
+    /**
+     * 当前能不能真的把消息发出去。
+     *
+     * [selectedModel] 只说明「选了一个模型」，不保证它背后的 provider 填了 Key——
+     * 投影时 selectedModel 会在所有 enabled provider 里按 id 兜底查找；
+     * 只有 [providerGroups] 过滤掉了「Key 为空 / 未授权」的 provider。
+     * 两者同时成立才算可用，缺一都会在发送时失败。
+     */
+    val hasUsableModel: Boolean
+        get() = loaded && selectedModel != null && providerGroups.isNotEmpty()
+}
 
 @Immutable
 internal data class AgentModelProviderGroupUi(
@@ -72,8 +91,10 @@ internal object AgentModelPickerProjector {
         val groups = enabledProviders
             .asSequence()
             .filter {
+                // 本地/局域网服务不校验 Key，也必须进面板；否则「本地地址代理」永远选不到。
                 ProviderAuthModes.isOAuth(it.authMode) ||
-                    (it.authMode == ProviderAuthModes.API_KEY && it.apiKey.isNotBlank())
+                    (it.authMode == ProviderAuthModes.API_KEY &&
+                        (it.apiKey.isNotBlank() || it.baseUrl.isLocalEndpoint()))
             }
             .mapNotNull { provider ->
                 val sourceType = ProviderSourceRegistry.resolve(provider)
@@ -96,6 +117,7 @@ internal object AgentModelPickerProjector {
         return AgentModelPickerUiState(
             providerGroups = groups,
             selectedModel = selectedModel,
+            loaded = true,
         )
     }
 

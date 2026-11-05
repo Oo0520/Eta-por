@@ -250,6 +250,7 @@ internal fun AgentAppShell(
         } else {
             pageContent()
         }
+
     }
 }
 
@@ -563,6 +564,7 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.TokenUsage -> stringResource(R.string.usage_stats_title)
     is AppRoute.DataUsage -> stringResource(R.string.data_usage_title)
     is AppRoute.SelfCheck -> "功能自检"
+    is AppRoute.Support -> "支持 Eta Por"
     is AppRoute.DiagnosticsPatrol -> stringResource(R.string.diag_patrol_title)
     is AppRoute.DiagnosticsCenter -> "诊断与日志"
     is AppRoute.MemoryDocument -> "MEMORY.md"

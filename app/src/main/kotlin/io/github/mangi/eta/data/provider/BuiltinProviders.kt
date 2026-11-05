@@ -24,9 +24,27 @@ internal object BuiltinProviders {
     const val OPENROUTER_ID = "builtin-openrouter"
     const val XAI_ID = "builtin-xai"
     const val GEMINI_ID = "builtin-gemini"
+    const val ZHIPU_ID = "builtin-zhipu"
+    const val VOLCENGINE_ID = "builtin-volcengine"
+    const val QIANFAN_ID = "builtin-qianfan"
+    const val HUNYUAN_ID = "builtin-hunyuan"
+    const val LOCAL_ID = "builtin-local"
 
-    /** 定制版只保留这两条内置：它们用于订阅账号（Codex / Grok）登录，删掉就没有登录入口了。 */
+    /** 订阅账号（Codex / Grok）登录入口，删掉就没有登录入口了。 */
     val SUBSCRIPTION_PROVIDER_IDS: List<String> = listOf(OPENAI_ID, XAI_ID)
+
+    /**
+     * 预置进「已配置提供商」的内置条目。
+     *
+     * 定制版此前只注入订阅登录的两条，其余大厂要靠「新增提供商」手动导入。
+     * 这里改成全部注入：用户开箱即可看到常见厂商，填 Key 即可用；
+     * 没填 Key 的条目只是占位，不会消耗任何额度。
+     */
+    val SEEDED_PROVIDER_IDS: List<String> = listOf(
+        OPENAI_ID, ANTHROPIC_ID, BAILIAN_ID, DEEPSEEK_ID, KIMI_ID, MIMO_ID,
+        MINIMAX_ID, STEPFUN_ID, SILICONFLOW_ID, OPENROUTER_ID, XAI_ID, GEMINI_ID,
+        ZHIPU_ID, VOLCENGINE_ID, QIANFAN_ID, HUNYUAN_ID, LOCAL_ID,
+    )
 
     val PROVIDERS: List<ProviderSetting> = listOf(
         OpenAiCompatibleProviderSetting(
@@ -134,6 +152,55 @@ internal object BuiltinProviders {
             name = "Gemini",
             isBuiltIn = true,
             sortOrder = 11,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = ZHIPU_ID,
+            name = "智谱 GLM",
+            baseUrl = "https://open.bigmodel.cn/api/paas/v4",
+            sourceType = ProviderSourceTypes.ZHIPU,
+            isBuiltIn = true,
+            sortOrder = 12,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = VOLCENGINE_ID,
+            name = "火山方舟",
+            baseUrl = "https://ark.cn-beijing.volces.com/api/v3",
+            sourceType = ProviderSourceTypes.VOLCENGINE,
+            isBuiltIn = true,
+            sortOrder = 13,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = QIANFAN_ID,
+            name = "百度千帆",
+            baseUrl = "https://qianfan.baidubce.com/v2",
+            sourceType = ProviderSourceTypes.QIANFAN,
+            isBuiltIn = true,
+            sortOrder = 14,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = HUNYUAN_ID,
+            name = "腾讯混元",
+            baseUrl = "https://api.hunyuan.cloud.tencent.com/v1",
+            sourceType = ProviderSourceTypes.HUNYUAN,
+            isBuiltIn = true,
+            sortOrder = 15,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        /**
+         * 本地/局域网代理（Ollama、LM Studio、llama.cpp、one-api 等）。
+         * 这类端点普遍不校验 Key，运行时对本地地址放行空 Key；填了也照常带上。
+         */
+        OpenAiCompatibleProviderSetting(
+            id = LOCAL_ID,
+            name = "本地地址代理",
+            baseUrl = "http://127.0.0.1:8080/v1",
+            sourceType = ProviderSourceTypes.CUSTOM,
+            isBuiltIn = true,
+            sortOrder = 16,
             systemPrompt = DEFAULT_SYSTEM_PROMPT,
         ),
     )
