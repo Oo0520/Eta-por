@@ -545,6 +545,7 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
         val session = AgentRuntimeSession(
             runId = request.runId,
             operation = request.operation,
+            conversationKey = request.effectiveModelSessionId,
             eventSink = { event ->
                 val current = sessionFor(request.runId)
                 if (current != null && event is AgentEvent.ToolStarted &&
@@ -751,6 +752,8 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
             // 收尾与「撤进度通知」必须无条件执行：会话被替换或重复收尾时若直接 return，
             // 通知会一直挂在通知栏（实测 start 12 次只 stop 1 次）。
             val needsOverlay = sessionFor(session.runId) === session
+            // 卡片马上会被撤掉，标题要在此之前读，否则结束通知里没有会话名。
+            val finishedConversationTitle = RunProgressNotifier.titleOf(session.runId)
             lastCompletedRunContext = completedContext
             sessions.remove(session.runId)
             RunControl.clearRun(session.runId, "runtime.finished")
@@ -767,14 +770,17 @@ internal class AgentRuntimeService : Service(), LifecycleOwner, SavedStateRegist
                 "completion.route",
                 "routed=" + session.virtualUiRouted.get() + " ok=" + result.ok + " runId=" + session.runId,
             )
-            if (session.virtualUiRouted.get()) {
-                VirtualScreenNotification.showCompletion(
-                    this,
-                    result.ok,
-                    if (result.ok) result.content.trim() else result.error.orEmpty(),
-                    stopped = !result.ok && result.error == "已停止",
-                )
-            }
+            // 所有对话跑完都发结束通知：以前只有灵屏路由的 run 才有，
+            // 普通对话切走后用户不知道结果。ID 与会话绑定，并发不会互相覆盖。
+            TaskCompletionNotifier.show(
+                context = this,
+                ok = result.ok,
+                detail = if (result.ok) result.content.trim() else result.error.orEmpty(),
+                stopped = !result.ok && result.error == "已停止",
+                conversationId = session.conversationKey,
+                conversationTitle = finishedConversationTitle,
+                runId = session.runId,
+            )
             if (!needsOverlay) return@post
             io.github.mangi.eta.core.EtaTrace.log(
                 "run.end",
