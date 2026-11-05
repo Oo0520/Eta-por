@@ -61,13 +61,90 @@ internal object VirtualScreenSession {
     @Volatile
     private var focusedOwner: String? = null
 
-    /** 同时最多几块灵屏：再多内存与合成压力都顶不住。 */
-    private const val MAX_SESSIONS = 1
+    /**
+     * 灵屏数量不再设数字上限，改由内存把关。
+     *
+     * 每块屏常驻约 80MB（1440x3168 全尺寸采集缓冲 + 复用位图），
+     * 硬性限个数没有意义：内存够就多开，不够就拒绝，判据用 [hasMemoryForNewSession]。
+     */
+    private const val MIN_FREE_MB_FOR_NEW_SESSION = 1200L
+
+    /** 剩余内存够不够再开一块屏；读不到 meminfo 时按「够」处理，不拦正常流程。 */
+    private fun hasMemoryForNewSession(): Boolean = runCatching {
+        java.io.File("/proc/meminfo").useLines { lines ->
+            lines.firstOrNull { it.startsWith("MemAvailable:") }
+                ?.split(Regex("\\s+"))?.getOrNull(1)?.toLongOrNull()
+                ?.let { it / 1024 >= MIN_FREE_MB_FOR_NEW_SESSION } ?: true
+        }
+    }.getOrDefault(true)
 
     private val gestureIds = AtomicLong()
 
     /** 编码长边上限：q100 下的性能红线（见 create 里的注释）。 */
     private const val MAX_ENCODE_LONG_SIDE = 1760
+
+    /**
+     * 出帧档位。只在没走直通（JPEG 回落管线）时生效；直通建立后由合成器直出，与档位无关。
+     *
+     * - [FLOAT]：浮窗展开可见，25fps / q80，跟手优先；
+     * - [FLOAT_COLLAPSED]：浮窗贴边收起成气泡或渐变条，画面已隐藏，5fps 只为偶尔瞄一眼；
+     * - [TAKEOVER]：接管页在前台，帧间隔对齐真机屏幕刷新率，质量 q90。
+     */
+    internal enum class WatchProfile(val intervalMs: Int, val quality: Int, val label: String) {
+        /** 浮窗展开：25fps。 */
+        FLOAT(40, 80, "浮窗"),
+
+        /** 浮窗收起：5fps。 */
+        FLOAT_COLLAPSED(200, 80, "浮窗收起"),
+
+        /** 接管页：intervalMs 留 0，下发时按真机刷新率换算。 */
+        TAKEOVER(0, 90, "接管"),
+    }
+
+    /**
+     * 读屏档（无人在看）：5fps / q80，与浮窗收起同档。
+     * 区别只在 helper 侧：读屏档还要满足「有客户端在取帧」才编码，纯挂机时不烧 CPU。
+     */
+    private const val READ_SCREEN_INTERVAL_MS = 200
+    private const val READ_SCREEN_QUALITY = 80
+
+    /** 灵屏合成刷新率上限：再高对「Agent 读屏 + 人工接管」没有收益，只多耗电。 */
+    private const val MAX_TARGET_HZ = 90
+
+    /** 可用的刷新率档位，从高到低匹配设备能力。 */
+    private val REFRESH_TIERS = listOf(MAX_TARGET_HZ, 60)
+
+    /** 各来源当前申请的档位（float / takeover），全部释放后回落到读屏档。 */
+    private val watchProfiles = LinkedHashMap<String, WatchProfile>()
+
+    /** 合并后的当前档位；null = 读屏档（自适应 1–3fps + 用户设置的质量）。 */
+    @Volatile
+    private var watchProfile: WatchProfile? = null
+
+    /** 最近一次 execute 的 App 上下文：给刷新率查询用，避免为了一个数字去抢 [lock]。 */
+    @Volatile
+    private var appContext: android.content.Context? = null
+
+    /**
+     * 屏幕刷新率档位：取「设备主屏支持的最高刷新率」与 [MAX_TARGET_HZ] 的较小值，
+     * 对齐到 60 / 90 / 120 三档。
+     *
+     * 绝不能无条件报 120：设备只有 60Hz 时虚屏声明 120Hz，App 会按 8.3ms 排帧、
+     * 实际 vsync 只有 16.6ms，动画反而比自己声明 60Hz 更卡。
+     */
+    private fun targetRefreshHz(): Int {
+        val maxHz = runCatching {
+            val ctx = appContext ?: return 60
+            val dm = ctx.getSystemService(android.hardware.display.DisplayManager::class.java)
+                ?: return 60
+            val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return 60
+            display.supportedModes.maxOfOrNull { it.refreshRate } ?: display.refreshRate
+        }.getOrDefault(60f)
+        return REFRESH_TIERS.firstOrNull { it <= maxHz + 0.5f } ?: 60
+    }
+
+    /** 接管档据此对齐屏刷新率；与 [targetRefreshHz] 同源，不再单独读 display.refreshRate。 */
+    private fun mainRefreshHz(): Float = targetRefreshHz().toFloat()
 
     private val operationIds = AtomicLong()
 
@@ -148,6 +225,20 @@ internal object VirtualScreenSession {
         sessions[owner]?.let { !it.closed.get() && it.process.isAlive } == true
     }
 
+    private fun mainScreenWidth(context: android.content.Context): Int =
+        context.resources.displayMetrics.widthPixels
+
+    private fun mainScreenHeight(context: android.content.Context): Int =
+        context.resources.displayMetrics.heightPixels
+
+    private fun mainScreenDensity(context: android.content.Context): Int =
+        context.resources.displayMetrics.densityDpi
+
+    /** 当前是否有任何一块灵屏活着（用于让 UI 工具自动跟随路由）。 */
+    fun hasActiveSession(): Boolean = synchronized(lock) {
+        sessions.values.any { !it.closed.get() && it.process.isAlive }
+    }
+
     fun isOwnedBy(owner: String): Boolean = isActive(owner)
 
     fun currentOwner(): String? = synchronized(lock) { focusedOwner }
@@ -187,9 +278,16 @@ internal object VirtualScreenSession {
             }
             return@synchronized acquired
         }
-        if (sessions.size < MAX_SESSIONS) return@synchronized true
-        // 单屏策略：占着屏的是别的会话时不抢、不回收，直接告诉调用方 busy。
-        // 早前会关掉对方「空闲」的屏，表现为另一个会话突然被暂停。
+        // 数量不设限，只看内存：够就再开一块，不够就明确告诉调用方，而不是悄悄关掉别人的屏。
+        if (hasMemoryForNewSession()) return@synchronized true
+        VscrDiag.line(
+            "灵屏 内存不足，拒绝新建 现有=" + sessions.size +
+                " 可用=" + runCatching {
+                    java.io.File("/proc/meminfo").useLines { l ->
+                        l.firstOrNull { it.startsWith("MemAvailable:") }?.split(Regex("\\s+"))?.getOrNull(1)
+                    }
+                }.getOrNull() + "kB"
+        )
         val holder = sessions.values.firstOrNull { it.owner != owner }
         VscrDiag.line(
             "灵屏占用 busy holder=" + (holder?.owner?.take(8) ?: "无") + " 请求=" + owner.take(8)
@@ -209,7 +307,14 @@ internal object VirtualScreenSession {
         val targets = if (owner != null) listOfNotNull(sessions[owner]) else sessions.values.toList()
         if (targets.isEmpty()) return@synchronized
         val settings = runBlocking { SettingsDataStore.settings() }
-        val fps = io.github.mangi.eta.data.model.VirtualScreenFrameRate.normalize(settings.virtualScreenFrameRate)
+        val profile = watchProfile
+        val interval = when {
+            profile == null -> READ_SCREEN_INTERVAL_MS
+            profile == WatchProfile.TAKEOVER ->
+                (1000f / mainRefreshHz()).toInt().coerceIn(4, 200)
+            else -> profile.intervalMs
+        }
+        val quality = profile?.quality ?: READ_SCREEN_QUALITY
         targets.forEach { current ->
             execute(
                 current.context,
@@ -218,12 +323,49 @@ internal object VirtualScreenSession {
                     .put("idleTimeoutMinutes", settings.virtualScreenIdleTimeoutMinutes)
                     .put("activeRun", current.viewer.value.activeRunId != null)
                     .put("mainScreenLocked", mainScreenLocked(current.context))
-                    .put("frameIntervalMs", io.github.mangi.eta.data.model.VirtualScreenFrameRate.intervalMs(fps))
-                    .put("jpegQuality", io.github.mangi.eta.data.model.VirtualScreenFrameRate.jpegQuality(fps)),
+                    .put("frameIntervalMs", interval)
+                    .put("jpegQuality", quality)
+                    .put("watchMode", profile != null),
             )
         }
         Unit
     }
+
+    /**
+     * 申请/释放某个来源的出帧档位。多来源各占一个名额，取最激进的那个生效：
+     * 接管页开着时浮窗即使收起也不会把帧率拖到 5fps。
+     * 传 null 表示该来源释放。无会话时只记档位，下次建屏随 create 生效。
+     */
+    fun setWatchProfile(source: String, profile: WatchProfile?): Boolean {
+        val snapshot: List<WatchProfile>
+        val detail: String
+        synchronized(watchProfiles) {
+            if (profile == null) watchProfiles.remove(source) else watchProfiles[source] = profile
+            snapshot = watchProfiles.values.toList()
+            detail = watchProfiles.entries.joinToString(",") { it.key + "=" + it.value.label }
+        }
+        // 最激进 = 间隔最小（接管档按真机刷新率算）。放在锁外：resolveInterval 可能去问 DisplayManager。
+        val merged = snapshot.minByOrNull { resolveInterval(it) }
+        if (watchProfile == merged) return false
+        watchProfile = merged
+        VscrDiag.line(
+            "出帧档位=" + (merged?.label ?: "读屏") +
+                (if (merged == null) "" else " interval=" + resolveInterval(merged) + "ms q=" + merged.quality) +
+                " 来源=[" + detail + "]"
+        )
+        runCatching { updateIdleTimeout() }
+        return true
+    }
+
+    private fun resolveInterval(profile: WatchProfile): Int =
+        if (profile == WatchProfile.TAKEOVER) (1000f / mainRefreshHz()).toInt().coerceIn(4, 200)
+        else profile.intervalMs
+
+    fun currentWatchProfile(): WatchProfile? = watchProfile
+
+    /** 当前生效的出帧间隔（ms）。浮窗的拉帧节奏与 helper 出帧共用同一口径。 */
+    fun currentFrameIntervalMs(): Int =
+        watchProfile?.let { resolveInterval(it) } ?: READ_SCREEN_INTERVAL_MS
 
     fun recordOperation(owner: String, runId: String?, name: String, success: Boolean, manual: Boolean = false) {
         val current = synchronized(lock) { sessions[owner]?.takeIf { !it.closed.get() } } ?: return
@@ -245,6 +387,7 @@ internal object VirtualScreenSession {
         manual: Boolean = false,
     ): AgentModelClient.ToolResult = synchronized(lock) {
         try {
+            if (appContext == null) appContext = context.applicationContext
             check(!isCancelled()) { "DISPLAY_CANCELLED" }
             require(android.os.Build.VERSION.SDK_INT >= 34) { "DEVICE_UNSUPPORTED" }
             val settings = runBlocking { SettingsDataStore.settings() }
@@ -270,10 +413,9 @@ internal object VirtualScreenSession {
                     stale.close()
                 }
                 require(sessions[owner] == null) { "DISPLAY_ALREADY_ACTIVE" }
-                if (sessions.size >= MAX_SESSIONS) {
-                    val holder = sessions.values.firstOrNull()
-                    VscrDiag.line("灵屏已占用 holder=" + (holder?.owner?.take(8) ?: "无"))
-                    error("DISPLAY_BUSY")
+                if (!hasMemoryForNewSession()) {
+                    VscrDiag.line("灵屏 内存不足，拒绝建屏 现有=" + sessions.size)
+                    error("INSUFFICIENT_MEMORY")
                 }
                 val allowOff = args.optBoolean("allowScreenOff", false)
                 require(!allowOff || settings.virtualScreenOffEnabled) { "SCREEN_OFF_PERMISSION_REQUIRED" }
@@ -296,7 +438,7 @@ internal object VirtualScreenSession {
                 io.github.mangi.eta.core.EtaTrace.log(
                     "vscr",
                     "helper 启动 runId=$runId owner=$owner ${width}x$height" +
-                        " density=$density allowOff=$allowOff 多开=${sessions.size + 1}/$MAX_SESSIONS",
+                        " density=$density allowOff=$allowOff 多开=${sessions.size + 1} 块",
                 )
                 HelperExitLog.started()
                 VscrDiag.line("helper 启动 " + width + "x" + height + " d=" + density + " owner=" + owner)
@@ -347,14 +489,23 @@ internal object VirtualScreenSession {
                     input.write(
                         JSONObject().put("action", "create").put("width", width)
                             .put("height", height).put("density", density)
+                            // 显示尺寸由 App 下发：helper 是 app_process 起的，
+                            // 部分机型上 getRealMetrics 拿不到主屏，dispW 会退化成采集尺寸（800x1760），
+                            // 于是所有坐标都被钳在半屏范围内。
+                            .put("displayWidth", mainScreenWidth(context))
+                            .put("displayHeight", mainScreenHeight(context))
+                            .put("displayDensity", mainScreenDensity(context))
                             .put("sessionId", current.id)
                             .put("owner", owner)
                             .put("selfPackage", context.packageName)
                             .put("surfaceToken", VirtualScreenHostSurfaces.token)
                             .put("idleTimeoutMinutes", settings.virtualScreenIdleTimeoutMinutes)
-                            .put("refreshRate", settings.virtualScreenFrameRate)
-                            .put("frameIntervalMs", io.github.mangi.eta.data.model.VirtualScreenFrameRate.intervalMs(settings.virtualScreenFrameRate))
-                            .put("jpegQuality", io.github.mangi.eta.data.model.VirtualScreenFrameRate.jpegQuality(settings.virtualScreenFrameRate))
+                            // 虚拟屏自身的合成刷新率：按设备实际支持的最高档取（≤90Hz），
+                            // 与出帧档位无关（档位只决定往 App 传图的频率）。
+                            .put("refreshRate", targetRefreshHz())
+                            .put("frameIntervalMs", READ_SCREEN_INTERVAL_MS)
+                            .put("jpegQuality", READ_SCREEN_QUALITY)
+                            .put("watchMode", watchProfile != null)
                             .put("activeRun", runId != null)
                             .put("allowScreenOff", allowOff)
                             .put("mainScreenLocked", mainScreenLocked(context)).toString()
@@ -376,7 +527,16 @@ internal object VirtualScreenSession {
                 // helper 用宿主面建屏成功才允许界面切直通；否则保持整帧管线。
                 VirtualScreenHostSurfaces.setLive(owner, response.optBoolean("direct"))
                 current.viewer.value = VirtualScreenViewerState(
-                    display = VirtualDisplayInfo(current.id, owner, current.displayId, width, height, density = density),
+                    // width/height 取 helper 回传的 display 坐标系（与主屏一致），
+                    // 触摸注入就按它算；采集尺寸更小，仅用于画面等比显示。
+                    display = VirtualDisplayInfo(
+                        current.id, owner, current.displayId,
+                        response.optInt("width", width),
+                        response.optInt("height", height),
+                        density = response.optInt("density", density),
+                        captureWidth = response.optInt("captureWidth", width),
+                        captureHeight = response.optInt("captureHeight", height),
+                    ),
                     lastAction = "create",
                     taskPhase = if (runId == null) VirtualScreenTaskPhase.IDLE else VirtualScreenTaskPhase.RUNNING,
                     activeRunId = runId,
@@ -473,10 +633,21 @@ internal object VirtualScreenSession {
     /** A′ 直通：宿主面变了（查看页/小窗重建、互切），让 helper 立刻重新取面。 */
     fun notifyHostSurface(context: Context) = synchronized(lock) {
         val targets = sessions.values.toList()
+        if (targets.isEmpty()) VscrDiag.line("直通 notify 无会话")
         targets.forEach { current ->
             if (current.closed.get()) return@forEach
             val result = execute(context, current.owner, JSONObject().put("action", "host_surface"))
-            VirtualScreenHostSurfaces.setLive(current.owner, JSONObject(result.content).optBoolean("direct"))
+            val payload = runCatching { JSONObject(result.content) }.getOrNull()
+            val direct = payload?.optBoolean("direct") == true
+            val info = payload?.optString("info").orEmpty()
+            VirtualScreenHostSurfaces.setLive(current.owner, direct)
+            VscrDiag.line(
+                "直通 notify owner=" + current.owner.take(8) +
+                    " direct=" + direct +
+                    (if (info.isEmpty()) "" else " info=" + info) +
+                    (if (payload?.optBoolean("ok") == true) ""
+                    else " 原样=" + result.content.take(160))
+            )
         }
     }
 

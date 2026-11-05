@@ -2268,6 +2268,15 @@
     <string name="lingscreen_keep_screen_on">操作时不息屏</string>
     <string name="lingscreen_keep_screen_on_summary">灵屏会话存在期间保持手机屏幕常亮，避免 Agent 操作到一半被息屏打断；会话结束自动释放。</string>
     <string name="lingscreen_export_log">导出灵屏日志</string>
+    <string name="lingscreen_return_title">正在真机上操作</string>
+    <string name="virtual_screen_completion_stopped_title">灵屏任务已停止</string>
+    <string name="virtual_screen_completion_stopped_body">你主动停止了这次运行。</string>
+    <string name="confirm_channel_name">Eta 确认提醒</string>
+    <string name="confirm_channel_desc">灵屏需要你确认时发通知</string>
+    <string name="confirm_notify_title">需要确认：%1$s</string>
+    <string name="confirm_notify_body">点开查看现场截图并确认</string>
+    <string name="tool_lingscreen_open_app">在灵屏打开应用</string>
+    <string name="lingscreen_return_body">点此回到灵屏（%1$s）</string>
     <string name="lingscreen_usage_title">使用说明</string>
     <string name="lingscreen_usage_body">· 双击浮窗：在 96 / 144 / 200 / 272 四档之间循环切换大小
 · 拖动浮窗：搬动位置；拖到左右边缘松手即收起

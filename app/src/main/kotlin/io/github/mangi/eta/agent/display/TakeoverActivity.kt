@@ -73,7 +73,7 @@ import org.json.JSONObject
  */
 internal class TakeoverActivity : ComponentActivity() {
 
-    private var surfaceView: VirtualScreenSurfaceView? = null
+    private var surfaceView: TakeoverHostView? = null
     private var frameJob: Job? = null
     private var watchJob: Job? = null
     private var sessionId: String = ""
@@ -121,16 +121,23 @@ internal class TakeoverActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         AgentLiveCoordinator.beginTakeover(this)
+        // 接管页在前台 = 人眼在看：帧率对齐真机屏幕刷新率（q90），退出时在 onDestroy 释放。
+        VirtualScreenSession.setWatchProfile("takeover", VirtualScreenSession.WatchProfile.TAKEOVER)
         baselinePackage = display.focusedPackage
         enteredAt = SystemClock.elapsedRealtime()
         lastTouchAt = SystemClock.elapsedRealtime()
         startExitWatcher()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                exitReason = "back"
-                AgentLiveCoordinator.endTakeover(this@TakeoverActivity)
-                VirtualScreenFloatWindow.resumeAfterTakeover()
-                finish()
+                // 系统返回键作用在灵屏里的 App 上（返回上一页），不退出接管。
+                // 退出接管统一走右上角 ✕ —— 两者混在一起时，用户想返回上一页却退出了整个接管。
+                val session = VirtualScreenSession.state.value.display?.sessionId ?: return@handleOnBackPressed
+                VscrDiag.line("接管页 返回键 → 注入 back")
+                VirtualScreenInputPump.submit(
+                    this@TakeoverActivity,
+                    session,
+                    org.json.JSONObject().put("action", "back"),
+                )
             }
         })
 
@@ -154,10 +161,14 @@ internal class TakeoverActivity : ComponentActivity() {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
-                            VirtualScreenSurfaceView(ctx).apply {
+                            TakeoverHostView(ctx).apply {
                                 fitContent = true
                                 touchEnabled = true
                                 onHostSurface = { host ->
+                                    // 接管页单独走直通：它是 Activity，硬件加速可用，
+                                    // TextureView 在这里能正常拿到 SurfaceTexture（overlay 浮窗不行）。
+                                    // 浮窗那边保持 JPEG 回落，两边互不影响。
+                                    VscrDiag.line("直通 接管页回调 host=" + (host != null))
                                     VirtualScreenHostSurfaces.attach(
                                         VirtualScreenSession.currentOwner().orEmpty(), "takeover", host,
                                     )
@@ -231,6 +242,18 @@ internal class TakeoverActivity : ComponentActivity() {
                             contentAlignment = Alignment.Center,
                         ) {
                             BasicText("⌨", style = TextStyle(color = ComposeColor.White, fontSize = 15.sp))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(ComposeColor(0x99000000))
+                                .clickable { jumpToPhysicalApp() },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            // ↗：把当前灵屏里的 App 直接在真机上打开，操作完用通知回到灵屏。
+                            BasicText("↗", style = TextStyle(color = ComposeColor.White, fontSize = 16.sp))
                         }
                         Spacer(Modifier.width(8.dp))
                         Box(
@@ -318,6 +341,31 @@ internal class TakeoverActivity : ComponentActivity() {
      * 全屏沉浸。必须在 setContentView 之后：`PhoneWindow.getInsetsController()`
      * 要求 mDecor 已安装，提前取会 NPE。
      */
+    /**
+     * 跳去真机继续操作。
+     *
+     * 灵屏和真机跑的是同一个应用、同一个账号，但少数操作（生物识别、系统级授权、
+     * 需要真机传感器）只能在真机上做。这里直接把当前包在真机拉起，
+     * 同时挂一条常驻通知，点它就回到灵屏接管，不用重新找入口。
+     */
+    private fun jumpToPhysicalApp() {
+        val pkg = VirtualScreenSession.state.value.display?.focusedPackage.orEmpty()
+        if (pkg.isBlank()) {
+            VscrDiag.line("跳真机 失败：拿不到当前包名")
+            return
+        }
+        val intent = packageManager.getLaunchIntentForPackage(pkg)
+        if (intent == null) {
+            VscrDiag.line("跳真机 失败：应用不可启动 pkg=$pkg")
+            return
+        }
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(intent) }
+            .onFailure { VscrDiag.line("跳真机 启动失败 pkg=$pkg err=" + it) }
+            .onSuccess { VscrDiag.line("跳真机 已启动 pkg=$pkg") }
+        VirtualScreenNotification.showReturnToLingscreen(this, pkg)
+    }
+
     private fun applyImmersiveMode() {
         runCatching {
             window.decorView
@@ -384,13 +432,13 @@ internal class TakeoverActivity : ComponentActivity() {
     }
 
     /** 直通不可用时整帧回落，保证不是黑屏。 */
-    private fun startFallbackFrames(view: VirtualScreenSurfaceView) {
+    private fun startFallbackFrames(view: TakeoverHostView) {
         frameJob?.cancel()
         frameJob = lifecycleScope.launch {
-            var lastFrame = 0L
             while (isActive) {
+                val startedAt = android.os.SystemClock.elapsedRealtime()
                 val result = withContext(Dispatchers.IO) {
-                    runCatching { VirtualScreenSession.observeForViewer(this@TakeoverActivity, lastFrame) }.getOrNull()
+                    runCatching { VirtualScreenSession.observeForViewer(this@TakeoverActivity) }.getOrNull()
                 }
                 val display = VirtualScreenSession.state.value.display
                 if (result == null) VscrDiag.line("接管页 取帧失败（命令超时/无会话）")
@@ -414,7 +462,12 @@ internal class TakeoverActivity : ComponentActivity() {
                         }
                     }
                 }
-                delay(90)
+                // 节奏跟随出帧档位（接管档 = 真机刷新率）。取帧本身要耗时，
+                // 只补差值；追不上就不等，跑到这条链路的物理上限为止。
+                val interval = VirtualScreenSession.currentFrameIntervalMs().toLong()
+                val spent = android.os.SystemClock.elapsedRealtime() - startedAt
+                val budget = interval - spent
+                if (budget > 0L) delay(budget)
             }
         }
     }
@@ -452,7 +505,15 @@ internal class TakeoverActivity : ComponentActivity() {
         watchJob = null
         frameJob?.cancel()
         frameJob = null
+        VirtualScreenSession.setWatchProfile("takeover", null)
         surfaceView?.let { VirtualScreenHostSurfaces.attach("takeover", null) }
+        // 退出接管 = 撤掉直通：通知 helper 把输出面切回采集面，
+        // 否则灵屏画面会停在最后一个直通帧上（浮窗也会显示冻结画面）。
+        runCatching {
+            val app = applicationContext
+            Thread { runCatching { VirtualScreenSession.notifyHostSurface(app) } }
+                .apply { isDaemon = true }.start()
+        }
         surfaceView = null
         super.onDestroy()
     }

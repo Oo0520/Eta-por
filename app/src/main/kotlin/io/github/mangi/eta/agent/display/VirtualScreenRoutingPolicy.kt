@@ -10,13 +10,30 @@ internal class VirtualScreenRoutingPolicy(initiallyRouted: Boolean = false) {
 
     fun shouldRoute(name: String, enabled: Boolean): Boolean {
         if (name !in uiTools || usesPrimary) return false
-        if (enabled) routed.set(true)
+        if (!enabled) return false
+        // 只有显式入口能「开启」灵屏路由。
+        // 以前任何 UI 工具都会把 routed 置真，于是「打开微信」用真机打开之后，
+        // 紧接着的一次 tap 又会把整段会话拽回灵屏（还顺手新建一块屏），
+        // 用户看到的就是「我只是让它打开微信，怎么屏幕没了」。
+        if (name == LINGSCREEN_ENTRY) {
+            // 它是「开关」不是「灵屏内的工具」：本工具本身由 AgentLocalTools 执行
+            // （内部调 virtualUiTools.launchComponent），不能再被路由回 VirtualScreenUiTools，
+            // 否则会落到那里的 else 分支报 VIRTUAL_ACTION_UNSUPPORTED。
+            routed.set(true)
+            return false
+        }
+        // 已经有活跃灵屏会话时，UI 工具自动跟随，不必依赖入口工具来开启路由。
+        // 否则用 virtual_screen 直接建屏后，observe_screen 会打到主屏（读到 Eta 自己的界面）。
+        if (!routed.get() && VirtualScreenSession.hasActiveSession()) routed.set(true)
         return routed.get()
     }
 
     fun approvePrimary() { primaryApproved.set(true) }
 
     companion object {
+        /** 唯一能开启灵屏路由的工具：其余 UI 工具只在它之后跟随。 */
+        const val LINGSCREEN_ENTRY = "lingscreen_open_app"
+
         val fallbackErrors = setOf(
             "ROOT_REQUIRED", "DEVICE_UNSUPPORTED", "ROOT_DISPLAY_UNAVAILABLE", "VIRTUAL_SCREEN_FAILED",
             "DISPLAY_LIFECYCLE_UNAVAILABLE",
@@ -26,7 +43,9 @@ internal class VirtualScreenRoutingPolicy(initiallyRouted: Boolean = false) {
         )
         val allowedBeforePrimaryObservation = setOf("launch_app", "open_uri", "observe_screen", "wait", "wait_for_text", "wait_for_package")
         val uiTools = setOf(
-            "launch_app",
+            // launch_app 已改为「永远真机」，不再触发灵屏路由；
+            // 需要把后续点击都投进虚拟屏时，改用 lingscreen_open_app。
+            "lingscreen_open_app",
             "open_uri",
             "observe_screen",
             "tap",
