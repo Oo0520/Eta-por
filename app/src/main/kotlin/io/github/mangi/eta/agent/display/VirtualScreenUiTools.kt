@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Rect
 import android.os.SystemClock
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
+import io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard
 import io.github.mangi.eta.agent.device.ScrollAmount
 import io.github.mangi.eta.agent.device.ScrollDirection
 import io.github.mangi.eta.agent.model.AgentModelClient
@@ -34,6 +35,23 @@ internal class VirtualScreenUiTools(
         uiTreeAvailability.unavailableFor(VirtualScreenSession.state.value.display)
 
     fun execute(name: String, args: JSONObject): AgentModelClient.ToolResult = try {
+        // 决策拦截：这一下会不会花钱 / 泄隐私 / 不可逆。命中就不注入，直接回 NEED_CONFIRM。
+        // 按文本点的动作（tap_element）在 nodeAction 里判，那里才拿得到控件文本。
+        if (AgentConfirmGuard.shouldGuard(name) && name != "tap_element" && name != "long_press_element") {
+            val target = when (name) {
+                "tap_smart" -> args.optString("text").ifBlank { args.optString("desc") }
+                // tap_area 给的是矩形，取中心再反查；其余给单点。
+                "tap_area" -> {
+                    val cx = (args.optInt("x1", 0) + args.optInt("x2", 0)) / 2
+                    val cy = (args.optInt("y1", 0) + args.optInt("y2", 0)) / 2
+                    AgentConfirmGuard.labelAt(cx, cy)
+                }
+                else -> AgentConfirmGuard.labelAt(args.optInt("x", 0), args.optInt("y", 0))
+            }
+            AgentConfirmGuard.inspect(context, target, name)?.let { draft ->
+                return AgentModelClient.ToolResult(AgentConfirmGuard.blockedResult(draft))
+            }
+        }
         if (name in VirtualScreenRoutingPolicy.unavailableTools) {
             failure(
                 "VIRTUAL_ACTION_UNSUPPORTED",
@@ -213,6 +231,8 @@ internal class VirtualScreenUiTools(
         snapshot = nodes
         observedSession = info.sessionId
         observedManualGeneration = info.manualInputGeneration
+        // 每次观察都刷新拦截缓存：坐标类点击要靠它反查「点到了什么」。
+        nodes?.let { rememberForConfirmGuard(it) }
         // 撞上人机验证就当场摊牌，别让模型继续点「关闭」按钮浪费轮次。
         detectHumanVerification(nodes)?.let { hit ->
             json.put("human_verification_required", true)
@@ -313,7 +333,19 @@ internal class VirtualScreenUiTools(
                     current.displayId == info.displayId && current.packageName == info.focusedPackage &&
                     current.id == args.optString("observation_id")
         ) { "STALE_OBSERVATION" }
+        rememberForConfirmGuard(current)
         return current
+    }
+
+    /** 把一次快照的控件文本与坐标交给判定器：坐标类点击靠它反查「点到了什么」。 */
+    private fun rememberForConfirmGuard(snap: AgentAccessibilityService.NodeSnapshot) {
+        val labels = snap.nodes.map { it.text.ifBlank { it.desc }.trim() }
+        AgentConfirmGuard.remember(
+            snap.nodes.mapIndexed { i, node ->
+                AgentConfirmGuard.Spot(labels[i], node.bounds.centerX(), node.bounds.centerY())
+            }.filter { it.label.isNotEmpty() },
+            labels.filter { it.isNotEmpty() },
+        )
     }
 
     private fun nodeAction(
@@ -324,6 +356,12 @@ internal class VirtualScreenUiTools(
         val nodes = requiredSnapshot(args, info)
         val index = integer(args, "index")
         val node = nodes.nodes.firstOrNull { it.index == index } ?: error("INVALID_NODE_INDEX")
+        if (name == "tap_element" || name == "long_press_element") {
+            val label = node.text.ifBlank { node.desc }
+            AgentConfirmGuard.inspect(context, label, name)?.let { draft ->
+                return AgentModelClient.ToolResult(AgentConfirmGuard.blockedResult(draft))
+            }
+        }
         val service = AgentAccessibilityService.current() ?: error("ACCESSIBILITY_UNAVAILABLE")
         val duration = args.optInt("duration_ms", 800).coerceIn(300, 3000)
         if (name == "scroll_element") {
@@ -377,6 +415,7 @@ internal class VirtualScreenUiTools(
             snapshot = snap
             observedSession = info.sessionId
             observedManualGeneration = info.manualInputGeneration
+            rememberForConfirmGuard(snap)
             val matched = snap.nodes.firstOrNull { node ->
                 (text.isNotBlank() && node.text.contains(text, true)) ||
                     (desc.isNotBlank() && node.desc.contains(desc, true))

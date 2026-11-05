@@ -199,14 +199,23 @@ internal object RootDisplayCommandMain {
             var width = integer(setup, "width", 320, VirtualScreenProfile.MAX_WIDTH)
             var height = integer(setup, "height", 480, VirtualScreenProfile.MAX_HEIGHT)
             val dpi = integer(setup, "density", 120, VirtualScreenProfile.MAX_DENSITY)
-            // 灵屏刷新率跟随用户选的出帧档位（60/90/120/144/165），越高越跟手。
-            val refreshRate = setup.optInt("refreshRate", 165).coerceIn(60, 165).toFloat()
+            // 屏合成刷新率由 App 按设备实际能力算好再下发；这里只挡非法值，
+            // 不擅自抬到 60 以上——设备本来只有 60Hz 时抬高只会让 App 按错的帧预算排帧。
+            val refreshRate = setup.optInt("refreshRate", 60).coerceIn(24, 240).toFloat()
             val allowOff = setup.optBoolean("allowScreenOff", false)
             mainScreenLockedHint = setup.optBoolean("mainScreenLocked", false)
             val idleTimer = VirtualScreenIdleTimer(setup.optInt("idleTimeoutMinutes", 20),
                 SystemClock::elapsedRealtime, setup.optBoolean("activeRun"))
-            var frameIntervalMs = setup.optInt("frameIntervalMs", 16).coerceIn(8, 66)
+            var frameIntervalMs = setup.optInt("frameIntervalMs", 16).coerceIn(4, 200)
             var jpegQuality = setup.optInt("jpegQuality", 100).coerceIn(40, 100)
+            /**
+             * 双档出帧：
+             *  - watchMode=true（浮窗可见 / 接管页在前台）：人眼在看，按 frameIntervalMs 出帧（默认 50ms ≈ 20fps），
+             *    JPEG 压到 85，优先保证跟手；
+             *  - watchMode=false（纯 Agent 读屏）：自适应 1–3fps + 原质量，优先保证文字清晰、省电。
+             * 直通建立后本回调不参与出图，两档都无意义。
+             */
+            var watchMode = setup.optBoolean("watchMode", false)
             Thread {
                 while (true) {
                     Thread.sleep(1000)
@@ -222,6 +231,9 @@ internal object RootDisplayCommandMain {
             frames = HandlerThread("eta-virtual-frames").apply { start() }
             val handler = Handler(frames.looper)
             val frameStore = FrameStore()
+            // 传输尺寸（长边 ≤1760）：帧回调要用，先声明后赋值。
+            var capW = 0
+            var capH = 0
             val frameListener = ImageReader.OnImageAvailableListener { source ->
                 try {
                 // 尺寸切换后旧 reader 队列里可能还有迟到回调，直接丢弃，避免碰到已释放的帧缓冲。
@@ -229,16 +241,20 @@ internal object RootDisplayCommandMain {
                 source.acquireLatestImage()?.use { image ->
                     val now = SystemClock.elapsedRealtime()
                     // 没有客户端在取帧时不编码：只保持画面队列流动，省电、少发热。
-                    if (now - frameStore.lastDemandAt > 1500L) return@use
+                    // 观看态例外：人眼盯着画面，必须持续出帧，不能等 observe 来拉。
+                    if (!watchMode && now - frameStore.lastDemandAt > 1500L) return@use
                     val plane = runCatching { image.planes.firstOrNull() }.getOrNull() ?: return@use
                     if (plane.pixelStride != 4) return@use
                     val paddedWidth = plane.rowStride / plane.pixelStride
-                    // 自适应 1–3fps：画面有变化 333ms 出一帧（3fps），静止时 1000ms（1fps）。
-                    // 不再用固定 refreshRate 卡节奏，也不再靠 1.5s 兜底才出帧。
+                    // 出帧节奏完全由 App 按档位下发（见 VirtualScreenSession.WatchProfile）。
                     val buffer = runCatching { plane.buffer }.getOrNull() ?: return@use
                     val signature = runCatching { sampleSignature(buffer) }.getOrDefault(0L)
-                    val changed = frameStore.differs(signature)
-                    val minInterval = if (changed) 333L else 1000L
+                    frameStore.differs(signature)
+                    // 统一按 App 下发的目标间隔出帧（浮窗 40ms/接管 屏幕刷新率/收起与读屏 200ms），
+                    // 再用「上一帧编码实际耗时 ×1.2」兜底：接管档按真机刷新率下发（120Hz→8ms），
+                    // JPEG 编码远追不上，不设这个下限会把编码线程跑满却只出几帧，白烧 CPU。
+                    val cost = frameStore.lastEncodeCostMs
+                    val minInterval = maxOf(frameIntervalMs.toLong(), (cost * 6 / 5).coerceAtLeast(0L))
                     if (now - frameStore.lastEncoded < minInterval) return@use
                     // 尺寸对不上的帧直接丢：切换期间在途的旧尺寸帧，其缓冲可能已被释放。
                     val frameWidth = renderWidth
@@ -258,15 +274,31 @@ internal object RootDisplayCommandMain {
                         val bytes = frameStore.copyBuffer(required) ?: return@use
                         buffer.rewind()
                         val available = minOf(required, buffer.remaining())
-                        if (available <= 0) return@use
+                        if (available < required) {
+                            // 短读：拷贝缓冲不完整。以前只判 <=0，没填满的部分留着「上一帧」的像素，
+                            // 于是画面变成上截新、下截旧的叠影（实测微信聊天页常见：标题栏与列表错位）。
+                            // padded 是复用位图，不丢帧就一定会出现这种残留。
+                            frameStore.shortReads++
+                            if (frameStore.shortReads % 60 == 1L) {
+                                hlog("frame short read available=" + available + " required=" + required)
+                            }
+                            return@use
+                        }
                         buffer.get(bytes, 0, available)
                         padded.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
                     } catch (_: Throwable) {
                         return@use
                     }
+                    // 全尺寸帧（1440x3168）缩到传输尺寸（长边 ≤1760）再编码：
+                    // 缩放比压缩便宜得多，而且编码的输入小了 3 倍。
+                    val scaled = if (cropped.width == capW && cropped.height == capH) cropped
+                    else frameStore.scaled(cropped, capW, capH) ?: return@use
                     val encoded = ByteArrayOutputStream()
                     try {
-                        cropped.compress(Bitmap.CompressFormat.JPEG, jpegQuality, encoded)
+                        // 质量由 App 按档下发（浮窗 80 / 接管 90 / 读屏沿用用户设置），这里不再就地打折。
+                        val startedAt = SystemClock.elapsedRealtime()
+                        scaled.compress(Bitmap.CompressFormat.JPEG, jpegQuality, encoded)
+                        frameStore.lastEncodeCostMs = SystemClock.elapsedRealtime() - startedAt
                         // q100 不压缩后单帧明显变大（1080x2376 常到 3~6MB），上限跟着放宽，否则整帧会被丢掉。
                         encoded.toByteArray().takeIf { it.size <= 12_000_000 }?.let {
                             frameStore.lastSignature = signature
@@ -284,17 +316,43 @@ internal object RootDisplayCommandMain {
             // 多开：每块屏只取自己会话的宿主面，取不到就回落整帧管线。
             val surfaceOwner = setup.optString("owner")
             var hostSurface = pullHostSurface(context, surfaceToken, surfaceOwner)
-            hlog("create direct=" + (hostSurface != null) + " size=" + width + "x" + height)
+            /**
+             * 显示尺寸必须跟随主屏，不能是压缩后的采集尺寸。
+             *
+             * 原因（实测）：灵屏原先用 800x1760@356 建屏，拼多多把「当前屏幕物理尺寸」当成
+             * 自己的缩放基准存了下来，回到主屏后整界面变小、字体错乱，且重启 App 也修不好。
+             * 现在让 App 看到的是真实的 1440x3168@640，只把「采集」这一层压到 800x1760：
+             * SurfaceFlinger 合成全尺寸后缩放到小 surface，内存与带宽不变，App 的认知与主屏一致。
+             */
+            val mainDisplay = runCatching { displayManager.getDisplay(android.view.Display.DEFAULT_DISPLAY) }.getOrNull()
+            val mainMetrics = android.util.DisplayMetrics().also { metrics ->
+                runCatching { mainDisplay?.getRealMetrics(metrics) }
+            }
+            // 优先用 App 下发的显示尺寸；自己读主屏只在拿不到时兜底。
+            var dispW = setup.optInt("displayWidth", 0).takeIf { it > 0 }
+                ?: mainMetrics.widthPixels.takeIf { it > 0 } ?: width
+            var dispH = setup.optInt("displayHeight", 0).takeIf { it > 0 }
+                ?: mainMetrics.heightPixels.takeIf { it > 0 } ?: height
+            var dispDpi = setup.optInt("displayDensity", 0).takeIf { it > 0 }
+                ?: mainMetrics.densityDpi.takeIf { it > 0 } ?: dpi
+            // 传输尺寸：长边压到 MAX_ENCODE_LONG_SIDE，编码前把整帧缩放到这个尺寸。
+            // 实测结论：SurfaceFlinger 不会把「全尺寸 display」缩放到「小尺寸 output surface」，
+            // 而是按左上角裁剪——所以采集必须与 display 同尺寸，压缩只能放在编码前做。
+            capW = width
+            capH = height
+            hlog("create direct=" + (hostSurface != null) + " capture=" + capW + "x" + capH +
+                " display=" + dispW + "x" + dispH + "@" + dispDpi)
             val initialReader = if (hostSurface == null) {
-                ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+                // 全尺寸采集：1440x3168 RGBA 单帧 18MB，缓冲降到 2 个（约 36MB）。
+                ImageReader.newInstance(dispW, dispH, PixelFormat.RGBA_8888, 2)
                     .apply { setOnImageAvailableListener(frameListener, handler) }
             } else {
                 null
             }
             reader = initialReader
             if (initialReader != null) readerRef.set(initialReader)
-            renderWidth = width
-            renderHeight = height
+            renderWidth = dispW
+            renderHeight = dispH
             // Android 14+ own-focus 和不抢顶层焦点；不使用 AUTO_MIRROR，也不捕获安全 Surface。
             var flags =
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
@@ -303,7 +361,7 @@ internal object RootDisplayCommandMain {
                         flag("VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED") or flag("VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL")
             if (allowOff) flags = flags or flag("VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED")
             display = displayManager.createVirtualDisplay(
-                VirtualDisplayConfig.Builder("Eta virtual task", width, height, dpi)
+                VirtualDisplayConfig.Builder("Eta virtual task", dispW, dispH, dispDpi)
                     .setSurface(hostSurface ?: initialReader!!.surface).setFlags(flags)
                     .setRequestedRefreshRate(refreshRate).build(),
             )
@@ -313,8 +371,10 @@ internal object RootDisplayCommandMain {
             activeDisplayId = id
             // 打开灵屏先拉起本应用自己的灵屏桌面（应用导航页），按 Home/应用键也回这儿。
             selfPackage = setup.optString("selfPackage")
-            runCatching { startVirtualHome(id, setup.optString("sessionId"), "HOME") }
-                .onFailure { runCatching { startSystemHome(id) } }
+            // 不再拉起灵屏自带的「主页」（应用菜单那套导航页）：
+            // 建屏后直接由 App 侧的 launchComponent 打开目标应用，
+            // 中间多一层主页只会让接管页先闪一屏无关界面。
+            // 万一上层没有立刻拉起应用，屏上就是空的——比闪一下主页更不打扰。
             val localIme = configureLocalIme(id)
             val textInput = VirtualScreenRootTextInput(id)
             // 横屏场景：灵屏自身不能旋转，按顶层应用请求的方向把 display 换成横屏尺寸（画面不旋转、
@@ -339,7 +399,12 @@ internal object RootDisplayCommandMain {
                             val host = hostSurface
                             val applied = runCatching {
                                 display?.setSurface(null)
-                                display?.resize(nextWidth, nextHeight, dpi)
+                                // 显示尺寸按主屏横竖交换；采集尺寸按同样交换，两者比例保持一致。
+                                val nextDispW = if (dispW > dispH) dispH else dispW
+                                val nextDispH = if (dispW > dispH) dispW else dispH
+                                display?.resize(nextDispW, nextDispH, dispDpi)
+                                dispW = nextDispW
+                                dispH = nextDispH
                                 display?.setSurface(host)
                             }
                             if (applied.isFailure) {
@@ -349,16 +414,25 @@ internal object RootDisplayCommandMain {
                             }
                             width = nextWidth
                             height = nextHeight
-                            renderWidth = nextWidth
-                            renderHeight = nextHeight
+                            capW = nextWidth
+                            capH = nextHeight
+                            renderWidth = dispW
+                            renderHeight = dispH
                             frameStore.reset()
-                            hlog("shape direct ok landscape=" + landscape + " size=" + nextWidth + "x" + nextHeight)
+                            hlog("shape direct ok landscape=" + landscape + " display=" + dispW + "x" + dispH +
+                                " capture=" + capW + "x" + capH)
                             return@post
                         }
-                        val next = ImageReader.newInstance(nextWidth, nextHeight, PixelFormat.RGBA_8888, 3)
+                        val nextDispW = if (dispW > dispH) dispH else dispW
+                        val nextDispH = if (dispW > dispH) dispW else dispH
+                        val next = ImageReader.newInstance(nextDispW, nextDispH, PixelFormat.RGBA_8888, 2)
                         val applied = runCatching {
                             display?.setSurface(next.surface)
-                            display?.resize(nextWidth, nextHeight, dpi)
+                            display?.resize(nextDispW, nextDispH, dispDpi)
+                            dispW = nextDispW
+                            dispH = nextDispH
+                            capW = nextWidth
+                            capH = nextHeight
                         }
                         if (applied.isFailure) {
                             next.close()
@@ -369,8 +443,8 @@ internal object RootDisplayCommandMain {
                         readerRef.set(next)
                         width = nextWidth
                         height = nextHeight
-                        renderWidth = nextWidth
-                        renderHeight = nextHeight
+                        renderWidth = dispW
+                        renderHeight = dispH
                         frameStore.reset()
                         next.setOnImageAvailableListener(frameListener, handler)
                         runCatching { previous?.close() }
@@ -424,8 +498,10 @@ internal object RootDisplayCommandMain {
                 }
             }.apply { name = "eta-display-wakelock"; isDaemon = true; start() }
             reply(
-                JSONObject().put("ok", true).put("displayId", id).put("width", width)
-                    .put("height", height).put("density", dpi).put("refreshRate", display.display.refreshRate)
+                JSONObject().put("ok", true).put("displayId", id).put("width", dispW)
+                    .put("height", dispH).put("density", dispDpi).put("refreshRate", display.display.refreshRate)
+                    // 采集尺寸单独给：画面比例按它算，坐标一律按上面的 width/height。
+                    .put("captureWidth", capW).put("captureHeight", capH)
                     .put("independentFocus", true)
                     .put("direct", hostSurface != null)
                     .put("localIme", localIme)
@@ -450,11 +526,29 @@ internal object RootDisplayCommandMain {
                         "host_surface" -> {
                             // 查看页/小窗换了宿主面：重新取一次并直接换面，失败保持原面不动。
                             val next = pullHostSurface(context, surfaceToken, surfaceOwner)
-                            if (next != null) {
+                            // 失败原因必须回传给 App：helper 自己的 hlog 落在
+                            // /data/local/tmp/xaw-helper.log，用户在 vscr.log 里看不到。
+                            val info = if (next == null) {
+                                // 退出直通（接管页关闭）：必须把输出面切回采集用的 ImageReader，
+                                // 否则画面会冻在最后一个直通帧上，浮窗也拿不到新帧。
+                                hostSurface = null
+                                // 先摘后挂：只 setSurface 的话，画面内容没变化时合成器不会重绘，
+                                // ImageReader 就一帧都拿不到，浮窗会一直停在接管前那一帧。
+                                runCatching {
+                                    display?.setSurface(null)
+                                    display?.setSurface(reader?.surface)
+                                }
+                                frameStore.lastSignature = -1L
+                                "pull=null 回落采集面"
+                            } else {
                                 hostSurface = next
-                                runCatching { display?.setSurface(next) }
+                                val set = runCatching { display?.setSurface(next) }
+                                "pull=ok set=" + set.isSuccess +
+                                    (set.exceptionOrNull()?.let { " err=" + it } ?: "")
                             }
+                            hlog("host_surface direct=" + (hostSurface != null) + " " + info)
                             JSONObject().put("ok", true).put("direct", hostSurface != null)
+                                .put("info", info)
                         }
                         "lifecycle" -> {
                             idleTimer.update(request.optInt("idleTimeoutMinutes", 20), request.optBoolean("activeRun"))
@@ -462,13 +556,26 @@ internal object RootDisplayCommandMain {
                             if (request.has("mainScreenLocked")) {
                                 mainScreenLockedHint = request.optBoolean("mainScreenLocked")
                             }
-                            if (request.has("frameIntervalMs")) frameIntervalMs = request.optInt("frameIntervalMs", frameIntervalMs).coerceIn(4, 66)
+                            if (request.has("frameIntervalMs")) frameIntervalMs = request.optInt("frameIntervalMs", frameIntervalMs).coerceIn(4, 200)
                             if (request.has("jpegQuality")) jpegQuality = request.optInt("jpegQuality", jpegQuality).coerceIn(40, 100)
+                            if (request.has("watchMode")) {
+                                val next = request.optBoolean("watchMode", watchMode)
+                                if (next != watchMode) {
+                                    watchMode = next
+                                    // 不能 reset：reset 会连 frame 一起清空，
+                                    // 切到接管档的那一瞬间客户端恰好来取帧，就会拿到 DISPLAY_FRAME_PENDING，
+                                    // 画面上就是「进接管页先黑一片」（实测 5 秒内都没恢复）。
+                                    // 只作废签名、逼下一帧重编码，已有帧继续可读。
+                                    frameStore.lastSignature = -1L
+                                    hlog("watchMode=" + watchMode + " interval=" + frameIntervalMs + " q=" + jpegQuality)
+                                }
+                            }
                             JSONObject().put("ok", true).put("displayId", id)
                         }
                         "probe" -> JSONObject().put("ok", true).put("displayId", id)
 
-                            .put("width", width).put("height", height)
+                            .put("width", dispW).put("height", dispH)
+                            .put("captureWidth", capW).put("captureHeight", capH)
                             .put("refreshRate", display.display.refreshRate)
                             .put("packageName", runningTasks().firstOrNull { taskDisplayId(it) == id }?.topActivity?.packageName.orEmpty())
                             .apply {
@@ -518,7 +625,8 @@ internal object RootDisplayCommandMain {
                             frameStore.frame
                         }?.let { frame ->
                             JSONObject().put("ok", true).put("displayId", id)
-                                .put("width", width).put("height", height)
+                                .put("width", dispW).put("height", dispH)
+                                .put("captureWidth", capW).put("captureHeight", capH)
                                 .put("frameId", frame.id)
                                 .put("mimeType", "image/jpeg")
                                 .put(
@@ -587,8 +695,8 @@ internal object RootDisplayCommandMain {
 
                         "touch" -> {
                             val phase = request.getString("phase")
-                            val tx = request.optDouble("x", 0.0).toFloat().coerceIn(0f, (width - 1).toFloat())
-                            val ty = request.optDouble("y", 0.0).toFloat().coerceIn(0f, (height - 1).toFloat())
+                            val tx = request.optDouble("x", 0.0).toFloat().coerceIn(0f, (dispW - 1).toFloat())
+                            val ty = request.optDouble("y", 0.0).toFloat().coerceIn(0f, (dispH - 1).toFloat())
                             val taken = when (phase) {
                                 "down" -> touchInjector.down(id, tx, ty)
                                 "move" -> touchInjector.move(id, tx, ty)
@@ -608,8 +716,8 @@ internal object RootDisplayCommandMain {
                             input(
                                 id,
                                 "tap",
-                                integer(request, "x", 0, width - 1).toString(),
-                                integer(request, "y", 0, height - 1).toString()
+                                integer(request, "x", 0, dispW - 1).toString(),
+                                integer(request, "y", 0, dispH - 1).toString()
                             ); JSONObject().put("ok", true).put("displayId", id)
                         }
 
@@ -619,17 +727,30 @@ internal object RootDisplayCommandMain {
                             input(
                                 id,
                                 "swipe",
-                                integer(request, "x1", 0, width - 1).toString(),
-                                integer(request, "y1", 0, height - 1).toString(),
-                                integer(request, "x2", 0, width - 1).toString(),
-                                integer(request, "y2", 0, height - 1).toString(),
+                                integer(request, "x1", 0, dispW - 1).toString(),
+                                integer(request, "y1", 0, dispH - 1).toString(),
+                                integer(request, "x2", 0, dispW - 1).toString(),
+                                integer(request, "y2", 0, dispH - 1).toString(),
                                 integer(request, "durationMs", 100, 2000).toString()
                             ); JSONObject().put("ok", true).put("displayId", id)
                         }
 
                         "back" -> {
-                            input(id, "keyevent", "4"); JSONObject().put("ok", true)
-                                .put("displayId", id)
+                            input(id, "keyevent", "4")
+                            // 按返回退到「桌面」时，灵屏上必须有东西可显示。
+                            // 建屏时已经不再自动拉起灵屏主页，如果不在这里兜底，
+                            // App 退出后这块屏就是纯黑（实测接管页按一次返回就黑屏）。
+                            handler.postDelayed({
+                                runCatching {
+                                    val top = runningTasks().firstOrNull { taskDisplayId(it) == id }
+                                        ?.topActivity?.packageName.orEmpty()
+                                    if (top.isBlank() || top == "android" || top.endsWith("launcher")) {
+                                        VscrDiag.line("灵屏 返回退到桌面，拉起灵屏主页兜底")
+                                        startVirtualHome(id, setup.optString("sessionId"), "HOME")
+                                    }
+                                }
+                            }, 350L)
+                            JSONObject().put("ok", true).put("displayId", id)
                         }
 
                         "key" -> {
@@ -652,8 +773,8 @@ internal object RootDisplayCommandMain {
                         }
 
                         "long_press" -> {
-                            val x = integer(request, "x", 0, width - 1).toString()
-                            val y = integer(request, "y", 0, height - 1).toString()
+                            val x = integer(request, "x", 0, dispW - 1).toString()
+                            val y = integer(request, "y", 0, dispH - 1).toString()
                             input(id, "swipe", x, y, x, y, integer(request, "durationMs", 300, 3000).toString())
                             JSONObject().put("ok", true).put("displayId", id)
                         }
@@ -717,6 +838,35 @@ internal object RootDisplayCommandMain {
         /** 最近一次客户端取帧时间；长时间没人看就不再编码。 */
         @Volatile var lastDemandAt: Long = 0L
         @Volatile var lastSignature: Long = 0L
+
+        /** 上一帧 JPEG 编码实际耗时（ms）：观看态用它给目标间隔兜底。 */
+        @Volatile var lastEncodeCostMs: Long = 0L
+
+        /** 累计短读帧数（拷贝缓冲小于一帧）：用于判断是不是持续异常。 */
+        @Volatile var shortReads: Long = 0L
+
+        private var scaledBitmap: Bitmap? = null
+
+        /** 把全尺寸帧缩到传输尺寸；目标位图复用，避免每帧新分配。 */
+        fun scaled(src: Bitmap, width: Int, height: Int): Bitmap? {
+            val cached = scaledBitmap
+            val target = if (cached != null && !cached.isRecycled && cached.width == width && cached.height == height) {
+                cached
+            } else {
+                runCatching { cached?.recycle() }
+                runCatching { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }
+                    .getOrNull()?.also { scaledBitmap = it } ?: return null
+            }
+            return runCatching {
+                android.graphics.Canvas(target).apply {
+                    drawBitmap(src, null, android.graphics.Rect(0, 0, width, height), android.graphics.Paint().apply {
+                        isFilterBitmap = true
+                        isAntiAlias = true
+                    })
+                }
+                target
+            }.getOrNull()
+        }
         private var paddedBitmap: Bitmap? = null
         private var frameBytes: ByteArray? = null
 
@@ -747,9 +897,12 @@ internal object RootDisplayCommandMain {
         fun reset() {
             frame = null
             val old = paddedBitmap
+            val oldScaled = scaledBitmap
             paddedBitmap = null
+            scaledBitmap = null
             frameBytes = null
             runCatching { old?.recycle() }
+            runCatching { oldScaled?.recycle() }
         }
     }
 

@@ -214,6 +214,21 @@ internal object VirtualScreenFloatWindow {
     private var lastTapX = 0f
     private var lastTapY = 0f
     private val doubleTapMaxIntervalMs = 300L
+
+    /**
+     * 没有任务在跑时的单击接管。
+     *
+     * 必须延后到双击窗口结束：否则「双击切档」的第一下就会被当成单击，
+     * 直接把用户踢进接管页。
+     */
+    private val pendingTakeover = Runnable {
+        if (collapsed || takeoverFull) return@Runnable
+        if (VirtualScreenSession.state.value.display == null) return@Runnable
+        // 只有在没有任务跑的时候才接管——有任务时单击仍用于展开/收起工具栏。
+        if (VirtualScreenSession.state.value.activeRunId != null) return@Runnable
+        VscrDiag.line("浮窗单击接管（无任务在跑）")
+        enterTakeoverFullScreen()
+    }
     private val doubleTapMaxDeltaDp = 20f
 
     private val floatWinOutline = object : ViewOutlineProvider() {
@@ -271,14 +286,11 @@ internal object VirtualScreenFloatWindow {
                     edgeCollapseEnabled = settings.virtualScreenFloatEdgeCollapseEnabled
                     windowAlpha = settings.virtualScreenFloatWindowAlpha.coerceIn(0.1f, 1.0f)
                     val next = vsState.display
-                    // 任务刚结束（有 run → 无 run）就主动收起浮窗，别把最后一帧留在屏幕上。
+                    // 任务结束不再自动收起浮窗：会话还在，屏幕上的画面就是最终状态，
+                    // 用户要能直接点进去接管看结果。收起时机交给用户（✕ / 白条上滑 / 贴边折叠）。
                     val runId = vsState.activeRunId
-                    if (runId == null && lastRunId != null && !takeoverFull) {
-                        VscrDiag.line("任务结束，收起浮窗")
-                        lastRunId = null
-                        dismissedSessionId = next?.sessionId
-                        hide()
-                        return@collect
+                    if (runId == null && lastRunId != null) {
+                        VscrDiag.line("任务结束，保留浮窗（可接管查看结果）")
                     }
                     lastRunId = runId
                     // 有新任务在跑，说明这次是「要用屏」，之前的收起标记作废。
@@ -303,7 +315,7 @@ internal object VirtualScreenFloatWindow {
                             info = next
                             // 接管态要 100% 不透明；这里如果无脑写回 windowAlpha，
                             // 会话状态每变一次就把透明度打回 0.85（实测就是这个原因）。
-                            rootView?.alpha = if (takeoverFull) 1f else windowAlpha
+                            rootView?.alpha = if (takeoverFull || surfaceView?.direct == true) 1f else windowAlpha
                             // 灵屏横竖变了，画面控件必须同步拿到新尺寸：TextureView 的默认缓冲尺寸按它设置，
                             // 留着旧的竖屏尺寸就会把横屏合成结果塞进竖缓冲里，看着只有左边一条。
                             surfaceView?.setDisplayInfo(next)
@@ -318,7 +330,7 @@ internal object VirtualScreenFloatWindow {
 
     fun setWindowAlpha(alpha: Float) {
         windowAlpha = alpha.coerceIn(0.1f, 1.0f)
-        rootView?.alpha = windowAlpha
+        rootView?.alpha = if (takeoverFull || surfaceView?.direct == true) 1f else windowAlpha
     }
 
     fun resetWindowConfig() {
@@ -342,7 +354,7 @@ internal object VirtualScreenFloatWindow {
             curHeightDp = (curWidthDp * (long / short)).roundToInt()
             windowAlpha = 0.85f
             savedFloatWinX = 16; savedFloatWinY = 120
-            rootView?.alpha = windowAlpha
+            rootView?.alpha = if (takeoverFull || surfaceView?.direct == true) 1f else windowAlpha
             lp?.x = 16; lp?.y = 120
             innerShortDp = 0f
             alignToContent()
@@ -353,6 +365,8 @@ internal object VirtualScreenFloatWindow {
     private fun show(next: VirtualDisplayInfo, settings: Settings) {
         if (!canOverlay()) { requestOverlayPermission(); return }
         hide()
+        // 浮窗展开可见 = 人眼在看：25fps / q80。hide() 里已先释放，这里重新申请。
+        VirtualScreenSession.setWatchProfile("float", VirtualScreenSession.WatchProfile.FLOAT)
         info = next
         lastFrameId = 0
         val ctx = context ?: return
@@ -394,17 +408,13 @@ internal object VirtualScreenFloatWindow {
         surface.onFrameSize = { w, h -> onFrameSize(w, h) }
         surface.setOnTouchListener { _, ev -> onSurfaceTouch(ev) }
         val appContext = ctx.applicationContext
-        surface.onHostSurface = { host ->
-            VirtualScreenHostSurfaces.attach(
-                VirtualScreenSession.currentOwner().orEmpty(), "float", host,
-            )
-            val live = VirtualScreenHostSurfaces.live && host != null
-            surface.post { surface.setDirectMode(live) }
-            if (VirtualScreenHostSurfaces.live) {
-                Thread {
-                    runCatching { VirtualScreenSession.notifyHostSurface(appContext) }
-                }.apply { isDaemon = true }.start()
-            }
+        surface.onHostSurface = { _ ->
+            // 浮窗不参与直通。只有全屏接管页才把输出面交给合成器——
+            // 浮窗一旦切直通，display 的 surface 就从 ImageReader 换成浮窗，
+            // frameStore 停止更新，Agent 的 observe 截图会永远停在最后一帧。
+            // 代价是浮窗画面仍走 JPEG（5–25fps），但这个窗口只是「看」，
+            // 真正需要跟手的是接管页，那里有直通。
+            surface.post { surface.setDirectMode(false) }
         }
         root.addView(surface, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
@@ -458,7 +468,12 @@ internal object VirtualScreenFloatWindow {
             dp(curWidthDp.toFloat()), dp(curHeightDp.toFloat()),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            // FLAG_HARDWARE_ACCELERATED 是 TextureView 能拿到 SurfaceTexture 的前提：
+            // overlay 窗口默认走软件渲染，实测 isAvailable 恒为 false、onSurfaceTextureAvailable
+            // 一次都不回调，直通因此永远建立不起来。
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START; x = savedFloatWinX; y = savedFloatWinY }
 
@@ -493,27 +508,25 @@ internal object VirtualScreenFloatWindow {
         info = null; lastFrameId = 0; collapsed = false; frameAspect = 0f
         stopTouchPump()
         stopTiltWatcher()
+        rootView?.removeCallbacks(pendingTakeover)
+        // 浮窗退场：释放观看档。接管页在前台时会自己持有接管档，互不覆盖。
+        VirtualScreenSession.setWatchProfile("float", null)
     }
 
     private fun startFrameLoop() {
         frameJob = scope.launch {
-            // 直接按设定帧率出帧：以前除以 2，120fps 档实际只有 30fps，跟手感被砍掉一半。
-            val frameDelay = io.github.mangi.eta.data.model.VirtualScreenFrameRate.intervalMs(
-                io.github.mangi.eta.data.datastore.SettingsDataStore.settings().virtualScreenFrameRate).toLong()
-                .coerceIn(4L, 66L)
-            val idleDelay = frameDelay.coerceAtLeast(40L)
             while (isActive) {
+                // 拉帧节奏跟随出帧档位：浮窗 25fps / 收起 5fps / 接管对齐屏幕刷新率 / 读屏 5fps。
+                // 以前按用户帧率设置算再钳到 66ms，会把 25fps 档硬压成 15fps。
+                val frameDelay = VirtualScreenSession.currentFrameIntervalMs().toLong().coerceIn(4L, 1000L)
+                val idleDelay = frameDelay.coerceAtLeast(40L)
                 syncDisplayRotation()
                 val startedAt = android.os.SystemClock.elapsedRealtime()
                 var fresh = false
                 val current = info ?: break
-                // 直通生效后画面由合成器直出，不再请求整帧（省电、省内存）。
                 val view = surfaceView
-                if (view != null) {
-                    val wantDirect = VirtualScreenHostSurfaces.live &&
-                        VirtualScreenHostSurfaces.currentHost() != null
-                    if (wantDirect != view.direct) view.post { view.setDirectMode(wantDirect) }
-                }
+                // 浮窗固定走 JPEG 回落，不参与直通（直通只给接管页）。
+                if (view?.direct == true) view.post { view.setDirectMode(false) }
                 // 直通模式不拉整帧，但每秒探一次尺寸：灵屏切成横屏后小窗才会跟着横过来。
                 if (view?.direct == true && !collapsed) {
                     val nowMs = android.os.SystemClock.elapsedRealtime()
@@ -680,6 +693,7 @@ internal object VirtualScreenFloatWindow {
                 if (abs(dx) > 4 || abs(dy) > 4) miniMoved = true
                 if (miniMoved) {
                     cancelLongPress()
+                    rootView?.removeCallbacks(pendingTakeover)
                     p.x = (miniDownWinX + dx).coerceIn(0, (screenW() - p.width).coerceAtLeast(0))
                     p.y = (miniDownWinY + dy).coerceIn(0, (screenH() - p.height).coerceAtLeast(0))
                     runCatching { wm?.updateViewLayout(rootView, p) }
@@ -692,7 +706,12 @@ internal object VirtualScreenFloatWindow {
                 val snapped = collapsedDuringDrag
                 collapsedDuringDrag = false
                 if (!miniMoved) {
-                    if (detectDoubleTap(ev)) cycleSizeTier()
+                    if (detectDoubleTap(ev)) {
+                        rootView?.removeCallbacks(pendingTakeover)
+                        cycleSizeTier()
+                    } else {
+                        rootView?.postDelayed(pendingTakeover, doubleTapMaxIntervalMs + 80)
+                    }
                 } else if (!snapped) {
                     savedFloatWinX = p.x; savedFloatWinY = p.y
                     scope.launch {
@@ -1280,7 +1299,7 @@ internal object VirtualScreenFloatWindow {
             else VirtualScreenSession.closeOwner(owner)
         }
         takeoverFull = false
-        rootView?.alpha = windowAlpha
+        rootView?.alpha = if (takeoverFull || surfaceView?.direct == true) 1f else windowAlpha
         rootView?.background = borderDrawable
         hide()
     }
@@ -1490,6 +1509,8 @@ internal object VirtualScreenFloatWindow {
         collapsed = true; collapsedSide = side
         preCollapseX = p.x; preCollapseY = p.y
         surfaceView?.visibility = View.GONE
+        // 收起后画面已不可见：降到 5fps，只为偶尔瞄一眼，别一直烧编码。
+        VirtualScreenSession.setWatchProfile("float", VirtualScreenSession.WatchProfile.FLOAT_COLLAPSED)
         // 气泡只有 35dp：仪表盘不藏起来会盖满整个气泡，点哪儿都像没反应。
         dashboardView?.visibility = View.GONE
         // 收起后用被投屏应用的图标，而不是一个灰圆；取不到就退回 Eta 自己的图标（一定有）。
@@ -1529,6 +1550,7 @@ internal object VirtualScreenFloatWindow {
         collapsed = false
         surfaceView?.visibility = View.VISIBLE
         dashboardView?.visibility = View.VISIBLE
+        VirtualScreenSession.setWatchProfile("float", VirtualScreenSession.WatchProfile.FLOAT)
         triggerBar?.visibility = View.GONE
         setDotsHatVisible(true)
         VscrDiag.line("气泡展开 " + curWidthDp + "x" + curHeightDp + "dp")
@@ -1611,6 +1633,8 @@ internal object VirtualScreenFloatWindow {
     private fun restoreFromSink() {
         if (!sinked) return
         sinked = false
+        // 回到气泡：画面仍然隐藏，维持收起档。
+        VirtualScreenSession.setWatchProfile("float", VirtualScreenSession.WatchProfile.FLOAT_COLLAPSED)
         val p = lp ?: return
         val d = context?.resources?.displayMetrics?.density ?: 1f
         val bubble = (35f * d).roundToInt()
