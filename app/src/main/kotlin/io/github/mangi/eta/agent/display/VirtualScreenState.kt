@@ -4,11 +4,15 @@ internal data class VirtualDisplayInfo(
     val sessionId: String,
     val owner: String,
     val displayId: Int,
+    /** 灵屏的坐标系尺寸（与主屏一致，例如 1440x3168）。触摸注入一律按它换算。 */
     val width: Int,
     val height: Int,
     val manualInputGeneration: Long = 0,
     val density: Int = 0,
     val focusedPackage: String = "",
+    /** 采集/传输尺寸（长边 ≤1760）。只用于画面等比显示，不参与坐标换算。 */
+    val captureWidth: Int = width,
+    val captureHeight: Int = height,
 )
 
 internal data class VirtualScreenGesture(
