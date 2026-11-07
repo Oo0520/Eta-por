@@ -1,9 +1,11 @@
 package io.github.mangi.eta.ui.screens.home
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard
 import io.github.mangi.eta.ui.app.AgentCommands
 import io.github.mangi.eta.ui.components.AgentChatBody
 import io.github.mangi.eta.ui.components.LocalRoleplayChat
@@ -44,6 +46,10 @@ internal fun AgentHomeScreen(
     isDrawerOpen: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // 审批卡按会话归属：切会话时告诉 Guard「现在看的是哪个」，别的会话的卡不在这里显示。
+    LaunchedEffect(conversationKey) {
+        AgentConfirmGuard.bindConversation(conversationKey.orEmpty())
+    }
     key(chatConversationCompositionKey(conversationKey)) {
         CompositionLocalProvider(LocalRoleplayChat provides state.roleplayChatUi()) {
         AgentChatBody(
@@ -122,6 +128,7 @@ internal fun AgentHomeScreen(
             onRunTraceClick = { onAction(AgentHomeAction.ExpandRunTrace) },
             onOpenBrowser = { onAction(AgentHomeAction.OpenBrowser) },
             isDrawerOpen = isDrawerOpen,
+            onOpenConversation = { key -> onAction(AgentHomeAction.OpenConversation(key)) },
             modifier = modifier,
         )
         }

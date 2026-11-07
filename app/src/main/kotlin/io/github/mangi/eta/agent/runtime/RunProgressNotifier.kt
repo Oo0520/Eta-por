@@ -137,6 +137,10 @@ internal object RunProgressNotifier {
     }
 
     /** 暂停/恢复后立刻重画：真源在 [RunControl]，这里只负责把新状态画出来。 */
+    /** 会话标题：结束通知要带上「哪条对话」。只在主线程读，避免和卡片更新抢状态。 */
+    fun titleOf(runId: String): String =
+        if (isMainThread()) cards[runId]?.title.orEmpty() else ""
+
     fun refresh() {
         if (!isMainThread()) {
             handler.post { refresh() }
