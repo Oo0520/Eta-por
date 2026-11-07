@@ -39,6 +39,10 @@ internal fun CornerScaleDialog(
     onDismiss: () -> Unit,
     @Suppress("UNUSED_PARAMETER") widthFraction: Float = 0.92f,
     heightFraction: Float = 0.62f,
+    /** 内容自带高度时关掉固定高度：上下文/用量这类小面板按内容收边，不铺满一屏。 */
+    wrapContent: Boolean = false,
+    /** 展开方向与对齐边：true 时贴锚点左缘、从左侧展开；默认仍贴右缘。 */
+    alignStart: Boolean = false,
     @Suppress("UNUSED_PARAMETER") bottomPadding: Dp = CornerDialogBottomPadding,
     content: @Composable (requestClose: () -> Unit) -> Unit,
 ) {
@@ -50,7 +54,7 @@ internal fun CornerScaleDialog(
     val popupHeight = with(density) { (container.height * heightFraction).toDp() }
     val anchorGap = with(density) { 8.dp.roundToPx() }
 
-    val positionProvider = remember(anchorGap) {
+    val positionProvider = remember(anchorGap, alignStart) {
         object : PopupPositionProvider {
             override fun getMargins(): PaddingValues = PaddingValues(0.dp)
 
@@ -62,9 +66,14 @@ internal fun CornerScaleDialog(
                 popupMargin: IntRect,
                 alignment: PopupPositionProvider.Align,
             ): IntOffset {
-                // 右缘贴住锚点右缘（这一行入口在最右），不按窗口居中。
+                // 默认右缘贴住锚点右缘（入口在最右），不按窗口居中；
+                // alignStart 时改成左缘贴锚点左缘，展开方向跟着从左开始。
                 val maxX = (windowBounds.right - popupContentSize.width).coerceAtLeast(windowBounds.left)
-                val x = (anchorBounds.right - popupContentSize.width).coerceIn(windowBounds.left, maxX)
+                val x = if (alignStart) {
+                    anchorBounds.left.coerceIn(windowBounds.left, maxX)
+                } else {
+                    (anchorBounds.right - popupContentSize.width).coerceIn(windowBounds.left, maxX)
+                }
                 val above = anchorBounds.top - popupContentSize.height - anchorGap
                 val below = anchorBounds.bottom + anchorGap
                 val y = when {
@@ -84,7 +93,7 @@ internal fun CornerScaleDialog(
     WindowListPopup(
         show = visible,
         popupPositionProvider = positionProvider,
-        alignment = PopupPositionProvider.Align.End,
+        alignment = if (alignStart) PopupPositionProvider.Align.Start else PopupPositionProvider.Align.End,
         onDismissRequest = {
             if (visible) visible = false
             onDismiss()
@@ -92,9 +101,13 @@ internal fun CornerScaleDialog(
         minWidth = popupWidth,
     ) {
         Box(
-            modifier = Modifier
-                .width(popupWidth)
-                .height(popupHeight),
+            modifier = if (wrapContent) {
+                Modifier.width(popupWidth)
+            } else {
+                Modifier
+                    .width(popupWidth)
+                    .height(popupHeight)
+            },
         ) {
             content {
                 if (visible) visible = false

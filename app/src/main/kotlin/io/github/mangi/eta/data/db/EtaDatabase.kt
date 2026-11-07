@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 
 /** 结构版本的唯一来源：@Database 与自检页共用，文案里不再写字面量。 */
-internal const val ETA_DB_SCHEMA_VERSION = 30
+internal const val ETA_DB_SCHEMA_VERSION = 32
 
 @Database(
     entities = [
@@ -82,6 +82,8 @@ internal abstract class EtaDatabase : RoomDatabase() {
                         MIGRATION_27_28,
                         MIGRATION_28_29,
                         MIGRATION_29_30,
+                        MIGRATION_30_31,
+                        MIGRATION_31_32,
                     )
                     .addCallback(object : Callback() {
                         override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) { createTextChunkCleanup(db) }
@@ -198,6 +200,31 @@ internal abstract class EtaDatabase : RoomDatabase() {
                 "CREATE INDEX IF NOT EXISTS index_conversations_branch_root_id ON conversations(branch_root_id)"
             )
             database.execSQL("ALTER TABLE conversation_messages ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+        }
+
+        /**
+         * 30 → 31：上下文构成与耗时明细。
+         *
+         * 五列全部可空，旧消息升级后为 NULL —— 面板按「没有就不画」处理，不回填假数据。
+         * 存下来是因为这些值只能从运行期拿到：不落库的话，应用重启后历史消息的用量面板
+         * 就只剩头部与进度条。
+         */
+        internal val MIGRATION_30_31 = Migration(30, 31) { database ->
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN system_prompt_tokens INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN tool_definition_tokens INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN conversation_tokens INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN first_token_ms INTEGER")
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN tool_duration_ms INTEGER")
+        }
+
+        /**
+         * 31 → 32：run 内请求数。
+         *
+         * 用量面板从「单次响应」改成「整轮任务」：模型用时、输出、缓存命中都是本次 run 的累计，
+         * 首 token 显示的是平均值，所以需要知道一共几次请求。
+         */
+        internal val MIGRATION_31_32 = Migration(31, 32) { database ->
+            database.execSQL("ALTER TABLE conversation_messages ADD COLUMN request_count INTEGER")
         }
 
         private fun createTextChunkCleanup(database: androidx.sqlite.db.SupportSQLiteDatabase) {

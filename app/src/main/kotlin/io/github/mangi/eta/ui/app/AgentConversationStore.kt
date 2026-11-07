@@ -411,6 +411,12 @@ internal object AgentConversationStore {
                         reasoningTokens = usage?.reasoningTokens,
                         cachedTokens = usage?.cachedTokens,
                         requestDurationMs = usage?.requestDurationMs,
+                        systemPromptTokens = usage?.systemPromptTokens,
+                        toolDefinitionTokens = usage?.toolDefinitionTokens,
+                        conversationTokens = usage?.conversationTokens,
+                        firstTokenMs = usage?.firstTokenMs,
+                        toolDurationMs = usage?.toolDurationMs,
+                        requestCount = usage?.requestCount,
                         createdAt = createdAt,
                     )
                 }
@@ -483,6 +489,12 @@ internal object AgentConversationStore {
                     reasoningTokens = reasoningTokens,
                     cachedTokens = cachedTokens,
                     requestDurationMs = requestDurationMs,
+                    systemPromptTokens = systemPromptTokens,
+                    toolDefinitionTokens = toolDefinitionTokens,
+                    conversationTokens = conversationTokens,
+                    firstTokenMs = firstTokenMs,
+                    toolDurationMs = toolDurationMs,
+                    requestCount = requestCount,
                 ).takeUnless { it.isEmpty },
                 createdAt = createdAt,
             )
