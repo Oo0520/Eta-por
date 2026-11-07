@@ -48,6 +48,16 @@ internal object TaskCompletionNotifier {
             AndroidAgentLogger.warn("Completion notification skipped: POST_NOTIFICATIONS not granted")
             return
         }
+        // 前台时只跳过「你正在看的那条会话」——结果已经直接写进对话了，再弹横幅是噪音。
+        // 但别的会话跑完仍要提醒：你在 B 里，A 跑完了你得知道。
+        if (io.github.mangi.eta.core.AppForeground.isForeground) {
+            val viewed = io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard.viewedConversation
+            val sameConversation = conversationId.isBlank() || viewed.isBlank() || viewed == conversationId
+            if (sameConversation) {
+                EtaTrace.log("completion.skip", "前台且在看该会话")
+                return
+            }
+        }
         runCatching {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
             manager.createNotificationChannel(
@@ -71,15 +81,18 @@ internal object TaskCompletionNotifier {
                 ?.ifBlank { context.getString(R.string.task_completion_ok_body) }
                 ?: context.getString(R.string.task_completion_ok_body)
             val body = if (conversationTitle.isBlank()) summary else "$conversationTitle · $summary"
+            val contentIntent = openIntent(context, conversationId)
             val builder = Notification.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(Notification.BigTextStyle().bigText(body))
-                .setCategory(Notification.CATEGORY_STATUS)
                 .setShowWhen(true)
                 .setAutoCancel(true)
-                .setContentIntent(openIntent(context, conversationId))
+                .setContentIntent(contentIntent)
+                // 完成通知属于「要你回来处理」：CATEGORY_STATUS 在 ColorOS 上会被归进折叠区，
+                // 换成 REMINDER 才可能弹横幅（实测 category=status 的通知没出过横幅）。
+                .setCategory(Notification.CATEGORY_REMINDER)
             if (Build.VERSION.SDK_INT >= LIVE_SDK && FluidNotificationPolicy.allowsFluid()) {
                 builder.setShortCriticalText(
                     when {
@@ -108,6 +121,9 @@ internal object TaskCompletionNotifier {
         val intent = Intent(context, io.github.mangi.eta.ui.MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         if (conversationId.isNotBlank()) {
+            // 光塞 extra 不够：MainActivity 只在 action == ACTION_OPEN_CONVERSATION_ID 时才读它，
+            // 少了这一行就是「看起来绑了会话、实际只把 App 拉到前台」（一直如此，用户实测发现）。
+            intent.setAction(io.github.mangi.eta.ui.MainActivity.ACTION_OPEN_CONVERSATION_ID)
             intent.putExtra(io.github.mangi.eta.ui.MainActivity.EXTRA_CONVERSATION_ID, conversationId)
         }
         return PendingIntent.getActivity(

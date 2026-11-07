@@ -75,6 +75,25 @@ internal object RunControl {
     }
 
     /** 单个 run 结束或被停止：只清它自己，别的会话不受影响。 */
+    /**
+     * 清掉所有暂停标记。
+     *
+     * 审批拦截用的是「暂停全部 run」（pauseRun 不带 runId）；点批准/拒绝时要对称地清掉全部标记。
+     * 只靠 requestResume 不够——那时那一轮往往已经结束（模型收到 NEED_CONFIRM 就收尾了），
+     * pauseTargets 找不到活着的 run，setPaused(false) 根本不会执行，
+     * 于是输入框永远停在「已暂停 · 点继续恢复」（实测踩到）。
+     */
+    fun clearAllPaused(source: String) {
+        update { current ->
+            if (current.pausedRuns.isEmpty()) {
+                current
+            } else {
+                EtaTrace.log("runcontrol.clearPaused", "source=$source count=${current.pausedRuns.size}")
+                current.copy(pausedRuns = emptySet())
+            }
+        }
+    }
+
     fun clearRun(runId: String, reason: String) {
         if (runId.isBlank()) return
         update { current ->

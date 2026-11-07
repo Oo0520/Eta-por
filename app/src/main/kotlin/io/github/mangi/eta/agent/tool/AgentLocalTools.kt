@@ -250,6 +250,15 @@ internal class AgentLocalTools(
         runCatching {
             if (closed.get()) return@runCatching textResult(errorResult("DISPLAY_CANCELLED", "任务已结束，本次工具未执行"))
             val args = JSONObject(toolCall.argumentsJson.ifBlank { "{}" })
+            // 非 GUI 的高危动作同样要先过审批：删系统目录、格式化、改 /system 这些
+            // 破坏力不比误点「确认支付」小，而它们原先完全绕过了审批。
+            io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard
+                .inspectTool(context, toolCall.name, args, browserRunId)
+                ?.let { draft ->
+                    return@runCatching textResult(
+                        io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard.blockedResult(draft),
+                    )
+                }
             val virtualSettings = if (toolCall.name in VirtualScreenRoutingPolicy.uiTools) virtualScreenSettings() else null
             val virtualUi = virtualRouting.shouldRoute(toolCall.name, virtualSettings?.virtualScreenEnabled == true)
             if (virtualRouting.usesPrimary && virtualSettings != null) {
@@ -309,6 +318,7 @@ internal class AgentLocalTools(
                         if (args.optString("action") == "close") result else handleVirtualResult(toolCall.name, result)
                     }
                 in AgentTaskTools.names -> AgentModelClient.ToolResult(AgentTaskTools(context).execute(toolCall.name, args), sensitive = true)
+                "ask_user" -> textResult(askUser(args))
                 "get_current_context" -> textResult(DeviceContextTool.current(context))
                 "search_apps" -> textResult(searchApps(args))
                 "launch_app" -> textResult(launchApp(args))
@@ -835,6 +845,33 @@ internal class AgentLocalTools(
                 )
             }
         return ScreenPoint(point.x, point.y)
+    }
+
+    /**
+     * 主动提问：把模型的选项翻成统一卡片，交给 [io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard]，
+     * 由它负责暂停 run、落盘、以及用户选完后的回灌。
+     */
+    private fun askUser(args: JSONObject): String {
+        val question = args.optString("question").trim()
+        val body = args.optString("body").trim()
+        val array = args.optJSONArray("options") ?: JSONArray()
+        val options = (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            val label = item.optString("label").trim().takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            io.github.mangi.eta.agent.display.dashboard.PromptOption(
+                id = "opt_" + (index + 1),
+                label = label.take(40),
+                description = item.optString("description").trim().take(120),
+            )
+        }
+        return io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard.ask(
+            context = context,
+            question = question,
+            body = body,
+            options = options,
+            allowMultiple = args.optBoolean("allow_multiple", false),
+            runId = browserRunId,
+        )
     }
 
     private fun searchApps(args: JSONObject): String {
