@@ -18,6 +18,8 @@ internal class AgentRuntimeSession(
     eventSink: ((AgentEvent) -> Unit)? = null,
     resultSink: ((AgentRuntimeWire.RunResult) -> Unit)? = null,
     private val operation: String = AgentRuntimeWire.OP_CHAT,
+    /** 这次 run 属于哪条对话；系统入口/子智能体可能为空，结束通知就退回 runId。 */
+    val conversationKey: String = "",
 ) {
     val virtualUiRouted = java.util.concurrent.atomic.AtomicBoolean(false)
     val mainScreenFallbackApproved = java.util.concurrent.atomic.AtomicBoolean(false)

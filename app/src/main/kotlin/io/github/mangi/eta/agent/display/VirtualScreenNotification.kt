@@ -43,8 +43,6 @@ internal object VirtualScreenNotification {
     }
 
     /** v2：旧 ID 一旦被系统建过就可能已被降级/关闭，重开渠道才能保证 heads-up。 */
-    private const val COMPLETION_CHANNEL = "eta_task_completion_v2"
-    private const val COMPLETION_ID = 1111
     private const val RETURN_CHANNEL = "eta_lingscreen_return"
     private const val RETURN_ID = 1112
 
@@ -91,60 +89,6 @@ internal object VirtualScreenNotification {
             io.github.mangi.eta.core.EtaTrace.log("lingscreen.jump", "pkg=" + pkg)
         }.onFailure {
             io.github.mangi.eta.core.EtaTrace.log("lingscreen.jump.fail", "type=${it.safeLogType()}")
-        }
-    }
-
-    fun showCompletion(context: Context, ok: Boolean, detail: String, stopped: Boolean = false) {
-        if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-            != PackageManager.PERMISSION_GRANTED) {
-            io.github.mangi.eta.core.EtaTrace.log("completion.skip", "POST_NOTIFICATIONS 未授权")
-            AndroidAgentLogger.warn("Completion notification skipped: POST_NOTIFICATIONS not granted")
-            return
-        }
-        runCatching {
-            val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(
-                COMPLETION_CHANNEL,
-                context.getString(R.string.virtual_screen_completion_channel),
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply {
-                description = "灵屏任务结束时提醒结果"
-                enableVibration(true)
-                setShowBadge(true)
-            })
-            val title = when {
-                stopped -> context.getString(R.string.virtual_screen_completion_stopped_title)
-                ok -> context.getString(R.string.virtual_screen_completion_ok_title)
-                else -> context.getString(R.string.virtual_screen_completion_fail_title)
-            }
-            val body = when {
-                stopped -> context.getString(R.string.virtual_screen_completion_stopped_body)
-                else -> detail.lineSequence().firstOrNull { it.isNotBlank() }?.trim()
-                    ?.take(120)
-                    ?.ifBlank { context.getString(R.string.virtual_screen_completion_ok_body) }
-                    ?: context.getString(R.string.virtual_screen_completion_ok_body)
-            }
-            val open = PendingIntent.getActivity(context, 0,
-                Intent(context, io.github.mangi.eta.ui.MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
-            manager.notify(COMPLETION_ID, Notification.Builder(context, COMPLETION_CHANNEL)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(Notification.BigTextStyle().bigText(body))
-                .setCategory(Notification.CATEGORY_STATUS)
-                .setShowWhen(true)
-                .setAutoCancel(true)
-                .setContentIntent(open).build())
-            io.github.mangi.eta.core.EtaTrace.log(
-                "completion.post",
-                "ok=$ok stopped=$stopped chars=" + detail.length,
-            )
-        }.onFailure {
-            io.github.mangi.eta.core.EtaTrace.log("completion.fail", "type=${it.safeLogType()} msg=${it.message?.take(80)}")
-            AndroidAgentLogger.warn("Virtual screen completion notification failed: type=${it.safeLogType()}")
         }
     }
 }

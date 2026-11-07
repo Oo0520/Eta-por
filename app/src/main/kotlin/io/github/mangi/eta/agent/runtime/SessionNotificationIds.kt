@@ -15,6 +15,11 @@ internal object SessionNotificationIds {
     private const val BASE = 4800
     private const val RANGE = 400
 
+    /** 任务结束通知用另一段 ID，和运行中/空闲卡岔开，避免互相覆盖。 */
+    private const val COMPLETION_BASE = 5300
+    private val completionKeyToId = LinkedHashMap<String, Int>()
+    private val completionIdToKey = HashMap<Int, String>()
+
     private val lock = Any()
     private val keyToId = LinkedHashMap<String, Int>()
     private val idToKey = HashMap<Int, String>()
@@ -38,6 +43,33 @@ internal object SessionNotificationIds {
         keyToId[key] = BASE
         idToKey[BASE] = key
         BASE
+    }
+
+    /**
+     * 任务结束通知的稳定 ID。
+     *
+     * 与 [idFor] 同样的分配策略，但落在 [COMPLETION_BASE] 起的独立区间：
+     * 一条会话跑完只在原位更新自己那一条，不会盖掉别的会话的卡。
+     */
+    fun completionIdFor(key: String): Int = synchronized(lock) {
+        if (key.isBlank()) return COMPLETION_BASE
+        completionKeyToId[key]?.let { return it }
+        for (offset in 0 until RANGE) {
+            val candidate = COMPLETION_BASE + offset
+            if (candidate !in completionIdToKey) {
+                completionKeyToId[key] = candidate
+                completionIdToKey[candidate] = key
+                return candidate
+            }
+        }
+        val oldest = completionKeyToId.entries.firstOrNull()
+        if (oldest != null) {
+            completionKeyToId.remove(oldest.key)
+            completionIdToKey.remove(oldest.value)
+        }
+        completionKeyToId[key] = COMPLETION_BASE
+        completionIdToKey[COMPLETION_BASE] = key
+        COMPLETION_BASE
     }
 
     fun release(key: String) = synchronized(lock) {
