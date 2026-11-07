@@ -181,11 +181,73 @@ data class TokenUsageUi(
     val reasoningTokens: Int? = null,
     val cachedTokens: Int? = null,
     val requestDurationMs: Long? = null,
+    /** 上下文构成估算（系统提示词 / 工具定义 / 对话消息），只在运行期有意义。 */
+    val systemPromptTokens: Int? = null,
+    val toolDefinitionTokens: Int? = null,
+    val conversationTokens: Int? = null,
+    /** 首 token 延迟（run 平均，毫秒）。 */
+    val firstTokenMs: Long? = null,
+    /** run 累计的工具执行耗时（毫秒）。 */
+    val toolDurationMs: Long? = null,
+    /** run 内已计入用量的请求数。 */
+    val requestCount: Int? = null,
 ) {
     /** Request average includes time to the first token, but excludes tools and earlier retries. */
     val averageTokensPerSecond: Double?
         get() = outputTokens?.takeIf { it >= 0 }?.let { tokens ->
             requestDurationMs?.takeIf { it > 0 }?.let { tokens * 1000.0 / it }
+        }
+
+    /**
+     * 未缓存输入：OpenAI 口径的 prompt_tokens 含缓存命中，Anthropic 口径的 input_tokens
+     * 只算未缓存部分。用「输入是否大于等于缓存」区分两者，两种口径都成立。
+     */
+    val uncachedInputTokens: Int?
+        get() = inputTokens?.let { input ->
+            val cached = cachedTokens?.coerceAtLeast(0) ?: 0
+            if (input >= cached) input - cached else input
+        }
+
+    /** 缓存读取：供应商报的缓存命中 token。 */
+    val cacheReadTokens: Int?
+        get() = cachedTokens?.takeIf { it > 0 }
+
+    /** 缓存命中率 = 缓存读取 /（未缓存输入 + 缓存读取）。 */
+    val cacheHitRate: Float?
+        get() {
+            val cached = cacheReadTokens ?: return null
+            val uncached = uncachedInputTokens ?: 0
+            val total = cached + uncached
+            return if (total <= 0) null else cached.toFloat() / total
+        }
+
+    /**
+     * 生成阶段速度（TPS）：输出 token ÷（本次 run 累计耗时 − 累计首 token 延迟）。
+     *
+     * 与 [averageTokensPerSecond] 的区别：那个把首 token 等待也算进分母，是「整请求平均」；
+     * 这个只算真正在吐 token 的那段。输入框的 `x tok/s` 与面板的「输出速度（TPS）」都用它。
+     */
+    val generationTokensPerSecond: Double?
+        get() {
+            val tokens = outputTokens?.takeIf { it > 0 } ?: return null
+            val total = requestDurationMs?.takeIf { it > 0 } ?: return null
+            val ttft = (firstTokenMs ?: 0L).coerceIn(0L, (total - 1).coerceAtLeast(0))
+            return tokens * 1000.0 / (total - ttft).coerceAtLeast(1)
+        }
+
+    /** 首 token 平均延迟：本次 run 累计 TTFT ÷ 请求数。 */
+    val firstTokenAverageMs: Long?
+        get() {
+            val total = firstTokenMs?.takeIf { it > 0 } ?: return null
+            val count = requestCount?.takeIf { it > 0 } ?: 1
+            return total / count
+        }
+
+    /** 面板总量：未缓存输入 + 缓存读取 + 输出。 */
+    val totalBilledTokens: Int?
+        get() {
+            val parts = listOfNotNull(uncachedInputTokens, cacheReadTokens, outputTokens)
+            return if (parts.isEmpty()) null else parts.sum()
         }
 
     val isEmpty: Boolean

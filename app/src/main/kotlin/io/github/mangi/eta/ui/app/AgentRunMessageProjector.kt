@@ -750,4 +750,10 @@ internal fun AgentTokenUsage.toUi(): TokenUsageUi =
         reasoningTokens = reasoningTokens,
         cachedTokens = cachedTokens,
         requestDurationMs = requestDurationMs,
+        systemPromptTokens = systemPromptTokens,
+        toolDefinitionTokens = toolDefinitionTokens,
+        conversationTokens = conversationTokens,
+        firstTokenMs = firstTokenMs,
+        toolDurationMs = toolDurationMs,
+        requestCount = requestCount,
     )

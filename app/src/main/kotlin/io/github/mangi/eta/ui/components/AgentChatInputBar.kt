@@ -254,6 +254,8 @@ internal fun AgentChatInputBar(
     val memoryContext = LocalContext.current
     var memoryUsage by remember { mutableStateOf(readMemoryUsage(memoryContext)) }
     var showMemorySheet by remember { mutableStateOf(false) }
+    var showTokenSheet by remember { mutableStateOf(false) }
+    var showContextSheet by remember { mutableStateOf(false) }
     var showToolSheet by remember { mutableStateOf(false) }
     LaunchedEffect(memoryContext) {
         while (true) {
@@ -576,6 +578,7 @@ internal fun AgentChatInputBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // 左上角：最近一次响应的平均输出速度（和内存百分比同一行，靠最左）。
+                    // 点开就是 Token 用量面板：缓存命中率、缓存/未缓存/输出，以及整轮的耗时与速率。
                     contextUsage.averageTokensPerSecond?.let { speed ->
                         val speedText = java.text.NumberFormat.getNumberInstance()
                             .apply { maximumFractionDigits = 1 }
@@ -584,7 +587,9 @@ internal fun AgentChatInputBar(
                             text = "$speedText tok/s",
                             style = MiuixTheme.textStyles.footnote2,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            modifier = Modifier.padding(start = 4.dp, end = 8.dp),
+                            modifier = Modifier
+                                .clickable { showTokenSheet = true }
+                                .padding(start = 4.dp, end = 8.dp),
                         )
                     }
                     Spacer(Modifier.weight(1f))
@@ -632,6 +637,18 @@ internal fun AgentChatInputBar(
                 }
                 }
                 MemoryUsageSheet(show = showMemorySheet, onDismiss = { showMemorySheet = false })
+                ContextUsageSheet(
+                    show = showContextSheet,
+                    usage = contextUsage,
+                    canCompact = canCompactContext && !isStreaming,
+                    onCompact = onCompactContext,
+                    onDismiss = { showContextSheet = false },
+                )
+                TokenUsageSheet(
+                    show = showTokenSheet,
+                    usage = contextUsage.latestUsage,
+                    onDismiss = { showTokenSheet = false },
+                )
                 ToolAccessSheet(
                     show = showToolSheet,
                     state = toolAccess,
@@ -729,7 +746,10 @@ internal fun AgentChatInputBar(
                     Spacer(modifier = Modifier.width(8.dp))
 
                         if (showContextUsage) {
-                            AgentContextUsageButton(usage = contextUsage, onCompact = onCompactContext, canCompact = canCompactContext && !isStreaming)
+                            AgentContextUsageButton(
+                                usage = contextUsage,
+                                onOpenPanel = { showContextSheet = true },
+                            )
 
                             Spacer(modifier = Modifier.width(2.dp))
                         }
