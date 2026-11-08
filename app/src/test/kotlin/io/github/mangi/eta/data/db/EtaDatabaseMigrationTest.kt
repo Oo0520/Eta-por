@@ -204,6 +204,53 @@ class EtaDatabaseMigrationTest {
         }
     }
 
+    /**
+     * 30 → 31：上下文构成与耗时明细五列。旧库升级后必须都能写空值，不能因为缺列整表读失败。
+     */
+    @Test
+    fun migration30To31AddsUsageDetailColumns() {
+        val context = RuntimeEnvironment.getApplication() as Context
+        val databaseName = "migration-30-31-${UUID.randomUUID()}.db"
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(databaseName)
+            .callback(
+                object : SupportSQLiteOpenHelper.Callback(30) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        db.execSQL(
+                            "CREATE TABLE conversation_messages (id TEXT NOT NULL PRIMARY KEY, " +
+                                "conversation_id TEXT NOT NULL, sort_index INTEGER NOT NULL, " +
+                                "type TEXT NOT NULL, content TEXT NOT NULL)",
+                        )
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                },
+            )
+            .build()
+        try {
+            FrameworkSQLiteOpenHelperFactory().create(configuration).use { helper ->
+                val database = helper.writableDatabase
+                EtaDatabase.MIGRATION_30_31.migrate(database)
+                EtaDatabase.MIGRATION_31_32.migrate(database)
+                val columns = database.query("PRAGMA table_info(conversation_messages)").use { cursor ->
+                    val nameIndex = cursor.getColumnIndexOrThrow("name")
+                    buildSet { while (cursor.moveToNext()) add(cursor.getString(nameIndex)) }
+                }
+                val expected = setOf(
+                    "system_prompt_tokens",
+                    "tool_definition_tokens",
+                    "conversation_tokens",
+                    "first_token_ms",
+                    "tool_duration_ms",
+                    "request_count",
+                )
+                assertEquals(expected, columns.intersect(expected))
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun createVersion6Database(
         context: Context,
         databaseName: String,

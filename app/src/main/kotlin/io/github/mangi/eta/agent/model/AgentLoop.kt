@@ -1,7 +1,10 @@
 package io.github.mangi.eta.agent.model
 
+import android.os.SystemClock
+
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
+import io.github.mangi.eta.agent.runtime.AgentTokenUsage
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.subagent.AgentSubagentToolCatalog
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +69,28 @@ internal class AgentLoop(
     )
     private var supplementIndex = initialSupplementIndex
 
+    /**
+     * 每一轮定稿后的用量（每个 assistant 消息对应一轮请求）。
+     *
+     * 工具批次是这一轮响应之后才跑的，所以工具耗时只能在批次结束时再补发一次用量，
+     * 覆盖到同一轮的消息上；这样「模型用时 / 工具调用用时 / TTFT」是同一轮口径，
+     * 不会出现一个按条、一个按整轮累加的对不上。
+     */
+    private val usageByRound = HashMap<Int, AgentTokenUsage>()
+
+    /** 本次 run 的用量累计：面板按「整轮任务」展示，所以各项都要跨请求累加。 */
+    private class RunUsageTotals {
+        var input = 0
+        var output = 0
+        var cached = 0
+        var durationMs = 0L
+        var firstTokenMs = 0L
+        var requests = 0
+        var toolMs = 0L
+    }
+
+    private val runTotals = RunUsageTotals()
+
     fun contextSnapshot(): AgentContextSnapshot? = context.snapshot()
 
     private fun appendMessage(message: JSONObject) {
@@ -126,7 +151,15 @@ internal class AgentLoop(
                     controller = runController,
                     onEvent = { event ->
                         if (event is AgentEvent.RoundStarted) roundInputTokens = null
-                        onEvent(event)
+                        val forwarded = if (event is AgentEvent.UsageReceived) {
+                            accumulateRunTotals(event)
+                        } else {
+                            event
+                        }
+                        if (forwarded is AgentEvent.UsageReceived) {
+                            synchronized(usageByRound) { usageByRound[forwarded.round] = forwarded.usage }
+                        }
+                        onEvent(forwarded)
                     },
                     onProviderEvent = { attemptRound, providerEvent ->
                         if (!purpose.allowsTools && (providerEvent is ProviderEvent.HostedToolStarted ||
@@ -190,7 +223,9 @@ internal class AgentLoop(
             )
 
             if (toolCalls.isNotEmpty()) {
+                val batchStartedAt = SystemClock.elapsedRealtime()
                 val outcomes = executeToolBatch(round, toolCalls, providerResponse.stopReason)
+                publishToolDuration(round, (SystemClock.elapsedRealtime() - batchStartedAt).coerceAtLeast(0))
                 outcomes.forEach { outcome ->
                     appendMessage(AgentConversationCodec.toolResultMessage(outcome.call, outcome.result))
                 }
@@ -551,6 +586,71 @@ internal class AgentLoop(
         }
     }
 
+    /**
+     * 把一次请求的用量并进本 run 的累计，并把「整轮任务」口径的用量发出去。
+     *
+     * 面板上的输入 / 输出 / 缓存 / 模型用时 / 首 token 都是**整轮**口径（参考图也是这个量级），
+     * 单次响应的数字放进同一个面板就会自相矛盾：模型用时是一次请求的，工具用时却是整轮的。
+     */
+    private fun accumulateRunTotals(event: AgentEvent.UsageReceived): AgentEvent.UsageReceived {
+        val usage = event.usage
+        val totals = synchronized(runTotals) {
+            usage.inputTokens?.let { runTotals.input += it }
+            usage.outputTokens?.let { runTotals.output += it }
+            usage.cachedTokens?.let { runTotals.cached += it }
+            usage.requestDurationMs?.let { runTotals.durationMs += it }
+            usage.firstTokenMs?.let {
+                runTotals.firstTokenMs += it
+                runTotals.requests += 1
+            }
+            runTotals
+        }
+        return event.copy(
+            usage = usage.copy(
+                inputTokens = totals.input.takeIf { it > 0 },
+                outputTokens = totals.output.takeIf { it > 0 },
+                cachedTokens = totals.cached.takeIf { it > 0 },
+                requestDurationMs = totals.durationMs.takeIf { it > 0 },
+                firstTokenMs = totals.firstTokenMs.takeIf { it > 0 },
+                requestCount = totals.requests.takeIf { it > 0 },
+                toolDurationMs = totals.toolMs.takeIf { it > 0 },
+            ),
+        )
+    }
+
+    /**
+     * 工具批次跑完后，把累计工具耗时补回这一轮的用量上。
+     *
+     * 定稿用量是在响应结束时发的，那时工具还没跑；不补这一次，面板上的「工具调用用时」
+     * 要么没有，要么停在上一轮的数值。
+     */
+    private fun publishToolDuration(round: Int, elapsedMs: Long) {
+        val total = synchronized(runTotals) {
+            runTotals.toolMs += elapsedMs.coerceAtLeast(0)
+            runTotals.toolMs
+        }
+        val base = synchronized(usageByRound) { usageByRound[round] } ?: return
+        val updated = base.copy(toolDurationMs = total)
+        synchronized(usageByRound) { usageByRound[round] = updated }
+        onEvent(AgentEvent.UsageReceived(round, updated))
+    }
+
+    /**
+     * 给一次响应的用量补上「上下文构成」估算。
+     *
+     * 只有拿到服务端用量时才做（否则面板没有实测总量可对照）；
+     * 工具目录用 run 开始时发布的那份，避免每轮重建 190KB 的 MCP schema。
+     */
+    private fun AgentTokenUsage.withContextComposition(): AgentTokenUsage {
+        val estimate = AgentContextComposition.estimate(messages, systemCount, tools)
+        if (estimate.isEmpty) return this
+        return copy(
+            systemPromptTokens = estimate.systemPromptTokens,
+            toolDefinitionTokens = estimate.toolDefinitionTokens,
+            conversationTokens = estimate.conversationTokens,
+        )
+    }
+
     private fun ProviderEvent.toAgentEvent(round: Int): AgentEvent? =
         when (this) {
             ProviderEvent.RequestStarted -> AgentEvent.ProviderRequestStarted(round)
@@ -578,7 +678,7 @@ internal class AgentLoop(
                 contentChars = content.length,
                 replacementContent = content.takeIf { replaceContent },
             )
-            is ProviderEvent.Usage -> AgentEvent.UsageReceived(round = round, usage = usage)
+            is ProviderEvent.Usage -> AgentEvent.UsageReceived(round = round, usage = usage.withContextComposition())
             is ProviderEvent.HostedToolStarted -> AgentEvent.HostedToolStarted(
                 round = round,
                 toolCallId = id,

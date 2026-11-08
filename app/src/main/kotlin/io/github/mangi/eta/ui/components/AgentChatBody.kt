@@ -261,10 +261,15 @@ internal fun AgentChatBody(
     val browserSnapshot by AgentBrowserSession.snapshots.collectAsState()
     val contextUsage = remember(messages, modelPickerState.selectedModel) {
         val usage = latestContextUsage(messages, modelPickerState.selectedModel)
-        val speed = messages.asReversed()
+        val last = messages.asReversed()
             .filterIsInstance<io.github.mangi.eta.ui.model.AgentMessageUi>()
-            .firstOrNull { message -> message.usage != null }?.usage?.averageTokensPerSecond
-        usage.copy(averageTokensPerSecond = speed)
+            .firstOrNull { message -> message.usage != null }?.usage
+        usage.copy(
+            // 与 Token 用量面板的「输出速度（TPS）」同一口径：只算真正在吐 token 的那段，
+            // 否则输入框一个数、面板另一个数，用户只会当成算错。
+            averageTokensPerSecond = last?.generationTokensPerSecond ?: last?.averageTokensPerSecond,
+            latestUsage = usage.latestUsage ?: last,
+        )
     }
 
     val visibleMessages = remember(messages, messageEdit?.targetMessageId, messageEdit?.preserveFollowingMessages) {
