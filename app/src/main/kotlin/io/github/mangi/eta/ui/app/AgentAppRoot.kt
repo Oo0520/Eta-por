@@ -571,6 +571,7 @@ fun AgentAppRoot(
                                     agentState.updateReasoningEffort(action.effort)
                                 AgentHomeAction.CompactContext -> agentState.compactCurrentContext()
                                 is AgentHomeAction.ModelSelected -> agentState.selectModel(action.modelId)
+                                is AgentHomeAction.OpenConversation -> agentState.selectConversation(action.conversationKey)
                                 is AgentHomeAction.SubmitMessage -> { requestExecutionNotifications(); agentState.sendCurrentMessage(action.text) }
                                 is AgentHomeAction.InterruptAndSubmitMessage -> { requestExecutionNotifications(); agentState.interruptAndSendCurrentMessage(action.text) }
                                 is AgentHomeAction.QueueMessage -> { requestExecutionNotifications(); agentState.queueCurrentMessage(action.text) }
