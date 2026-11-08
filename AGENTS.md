@@ -54,3 +54,14 @@ Follow the history's `type(scope): summary` convention, such as `fix(voice): smo
 ## Security & Configuration
 
 Keep API keys, keystores, passwords, and local SDK paths out of Git. Release signing uses `ETA_RELEASE_*` environment variables; see `.github/RELEASING.md`. Use `AgentLogger`/`ModuleLogger` and exclude sensitive payloads from logs.
+
+## Branch & Release Discipline
+
+Mainline is **`test/beta-on-latest`** — the only branch release and beta builds are made from.
+`main` mirrors upstream only. Full policy: `docs/BRANCH_AND_RELEASE.md`.
+
+1. Merge a `feat/*` / `fix/*` branch into `test/beta-on-latest` as soon as it works; never park work on a side branch.
+2. Delete the branch right after merging. Only `test/beta-on-latest` and `main` should exist locally.
+3. Before `assembleRelease`, verify all three: `git branch --show-current` is `test/beta-on-latest`, `git status --short` is empty,
+   and `git log -1` contains the intended change. Never release from a feature branch.
+4. "Did my change ship?" is answered by `git log` / `git rev-list` against the target branch — never by inspecting working-tree files.
