@@ -197,6 +197,10 @@ internal fun ProviderConfigDraft.withAuthMode(mode: String, provider: ProviderSe
 
 internal fun validateProviderDraft(context: android.content.Context, draft: ProviderConfigDraft): String? {
     if (draft.name.isBlank()) return context.getString(R.string.page_name_cannot_be_empty_ca8984)
+    // 借用厂商助手（小布）走本地通道，没有 HTTP 端点，跳过地址校验。
+    if (ProviderAuthModes.isBorrowedVendor(draft.authMode)) {
+        return CustomHeaderFilter.validationError(draft.headers.map { it.header })
+    }
     val uri = runCatching { java.net.URI(draft.baseUrl.trim()) }.getOrNull()
     if (uri == null || uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) {
         return context.getString(R.string.page_base_url_must_be_a_valid_http_s_address_0e7d58)

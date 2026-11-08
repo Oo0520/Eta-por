@@ -9,7 +9,14 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import io.github.mangi.eta.R
 
-/** Overlay 不等同于前台 Activity；只在可见浮窗采集或播放音频期间提升服务类型。 */
+/**
+ * Overlay 不等同于前台 Activity；只在可见浮窗采集或播放音频期间提升服务类型。
+ *
+ * 只在真的把麦克风交给本进程（AudioRecord）时提升 microphone 类型。系统识别
+ * （[AsrProvider.SYSTEM]）由外部识别服务录音，本进程不持有麦克风；在助手浮窗的
+ * Service 上提升 microphone 类型会被系统判定为非前台来源而拒绝，用户就会在权限
+ * 早已授予的情况下看到「请允许 Eta 使用麦克风」。
+ */
 internal class AssistantSpeechForeground(private val service: Service) {
     fun recording() = start(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE, "Eta 正在聆听")
     fun playback() = start(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK, "Eta 正在朗读")

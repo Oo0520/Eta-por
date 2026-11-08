@@ -316,6 +316,7 @@ internal object AgentModelClient {
     private fun ModelConfig.validate() {
         require(baseUrl.isNotBlank()) { "请先配置 API 地址" }
         when {
+            ProviderAuthModes.isBorrowedVendor(authMode) -> Unit
             authMode == ProviderAuthModes.API_KEY -> require(
                 apiKey.isNotBlank() || baseUrl.isLocalEndpoint(),
             ) { "请先配置 API Key（本地地址可留空）" }

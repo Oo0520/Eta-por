@@ -59,11 +59,66 @@ class SystemSpeechRecognizerTest {
             SystemSpeechRecognizer.selectExternalService(
                 listOf(
                     service("third.party", "Hidden", exported = false),
-                    service("io.github.mangi.eta", "EtaRecognitionService", permission = "android.permission.BIND_SPEECH_RECOGNITION_SERVICE"),
+                    service(
+                        "io.github.mangi.eta",
+                        "io.github.mangi.eta.agent.voice.EtaRecognitionService",
+                        permission = BIND_SPEECH_RECOGNITION_SERVICE,
+                    ),
                 ),
                 "io.github.mangi.eta",
                 configured,
             ),
         )
+    }
+
+    /**
+     * 正式版 / 测试版 / 改包名副本会同时出现在查询结果里。任一 Eta 副本被设为系统默认识别服务时，
+     * 它内部取外部服务都不能选中自己或兄弟包，否则会 Eta → Eta 回环。
+     */
+    @Test fun siblingEtaRecognitionServicesAreExcluded() {
+        val third = ComponentName("third.party", "third.party.Recognizer")
+        assertEquals(
+            third,
+            SystemSpeechRecognizer.selectExternalService(
+                listOf(
+                    service(
+                        "io.github.mangi.eta.beta",
+                        "io.github.mangi.eta.agent.voice.EtaRecognitionService",
+                        permission = BIND_SPEECH_RECOGNITION_SERVICE,
+                    ),
+                    service(
+                        "io.github.mangi.etb",
+                        "io.github.mangi.eta.agent.voice.EtaRecognitionService",
+                        permission = BIND_SPEECH_RECOGNITION_SERVICE,
+                    ),
+                    service(third.packageName, third.className, permission = BIND_SPEECH_RECOGNITION_SERVICE),
+                ),
+                "io.github.mangi.eta.beta",
+                null,
+            ),
+        )
+    }
+
+    @Test fun configuredEtaServiceIsIgnoredInFavorOfExternalOne() {
+        val third = ComponentName("third.party", "third.party.Recognizer")
+        assertEquals(
+            third,
+            SystemSpeechRecognizer.selectExternalService(
+                listOf(
+                    service(
+                        "io.github.mangi.etb",
+                        "io.github.mangi.eta.agent.voice.EtaRecognitionService",
+                        permission = BIND_SPEECH_RECOGNITION_SERVICE,
+                    ),
+                    service(third.packageName, third.className, permission = BIND_SPEECH_RECOGNITION_SERVICE),
+                ),
+                "io.github.mangi.eta",
+                ComponentName("io.github.mangi.etb", "io.github.mangi.eta.agent.voice.EtaRecognitionService"),
+            ),
+        )
+    }
+
+    private companion object {
+        const val BIND_SPEECH_RECOGNITION_SERVICE = "android.permission.BIND_SPEECH_RECOGNITION_SERVICE"
     }
 }

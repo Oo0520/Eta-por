@@ -86,11 +86,17 @@ internal object AgentModelPickerProjector {
         providers: List<ProviderSetting>,
         selectedProviderId: String?,
         selectedModelId: String?,
+        /** 借用厂商助手（小布）是否参与模型列表；由设置里的开关决定。 */
+        borrowVendorEnabled: Boolean = false,
     ): AgentModelPickerUiState {
         val enabledProviders = providers
             .asSequence()
             .filter(ProviderSetting::isEnabled)
-            .filter { it.authMode == ProviderAuthModes.API_KEY || ProviderAuthModes.isOAuth(it.authMode) }
+            .filter {
+                it.authMode == ProviderAuthModes.API_KEY ||
+                    ProviderAuthModes.isOAuth(it.authMode) ||
+                    (borrowVendorEnabled && ProviderAuthModes.isBorrowedVendor(it.authMode))
+            }
             .sortedBy(ProviderSetting::sortOrder)
             .toList()
         val selectedProvider = enabledProviders.firstOrNull { it.id == selectedProviderId }
@@ -110,6 +116,7 @@ internal object AgentModelPickerProjector {
             .filter {
                 // 本地/局域网服务不校验 Key，也必须进面板；否则「本地地址代理」永远选不到。
                 ProviderAuthModes.isOAuth(it.authMode) ||
+                    ProviderAuthModes.isBorrowedVendor(it.authMode) ||
                     (it.authMode == ProviderAuthModes.API_KEY &&
                         (it.apiKey.isNotBlank() || it.baseUrl.isLocalEndpoint()))
             }

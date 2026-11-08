@@ -304,10 +304,16 @@ internal class AgentAppState(
      */
     private fun refreshConversationModel() {
         val bound = providers.enabledModel(homeState.modelId)
+        val borrowVendorEnabled = Prefs.remotePreferencesForUi(EtaApp.serviceInstance)
+            ?.getBoolean(Prefs.Keys.AGENT_BORROW_BREENO, false) ?: false
         val pickerState = if (bound != null) {
-            AgentModelPickerProjector.project(providers, bound.provider.id, bound.model.id)
+            AgentModelPickerProjector.project(
+                providers, bound.provider.id, bound.model.id, borrowVendorEnabled,
+            )
         } else {
-            AgentModelPickerProjector.project(providers, defaultProviderId, defaultModelId)
+            AgentModelPickerProjector.project(
+                providers, defaultProviderId, defaultModelId, borrowVendorEnabled,
+            )
         }
         modelPickerState = pickerState.copy(isChanging = modelPickerState.isChanging)
         val effective = bound ?: providers.enabledModel(pickerState.selectedModel?.id)

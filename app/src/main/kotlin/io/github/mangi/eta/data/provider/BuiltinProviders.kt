@@ -2,8 +2,10 @@ package io.github.mangi.eta.data.provider
 
 import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
+import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.ProviderSourceTypes
 
@@ -30,23 +32,44 @@ internal object BuiltinProviders {
     const val HUNYUAN_ID = "builtin-hunyuan"
     const val LOCAL_ID = "builtin-local"
 
+    /** 借用厂商助手（小布）自身模型；不联网、不走 API Key。 */
+    const val BREENO_ID = "builtin-breeno"
+
     /** 订阅账号（Codex / Grok）登录入口，删掉就没有登录入口了。 */
     val SUBSCRIPTION_PROVIDER_IDS: List<String> = listOf(OPENAI_ID, XAI_ID)
 
     /**
-     * 预置进「已配置提供商」的内置条目。
+     * 真正会写进数据库的内置 provider：全部大厂预置项。
      *
-     * 定制版此前只注入订阅登录的两条，其余大厂要靠「新增提供商」手动导入。
-     * 这里改成全部注入：用户开箱即可看到常见厂商，填 Key 即可用；
-     * 没填 Key 的条目只是占位，不会消耗任何额度。
+     * ensureBuiltInsMerged() 只播种这个集合里的条目，并删除不在集合内的历史内置项，
+     * 所以新增内置 provider 必须同时登记到这里，否则重启后会被清掉。
+     * 借用厂商（小布）不在此列——它单独靠 [BREENO_ID] 注入，且不出现在提供商列表。
      */
-    val SEEDED_PROVIDER_IDS: List<String> = listOf(
-        OPENAI_ID, ANTHROPIC_ID, BAILIAN_ID, DEEPSEEK_ID, KIMI_ID, MIMO_ID,
-        MINIMAX_ID, STEPFUN_ID, SILICONFLOW_ID, OPENROUTER_ID, XAI_ID, GEMINI_ID,
-        ZHIPU_ID, VOLCENGINE_ID, QIANFAN_ID, HUNYUAN_ID, LOCAL_ID,
-    )
+    val SEEDED_PROVIDER_IDS: List<String> by lazy {
+        PROVIDERS
+            .filterNot { ProviderAuthModes.isBorrowedVendor(it.authMode) }
+            .map { it.id }
+    }
 
     val PROVIDERS: List<ProviderSetting> = listOf(
+        OpenAiCompatibleProviderSetting(
+            id = BREENO_ID,
+            name = "小布助手（借用）",
+            baseUrl = "http://breeno.local/tap",
+            sourceType = ProviderSourceTypes.CUSTOM,
+            authMode = ProviderAuthModes.BREENO_TAP,
+            isBuiltIn = true,
+            sortOrder = 99,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+            models = listOf(
+                Model(
+                    id = "builtin-breeno-default",
+                    modelId = "breeno",
+                    displayName = "小布助手",
+                    isBuiltIn = true,
+                ),
+            ),
+        ),
         OpenAiCompatibleProviderSetting(
             id = OPENAI_ID,
             name = "OpenAI",
