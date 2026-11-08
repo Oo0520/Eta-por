@@ -17,6 +17,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.Hearing
@@ -795,7 +796,7 @@ private fun SettingsPageContent(
                         summary = stringResource(R.string.prompt_studio_section_summary),
                         startAction = {
                             EtaPreferenceIcon(
-                                icon = Icons.Rounded.Psychology,
+                                icon = Icons.Rounded.EditNote,
                                 tint = EtaPreferenceColors.Blue,
                             )
                         },

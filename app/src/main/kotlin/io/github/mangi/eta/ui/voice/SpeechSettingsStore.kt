@@ -46,7 +46,23 @@ internal class SpeechSettingsStore(
     init {
         scope.launch {
             try {
-                settings = SpeechSettingsRepository.settings()
+                settings = SpeechSettingsRepository.settings().let { loaded ->
+                    // 一次性迁移：旧版本 recognitionEnabled 默认 true，升级用户会一直带着「开启」。
+                    // 这里对齐新的默认（关闭）只做一次，之后用户自己开就是他自己开的。
+                    val prefs = context.getSharedPreferences("eta_speech_migration", Context.MODE_PRIVATE)
+                    if (prefs.getBoolean("recognition_default_off", false)) {
+                        loaded
+                    } else {
+                        prefs.edit().putBoolean("recognition_default_off", true).apply()
+                        if (loaded.recognitionEnabled) {
+                            val reset = loaded.copy(recognitionEnabled = false)
+                            SpeechSettingsRepository.save(reset)
+                            reset
+                        } else {
+                            loaded
+                        }
+                    }
+                }
                 try {
                     credentials = SpeechSettingsRepository.credentials(context)
                 } catch (_: SpeechCredentialsUnavailable) {
