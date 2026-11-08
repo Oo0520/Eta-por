@@ -20,7 +20,15 @@ internal object ProviderAuthModes {
     const val OPENAI_CHATGPT = "openai_chatgpt"
     const val XAI_GROK = "xai_grok"
 
+    /**
+     * 借用厂商助手（当前实现为小布）自身的模型：不走 HTTP，
+     * 经 Eta 模块 hook 把提问投进助手，再把回答旁路回来。
+     */
+    const val BREENO_TAP = "breeno_tap"
+
     fun isOAuth(mode: String): Boolean = mode == OPENAI_CHATGPT || mode == XAI_GROK
+
+    fun isBorrowedVendor(mode: String): Boolean = mode == BREENO_TAP
 }
 
 internal object ProviderSourceTypes {

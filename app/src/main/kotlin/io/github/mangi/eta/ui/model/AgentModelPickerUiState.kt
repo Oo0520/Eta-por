@@ -44,9 +44,26 @@ internal data class AgentContextUsageUi(
     val contextWindow: Int?,
     /** 最近一次响应的平均输出速度（tok/s）；没有数据时为 null。 */
     val averageTokensPerSecond: Double? = null,
+    /** 最近一次响应的完整用量；Token 用量面板用它，运行期之外为 null。 */
+    val latestUsage: TokenUsageUi? = null,
+    /** 上下文构成估算：系统提示词 / 工具定义 / 对话消息（元信息不是实测值）。 */
+    val systemPromptTokens: Int? = null,
+    val toolDefinitionTokens: Int? = null,
+    val conversationTokens: Int? = null,
 ) {
     val progress: Float?
         get() = contextUsageProgress(contextTokens, contextWindow)
+
+    /** 头部显示的整数百分比；没有上下文窗口或用量时为 null。 */
+    val usedPercent: Int?
+        get() = progress?.let { kotlin.math.round(it * 100.0).toInt() }
+
+    /** 三段构成合计；任一为空按 0 计，全空时为 null（面板不画分段条）。 */
+    val compositionTotal: Int?
+        get() {
+            val parts = listOfNotNull(systemPromptTokens, toolDefinitionTokens, conversationTokens)
+            return if (parts.isEmpty()) null else parts.sum()
+        }
 }
 
 internal object AgentModelPickerProjector {
@@ -54,11 +71,17 @@ internal object AgentModelPickerProjector {
         providers: List<ProviderSetting>,
         selectedProviderId: String?,
         selectedModelId: String?,
+        /** 借用厂商助手（小布）是否参与模型列表；由设置里的开关决定。 */
+        borrowVendorEnabled: Boolean = false,
     ): AgentModelPickerUiState {
         val enabledProviders = providers
             .asSequence()
             .filter(ProviderSetting::isEnabled)
-            .filter { it.authMode == ProviderAuthModes.API_KEY || ProviderAuthModes.isOAuth(it.authMode) }
+            .filter {
+                it.authMode == ProviderAuthModes.API_KEY ||
+                    ProviderAuthModes.isOAuth(it.authMode) ||
+                    (borrowVendorEnabled && ProviderAuthModes.isBorrowedVendor(it.authMode))
+            }
             .sortedBy(ProviderSetting::sortOrder)
             .toList()
         val selectedProvider = enabledProviders.firstOrNull { it.id == selectedProviderId }
@@ -77,6 +100,7 @@ internal object AgentModelPickerProjector {
             .asSequence()
             .filter {
                 ProviderAuthModes.isOAuth(it.authMode) ||
+                    ProviderAuthModes.isBorrowedVendor(it.authMode) ||
                     (it.authMode == ProviderAuthModes.API_KEY && it.apiKey.isNotBlank())
             }
             .mapNotNull { provider ->
@@ -134,18 +158,30 @@ internal fun latestContextUsage(
     messages: List<AgentChatMessageUi>,
     selectedModel: AgentModelOptionUi?,
 ): AgentContextUsageUi {
+    val window = selectedModel?.contextWindow
     for (message in messages.asReversed()) {
         when (message) {
-            is AgentMessageUi -> message.usage?.contextTokens?.let {
-                return AgentContextUsageUi(it, selectedModel?.contextWindow)
+            is AgentMessageUi -> {
+                val usage = message.usage
+                val tokens = usage?.contextTokens
+                if (usage != null && tokens != null) {
+                    return AgentContextUsageUi(
+                        contextTokens = tokens,
+                        contextWindow = window,
+                        latestUsage = usage,
+                        systemPromptTokens = usage.systemPromptTokens,
+                        toolDefinitionTokens = usage.toolDefinitionTokens,
+                        conversationTokens = usage.conversationTokens,
+                    )
+                }
             }
             is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.ContextCompaction) {
-                return AgentContextUsageUi(null, selectedModel?.contextWindow)
+                return AgentContextUsageUi(null, window)
             }
             else -> Unit
         }
     }
-    return AgentContextUsageUi(null, selectedModel?.contextWindow)
+    return AgentContextUsageUi(null, window)
 }
 
 internal fun contextUsageProgress(contextTokens: Int?, contextWindow: Int?): Float? {

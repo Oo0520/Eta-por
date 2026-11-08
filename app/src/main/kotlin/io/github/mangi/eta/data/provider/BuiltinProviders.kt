@@ -2,8 +2,10 @@ package io.github.mangi.eta.data.provider
 
 import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
+import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.ProviderSourceTypes
 
@@ -24,11 +26,44 @@ internal object BuiltinProviders {
     const val OPENROUTER_ID = "builtin-openrouter"
     const val XAI_ID = "builtin-xai"
     const val GEMINI_ID = "builtin-gemini"
+    /** 借用厂商助手（小布）自身模型；不联网、不走 API Key。 */
+    const val BREENO_ID = "builtin-breeno"
 
     /** 定制版只保留这两条内置：它们用于订阅账号（Codex / Grok）登录，删掉就没有登录入口了。 */
     val SUBSCRIPTION_PROVIDER_IDS: List<String> = listOf(OPENAI_ID, XAI_ID)
 
+    /**
+     * 真正会写进数据库的内置 provider：全部大厂预置项。
+     *
+     * ensureBuiltInsMerged() 只播种这个集合里的条目，并删除不在集合内的历史内置项，
+     * 所以新增内置 provider 必须同时登记到这里，否则重启后会被清掉。
+     * 借用厂商（小布）不在此列——它单独靠 [BREENO_ID] 注入，且不出现在提供商列表。
+     */
+    val SEEDED_PROVIDER_IDS: List<String> by lazy {
+        PROVIDERS
+            .filterNot { ProviderAuthModes.isBorrowedVendor(it.authMode) }
+            .map { it.id }
+    }
+
     val PROVIDERS: List<ProviderSetting> = listOf(
+        OpenAiCompatibleProviderSetting(
+            id = BREENO_ID,
+            name = "小布助手（借用）",
+            baseUrl = "http://breeno.local/tap",
+            sourceType = ProviderSourceTypes.CUSTOM,
+            authMode = ProviderAuthModes.BREENO_TAP,
+            isBuiltIn = true,
+            sortOrder = 99,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+            models = listOf(
+                Model(
+                    id = "builtin-breeno-default",
+                    modelId = "breeno",
+                    displayName = "小布助手",
+                    isBuiltIn = true,
+                ),
+            ),
+        ),
         OpenAiCompatibleProviderSetting(
             id = OPENAI_ID,
             name = "OpenAI",

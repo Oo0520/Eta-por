@@ -1017,6 +1017,12 @@ internal object AgentRuntimeWire {
         usage.reasoningTokens?.let { putInt("usage_reasoning", it) }
         usage.cachedTokens?.let { putInt("usage_cache", it) }
         usage.requestDurationMs?.let { putLong("usage_duration_ms", it) }
+        usage.systemPromptTokens?.let { putInt("usage_system_prompt", it) }
+        usage.toolDefinitionTokens?.let { putInt("usage_tool_defs", it) }
+        usage.conversationTokens?.let { putInt("usage_conversation", it) }
+        usage.firstTokenMs?.let { putLong("usage_first_token_ms", it) }
+        usage.toolDurationMs?.let { putLong("usage_tool_duration_ms", it) }
+        usage.requestCount?.let { putInt("usage_request_count", it) }
     }
 
     @Suppress("DEPRECATION")
@@ -1028,6 +1034,12 @@ internal object AgentRuntimeWire {
             reasoningTokens = optionalInt("usage_reasoning"),
             cachedTokens = optionalInt("usage_cache"),
             requestDurationMs = (get("usage_duration_ms") as? Number)?.toLong()?.takeIf { it > 0 },
+            systemPromptTokens = optionalInt("usage_system_prompt"),
+            toolDefinitionTokens = optionalInt("usage_tool_defs"),
+            conversationTokens = optionalInt("usage_conversation"),
+            firstTokenMs = (get("usage_first_token_ms") as? Number)?.toLong()?.takeIf { it > 0 },
+            toolDurationMs = (get("usage_tool_duration_ms") as? Number)?.toLong()?.takeIf { it > 0 },
+            requestCount = optionalInt("usage_request_count"),
         )
 
     private fun decodeCustomHeaders(raw: String?): List<CustomHeader> =

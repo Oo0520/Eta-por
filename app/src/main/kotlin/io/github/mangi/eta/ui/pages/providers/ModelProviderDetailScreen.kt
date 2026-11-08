@@ -40,6 +40,7 @@ import io.github.mangi.eta.data.model.AnthropicProviderSetting
 import io.github.mangi.eta.data.model.CustomProviderSetting
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
 import io.github.mangi.eta.data.model.ProviderSetting
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.withId
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.RemoteModelFetcher
@@ -528,7 +529,9 @@ private fun ProviderConfigTab(
 private suspend fun testConnection(
     context: android.content.Context,
     provider: ProviderSetting,
-): String =
+): String = if (ProviderAuthModes.isBorrowedVendor(provider.authMode)) {
+    "本地通道：回答由小布提供，不走 HTTP 连接"
+} else {
     RemoteModelFetcher.fetch(provider)
         .map { context.resources.getQuantityString(R.plurals.provider_models_fetched, it.size, it.size) }
         .getOrElse { throwable ->
@@ -537,3 +540,4 @@ private suspend fun testConnection(
                 throwable.message ?: throwable.javaClass.simpleName,
             )
         }
+    }

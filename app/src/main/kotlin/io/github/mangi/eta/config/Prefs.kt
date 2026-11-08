@@ -37,6 +37,8 @@ internal object Prefs {
         const val SCREEN_ON_VOICE_COMMAND = "screen_on_voice_command"
         const val AGENT_CUSTOM_MODEL = "agent_custom_model"
         const val AGENT_REQUIRE_PREFIX = "agent_require_prefix"
+        /** 借用小布自身模型：只读旁路小布下行的 StreamTextCard，不改小布行为。 */
+        const val AGENT_BORROW_BREENO = "agent_borrow_breeno"
         // 旧版小 V Hook 仍会读取这些 key；与厂商助手公共开关同步，不再单独展示。
         const val VIVO_CUSTOM_MODEL = "vivo_custom_model"
         const val VIVO_REQUIRE_PREFIX = "vivo_require_prefix"
@@ -61,6 +63,7 @@ internal object Prefs {
             SCREEN_ON_VOICE_COMMAND to false,
             AGENT_CUSTOM_MODEL to true,
             AGENT_REQUIRE_PREFIX to false,
+            AGENT_BORROW_BREENO to false,
             VIVO_CUSTOM_MODEL to true,
             VIVO_REQUIRE_PREFIX to true,
             AGENT_TERMINAL_TOOLS to true,

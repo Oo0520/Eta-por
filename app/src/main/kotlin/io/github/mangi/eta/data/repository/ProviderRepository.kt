@@ -147,7 +147,9 @@ internal object ProviderRepository {
     suspend fun ensureBuiltInsMerged(): Unit = mutationMutex.withLock {
         // 定制版：不注入普通内置提供商。只保留订阅登录用的两条（OpenAI / xAI），
         // 其余没填过 Key 的直接删；填过 Key 的转成自定义项保留。
-        val kept = BuiltinProviders.SUBSCRIPTION_PROVIDER_IDS
+        // 大厂预置项全部回归。借用厂商（小布）已暂缓，不再入库；
+        // 历史遗留的那条会被 deleteBuiltInProvidersExcept 一并清掉。
+        val kept = BuiltinProviders.SEEDED_PROVIDER_IDS
         dao().promoteConfiguredBuiltInProviders()
         dao().deleteBuiltInProvidersExcept(kept)
         val current = allProviders()

@@ -16,7 +16,10 @@ import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.core.toSafeLogToken
 import io.github.mangi.eta.hook.EtaInjectedStrings
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.os.Handler
 import android.os.Looper
@@ -157,6 +160,13 @@ internal object BreenoHooks {
     @Volatile
     private var protocolTargets: BreenoTargets? = null
 
+    /** 借用小布模型的回传 authority（模块 applicationId + .breeno-tap）。 */
+    @Volatile
+    private var tapAuthority: String = ""
+
+    /** 广播注入通道是否已注册（install 时 Context 可能还没就绪，靠 hook 回调补注册）。 */
+    private val queryChannelReady = AtomicBoolean(false)
+
     fun install(
         module: XposedModule,
         rootLogger: ModuleLogger,
@@ -187,6 +197,9 @@ internal object BreenoHooks {
             hookInboundMessage(hooks)
             hookCdmTextRequest(hooks)
             hookAIChatDataCenter(hooks, classLoader)
+            tapAuthority = module.moduleApplicationInfo.packageName + BreenoModelTap.AUTHORITY_SUFFIX
+            hookDownstreamModelTap(hooks, tapAuthority)
+            ensureQueryChannelRegistered(logger)
             schedulePendingResultDrains(logger, classLoader)
         }
     }
@@ -212,7 +225,21 @@ internal object BreenoHooks {
             description = "Breeno outbound message"
         ) { chain ->
             val message = chain.args.getOrNull(0)
-            if (maybeHandleCustomModelRequest(logger, classLoader, message)) {
+            ensureQueryChannelRegistered(logger)
+            // 缓存真实发送点与文本模板，供「主动投 query」复用。
+            if (!BreenoQueryInjector.isInjecting()) {
+                runCatching {
+                    BreenoQueryInjector.rememberSendTarget(
+                        method,
+                        chain.thisObject,
+                        chain.args.toTypedArray(),
+                    )
+                    BreenoQueryInjector.rememberTemplate(message)
+                }
+            }
+            if (!BreenoQueryInjector.isInjecting() &&
+                maybeHandleCustomModelRequest(logger, classLoader, message)
+            ) {
                 return@intercept null
             }
             try {
@@ -223,6 +250,76 @@ internal object BreenoHooks {
                 }
             }
             chain.proceed()
+        }
+    }
+
+    /**
+     * 借用小布自身模型的只读旁路：小布云端回来的 StreamTextCard 原样放行，
+     * 同时把正文拷贝一份推给 Eta。开关在运行时判断，切换设置后不必重启小布进程。
+     */
+    private fun hookDownstreamModelTap(hooks: HookRegistrar, authority: String) {
+        val method = protocolTargets?.dispatchDirectives
+        if (method == null) {
+            hooks.missing(
+                id = "breeno.model-tap",
+                description = "Agent.dispatchDirectives",
+                detail = "未找到下行指令派发方法，借用小布模型不可用",
+            )
+            return
+        }
+        hooks.intercept(
+            id = "breeno.model-tap",
+            executable = method,
+            description = "Breeno downstream StreamTextCard tap",
+        ) { chain ->
+            if (Prefs.isEnabled(Prefs.Keys.AGENT_BORROW_BREENO)) {
+                runCatching { BreenoModelTap.observe(chain.args.getOrNull(0), authority) }
+                    .getOrNull()
+                    ?.let { summary -> hooks.logger.info(summary) }
+            }
+            chain.proceed()
+        }
+    }
+
+    /**
+     * 注册「主动投 query」通道：Eta 主进程发广播，这里在**小布进程内**直接构造并发送，
+     * 不启动任何界面。
+     */
+    private fun ensureQueryChannelRegistered(logger: ModuleLogger) {
+        if (queryChannelReady.get()) return
+        val context = AgentAppContext.resolve() ?: return
+        if (!queryChannelReady.compareAndSet(false, true)) return
+        runCatching {
+            val filter = IntentFilter(BreenoQueryInjector.ACTION_QUERY)
+            context.registerReceiver(
+                object : BroadcastReceiver() {
+                    override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                        val prompt = intent
+                            ?.getStringExtra(BreenoQueryInjector.EXTRA_PROMPT)
+                            ?.trim()
+                            .orEmpty()
+                        if (prompt.isEmpty()) return
+                        if (!Prefs.isEnabled(Prefs.Keys.AGENT_BORROW_BREENO)) {
+                            logger.info("注入忽略：借用小布模型未开启")
+                            return
+                        }
+                        val failure = runCatching { BreenoQueryInjector.inject(prompt) }
+                            .getOrElse { throwable -> throwable.javaClass.simpleName }
+                        logger.info(
+                            "注入 query chars=${prompt.length} ok=${failure == null} " +
+                                "canInject=${BreenoQueryInjector.canInject()} " +
+                                "templateAge=${BreenoQueryInjector.templateAgeMillis()}ms" +
+                                if (failure != null) " reason=$failure" else "",
+                        )
+                    }
+                },
+                filter,
+                Context.RECEIVER_EXPORTED,
+            )
+            logger.info("注入通道已注册")
+        }.onFailure { throwable ->
+            queryChannelReady.set(false)
+            logger.warn("注册注入通道失败: ${throwable.javaClass.simpleName}")
         }
     }
 
@@ -243,7 +340,17 @@ internal object BreenoHooks {
             executable = method,
             description = "Breeno inbound message"
         ) { chain ->
+            ensureQueryChannelRegistered(logger)
             val content = chain.args.getOrNull(1) as? String
+            if (
+                content != null &&
+                tapAuthority.isNotEmpty() &&
+                Prefs.isEnabled(Prefs.Keys.AGENT_BORROW_BREENO)
+            ) {
+                runCatching { BreenoModelTap.observeJson(content, tapAuthority) }
+                    .getOrNull()
+                    ?.let { summary -> logger.info(summary) }
+            }
             val filteredContent = filterClaimedNativeDirectives(logger, content)
             try {
                 if (filteredContent == null && content != null) {

@@ -1,9 +1,6 @@
 package io.github.mangi.eta.ui.components
 
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
@@ -13,29 +10,23 @@ import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.ui.model.AgentContextUsageUi
 import io.github.mangi.eta.ui.model.formatContextUsage
-import kotlinx.coroutines.launch
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
-import top.yukonga.miuix.kmp.basic.RichTooltip
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.basic.TooltipAnchorPosition
-import top.yukonga.miuix.kmp.basic.TooltipBox
-import top.yukonga.miuix.kmp.basic.TooltipDefaults
-import top.yukonga.miuix.kmp.basic.rememberTooltipState
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
+/**
+ * 输入框里的上下文环。
+ *
+ * 只负责「显示用量 + 通知外部打开面板」：面板本身挂在输入框那一层（和内存 / Token 面板同层），
+ * 这样三个面板的位置、展开方向完全一致，不会各自按自己的锚点算出不同的左缘。
+ */
 @Composable
 internal fun AgentContextUsageButton(
     usage: AgentContextUsageUi,
-    onCompact: () -> Unit = {},
-    canCompact: Boolean = false,
+    onOpenPanel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scope = rememberCoroutineScope()
-    val tooltipState = rememberTooltipState(isPersistent = true)
     val progress = usage.progress
     val progressColor = when {
         progress == null -> MiuixTheme.colorScheme.onSurfaceVariantActions
@@ -50,76 +41,28 @@ internal fun AgentContextUsageButton(
         noLimitText = stringResource(R.string.context_no_model_limit),
         locale = locale,
     )
-    val detail = when {
-        usage.contextWindow == null -> summary
-        usage.contextTokens == null -> stringResource(R.string.context_usage_after_response)
-        else -> stringResource(R.string.context_usage_previous_response, summary)
-    }
     val usageDescription = stringResource(
         R.string.context_usage_description,
         summary.replace('\n', ' '),
     )
-    val tooltipColors = TooltipDefaults.richTooltipColors()
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
-        tooltip = {
-            RichTooltip(
-                title = {
-                    Text(
-                        text = stringResource(R.string.ui_contextual_usage_d12810),
-                        color = tooltipColors.titleContentColor,
-                        style = MiuixTheme.textStyles.subtitle,
-                    )
-                },
-                action = if (canCompact) {
-                    {
-                        TextButton(
-                            text = stringResource(R.string.context_compact_action),
-                            onClick = {
-                                onCompact()
-                                tooltipState.dismiss()
-                            },
-                            minWidth = 0.dp,
-                            minHeight = 34.dp,
-                            cornerRadius = 17.dp,
-                            colors = ButtonDefaults.textButtonColorsPrimary(),
-                            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                        )
-                    }
-                } else {
-                    null
-                },
-                colors = tooltipColors,
-            ) {
-                Text(
-                    text = detail,
-                    color = tooltipColors.contentColor,
-                    style = MiuixTheme.textStyles.body2,
-                )
-            }
-        },
-        state = tooltipState,
-        focusable = true,
+    IconButton(
+        onClick = onOpenPanel,
+        minWidth = ChatInputActionSize,
+        minHeight = ChatInputActionSize,
         modifier = modifier,
     ) {
-        IconButton(
-            onClick = { scope.launch { tooltipState.show() } },
-            minWidth = ChatInputActionSize,
-            minHeight = ChatInputActionSize,
-        ) {
-            CircularProgressIndicator(
-                progress = progress ?: 0f,
-                colors = ProgressIndicatorDefaults.progressIndicatorColors(
-                    foregroundColor = progressColor,
-                    disabledForegroundColor = progressColor,
-                    backgroundColor = MiuixTheme.colorScheme.secondaryContainer,
-                ),
-                strokeWidth = 2.5.dp,
-                size = ChatInputActionIconSize,
-                modifier = Modifier.semantics {
-                    contentDescription = usageDescription
-                },
-            )
-        }
+        CircularProgressIndicator(
+            progress = progress ?: 0f,
+            colors = ProgressIndicatorDefaults.progressIndicatorColors(
+                foregroundColor = progressColor,
+                disabledForegroundColor = progressColor,
+                backgroundColor = MiuixTheme.colorScheme.secondaryContainer,
+            ),
+            strokeWidth = 2.5.dp,
+            size = ChatInputActionIconSize,
+            modifier = Modifier.semantics {
+                contentDescription = usageDescription
+            },
+        )
     }
 }

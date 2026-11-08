@@ -95,6 +95,7 @@ internal fun ProviderConnectionFields(
         // 本地能判的只有这两条：地址协议、Key 里混了空白/明显太短。
         // 真正「Key 对不对」要请求才知道，这里不猜。
         val baseUrlError = when {
+            ProviderAuthModes.isBorrowedVendor(draft.authMode) -> null
             draft.baseUrl.isBlank() -> null
             !draft.baseUrl.startsWith("http://") && !draft.baseUrl.startsWith("https://") ->
                 "地址要以 http:// 或 https:// 开头"

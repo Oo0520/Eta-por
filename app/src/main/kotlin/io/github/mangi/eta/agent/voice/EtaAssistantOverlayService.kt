@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.voice
 
 import io.github.mangi.eta.data.model.TtsProvider
+import io.github.mangi.eta.data.model.AsrProvider
 import io.github.mangi.eta.data.model.SpeechSettings
 import io.github.mangi.eta.data.repository.SpeechSettingsRepository
 import io.github.mangi.eta.ui.voice.openSpeechSettings
@@ -114,7 +115,8 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
             context = this,
             scope = scope,
             automaticEndpoint = true,
-            beforeCapture = speechForeground::recording,
+            /** 系统识别由外部识别服务录音，本进程不申请 microphone 前台类型。 */
+            beforeCapture = { if (speechSettings?.asr != AsrProvider.SYSTEM) speechForeground.recording() },
             afterCapture = speechForeground::stop,
             onResult = { text ->
                 speechState = EtaSpeechState()
