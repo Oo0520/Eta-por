@@ -326,7 +326,6 @@ private fun SettingsPageContent(
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = "重置新手引导",
-                        summary = "重新播放手势教学与侧栏 / 工作区提示",
                         startAction = {
                             EtaPreferenceIcon(
                                 icon = Icons.Rounded.Refresh,
@@ -507,7 +506,6 @@ private fun SettingsPageContent(
                 EtaPreferenceGroup {
                     EtaArrowPreference(
                         title = stringResource(R.string.prompt_studio_title),
-                        summary = stringResource(R.string.prompt_studio_section_summary),
                         startAction = {
                             EtaPreferenceIcon(
                                 icon = Icons.Rounded.Psychology,
@@ -764,7 +762,6 @@ private fun SettingsPageContent(
                             context = context,
                             prefs = prefs,
                             title = stringResource(R.string.ui_enable_vendor_assistant_custom_models_c8e465),
-                            summary = stringResource(R.string.ui_vendor_assistant_custom_models_summary),
                             key = Prefs.Keys.AGENT_CUSTOM_MODEL,
                             icon = Icons.Rounded.Cloud,
                             iconTint = EtaPreferenceColors.Blue,
@@ -822,7 +819,6 @@ private fun SettingsPageContent(
                     EtaPreferenceDivider()
                     EtaArrowPreference(
                         title = stringResource(R.string.settings_test_privacy_title),
-                        summary = "同意状态、训练用途开关、撤回同意、协议全文",
                         startAction = {
                             EtaPreferenceIcon(
                                 icon = Icons.Rounded.VerifiedUser,

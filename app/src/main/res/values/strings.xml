@@ -372,7 +372,7 @@
   <string name="ui_stop_a17f70">停止</string>
   <string name="ui_allow_sensitive_device_operation_3d42ea">允许敏感设备操作</string>
   <string name="ui_allows_the_model_to_call_web_searches_provided_by_th_2f752f">允许模型调用 Provider 提供的网页搜索</string>
-  <string name="ui_allow_reading_of_sensitive_device_information_feaec0">允许读取敏感设备信息</string>
+  <string name="ui_allow_reading_of_sensitive_device_information_feaec0">读取敏感设备信息</string>
   <string name="ui_about_bed172">关于</string>
   <string name="ui_after_closing_no_memory_will_be_injected_and_the_mod_db3d23">关闭后不注入记忆，也不允许模型读写；已有内容会保留</string>
   <string name="ui_built_in_09ceea">内置</string>
@@ -393,7 +393,7 @@
   <string name="ui_vendor_assistant_require_prefix_summary">关闭后，普通打字和单次语音请求也交给 Eta。</string>
   <string name="ui_enable_this_provider_683a76">启用此 Provider</string>
   <string name="ui_enable_terminal_file_tools_18bb43">启用终端/文件工具</string>
-  <string name="ui_enable_web_browsing_tools_8b6b03">启用网页搜索、读取与浏览器</string>
+  <string name="ui_enable_web_browsing_tools_8b6b03">网页搜索与浏览</string>
   <string name="ui_enable_memory_4b69b7">启用记忆</string>
   <string name="ui_enable_device_direct_tools_e2d595">启用设备直达工具</string>
   <string name="ui_back_to_bottom_32282e">回到底部</string>
@@ -466,7 +466,7 @@
   <string name="ui_clear_84fcd7">清空</string>
   <string name="ui_clear_all_memory_a43bd3">清空全部记忆？</string>
   <string name="ui_about_github_star_title">源代码</string>
-  <string name="ui_about_github_star_hint">如果 Eta 帮到了你，请在 GitHub 点个 Star，这对我们意义重大</string>
+  <string name="ui_about_github_star_hint">如果 Eta Por 帮到了你，请在 GitHub 点个 Star，这对我们意义重大</string>
   <string name="ui_about_version_title">版本</string>
   <string name="ui_about_feedback_title">问题反馈</string>
   <string name="settings_search_hint">搜索设置项</string>
@@ -1568,7 +1568,7 @@
     <string name="speech_api_key" translatable="false">API Key</string>
 
   <string name="usage_stats_title">用量统计</string>
-  <string name="usage_stats_summary">本地记录每次模型请求的 token 用量</string>
+  <string name="usage_stats_summary">本地统计，不外传</string>
   <string name="usage_range_today">今日</string>
   <string name="usage_range_month">近 30 天</string>
   <string name="usage_requests">请求次数</string>
@@ -1589,7 +1589,7 @@
   <string name="usage_export_share_title">分享用量 CSV</string>
   <string name="usage_export_failed">导出失败，请重试</string>
   <string name="data_usage_title">数据占用</string>
-  <string name="data_usage_summary">查看数据库大小与记录条数，清理旧数据</string>
+  <string name="data_usage_summary">数据库大小与清理</string>
   <string name="data_usage_version">版本</string>
   <string name="data_usage_database">数据库大小</string>
   <string name="data_usage_conversations">会话</string>
@@ -1660,7 +1660,7 @@
   <string name="memory_capsule_used">已用 %1$s / 总 %2$s</string>
   <string name="memory_capsule_available">可用 %1$s</string>
   <string name="diag_patrol_title">极致自动排查</string>
-  <string name="diag_patrol_entry_summary">定时在本机逐项巡检，异常才提醒，报告留档</string>
+  <string name="diag_patrol_entry_summary">定时巡检，异常才提醒</string>
   <string name="diag_patrol_group_title">极致自动排查</string>
   <string name="diag_patrol_view_hint">全文 %1$d 字，可上下滚动；点下面按钮整份复制</string>
   <string name="diag_patrol_copy_all">一键复制全文</string>
@@ -2271,9 +2271,9 @@
     <string name="lingscreen_edge_collapse">贴边自动折叠</string>
     <string name="lingscreen_edge_collapse_summary">把浮窗拖到屏幕左右边缘松手即收起成应用图标；停手 2 秒后缩成渐变条，点一下回到操作 app 图标，再点展开。</string>
     <string name="lingscreen_fluid_pinned">流体云常驻</string>
-    <string name="lingscreen_fluid_pinned_summary">没任务时也在流体云留一条 Eta，点它回 App；任务结束时由「空闲」接替进度卡片。</string>
+    <string name="lingscreen_fluid_pinned_summary">空闲时留一条快捷入口</string>
     <string name="lingscreen_fluid_downgrade">通知不进流体云</string>
-    <string name="lingscreen_fluid_downgrade_summary">开启后，运行进度卡与实时活动只作为普通通知留在通知栏，不再占用流体云与状态栏胶囊；暂停、停止、插入等按钮照常可用。</string>
+    <string name="lingscreen_fluid_downgrade_summary">只留普通通知，不占胶囊</string>
     <string name="lingscreen_entry_title">灵屏</string>
     <string name="lingscreen_keep_screen_on">操作时不息屏</string>
     <string name="lingscreen_keep_screen_on_summary">灵屏会话存在期间保持手机屏幕常亮，避免 Agent 操作到一半被息屏打断；会话结束自动释放。</string>
