@@ -182,7 +182,7 @@
   <string name="conversation_unnamed">新对话</string>
   <string name="conversation_search_hint">搜索对话</string>
   <string name="conversation_navigator_title">会话导航</string>
-  <string name="conversation_navigator_search_hint">搜索本会话</string>
+  <string name="conversation_navigator_search_hint">搜索本会话，点击跳转，长按引用</string>
   <string name="conversation_navigator_empty">这个会话还没有可跳转的内容</string>
   <string name="conversation_navigator_no_match">没有匹配「%1$s」的消息</string>
   <string name="conversation_navigator_jump_latest">跳到最新</string>
@@ -294,6 +294,9 @@
   <string name="tool_open_system_panel">系统面板</string>
   <string name="tool_search_apps">搜索应用</string>
   <string name="tool_launch_app">打开应用</string>
+  <string name="tool_lingscreen_open_app">在灵屏打开应用</string>
+  <string name="lingscreen_return_title">正在真机上操作</string>
+  <string name="lingscreen_return_body">点此回到灵屏（%1$s）</string>
   <string name="tool_open_uri">用应用打开</string>
   <string name="tool_browser_use">浏览网页</string>
   <string name="tool_terminal">终端</string>
@@ -439,8 +442,9 @@
   <string name="ui_support_chatgpt_deepseek_kimi_glm_qwen_etc_b31d02">支持 ChatGPT, DeepSeek, Kimi, GLM, Qwen等</string>
   <string name="ui_supports_files_and_folders_under_internal_storage_or_520786">支持任意本地绝对路径下的文件和文件夹</string>
   <string name="ui_support_thinking_5b9e4c">支持思考</string>
-  <string name="ui_new_anthropic_db6098">新增 Anthropic</string>
-  <string name="ui_added_openai_compatible_6bd471">新增 OpenAI-compatible</string>
+  <string name="ui_new_anthropic_db6098">新增 Anthropic 接口</string>
+  <string name="ui_added_openai_compatible_6bd471">新增 OpenAI 兼容接口</string>
+    <string name="ui_new_gemini">新增 Gemini 接口</string>
   <string name="ui_add_new_provider_74df54">新增提供商</string>
   <string name="ui_accessibility_enhancement_tools_8fd257">无障碍增强工具</string>
   <string name="ui_no_skills_installed_yet_4e960f">尚未安装任何 Skill</string>
@@ -1412,6 +1416,12 @@
     <string name="virtual_screen_completion_ok_title">任务已完成</string>
     <string name="virtual_screen_completion_fail_title">任务失败</string>
     <string name="virtual_screen_completion_ok_body">灵屏指令执行完毕</string>
+    <string name="virtual_screen_completion_stopped_title">任务已停止</string>
+    <string name="virtual_screen_completion_stopped_body">这次任务被手动终止，没有产生结果</string>
+    <string name="confirm_channel_name">需要确认的操作</string>
+    <string name="confirm_channel_desc">Agent 要动用资金、提交隐私或做不可撤销操作时提醒</string>
+    <string name="confirm_notify_title">需要你确认：%1$s</string>
+    <string name="confirm_notify_body">这一步已拦下，点开看具体内容</string>
     <string name="conversation_trimmed_capsule">已省略 %1$d 条</string>
     <string name="virtual_screen_home">主页</string>
     <string name="virtual_screen_menu">应用菜单</string>
@@ -2268,7 +2278,6 @@
     <string name="lingscreen_keep_screen_on">操作时不息屏</string>
     <string name="lingscreen_keep_screen_on_summary">灵屏会话存在期间保持手机屏幕常亮，避免 Agent 操作到一半被息屏打断；会话结束自动释放。</string>
     <string name="lingscreen_export_log">导出灵屏日志</string>
-    <string name="lingscreen_return_title">正在真机上操作</string>
     <string name="task_completion_channel">任务完成</string>
     <string name="task_completion_ok_title">任务已完成</string>
     <string name="task_completion_fail_title">任务失败</string>
@@ -2277,14 +2286,6 @@
     <string name="task_completion_capsule_ok">已完成</string>
     <string name="task_completion_capsule_fail">失败</string>
     <string name="task_completion_capsule_stopped">已停止</string>
-    <string name="virtual_screen_completion_stopped_title">灵屏任务已停止</string>
-    <string name="virtual_screen_completion_stopped_body">你主动停止了这次运行。</string>
-    <string name="confirm_channel_name">Eta 确认提醒</string>
-    <string name="confirm_channel_desc">灵屏需要你确认时发通知</string>
-    <string name="confirm_notify_title">需要确认：%1$s</string>
-    <string name="confirm_notify_body">点开查看现场截图并确认</string>
-    <string name="tool_lingscreen_open_app">在灵屏打开应用</string>
-    <string name="lingscreen_return_body">点此回到灵屏（%1$s）</string>
     <string name="lingscreen_usage_title">使用说明</string>
     <string name="lingscreen_usage_body">· 双击浮窗：在 96 / 144 / 200 / 272 四档之间循环切换大小
 · 拖动浮窗：搬动位置；拖到左右边缘松手即收起
@@ -2294,4 +2295,44 @@
 · 流体云：点卡片回 App；点「接管」进全屏；用「暂停 / 继续」「终止」控制任务
 · 任务结束：浮窗自动收起，不会把最后一帧留在屏幕上
 · 只跑一个灵屏任务：第二个任务会收到「正被占用」，不会串台</string>
+    <!-- 设置页分组重排（方案 A）新增文案 -->
+    <string name="settings_section_model_capabilities">模型能力</string>
+    <string name="settings_section_extensions">扩展与自动化</string>
+    <string name="settings_section_persona">人格与提示词</string>
+    <string name="settings_section_system_integration">系统集成</string>
+    <string name="settings_section_accounts">账号与连接</string>
+    <string name="settings_section_diagnostics">诊断与维护</string>
+    <string name="settings_section_permissions_devices">权限与设备能力</string>
+    <string name="route_subagents">子智能体</string>
+    <string name="route_github_account">GitHub 账号</string>
+    <string name="settings_self_check_title">功能自检</string>
+    <string name="settings_test_privacy_title">测试与隐私</string>
+    <string name="settings_diagnostics_title">诊断与日志</string>
+    <!-- 说明：支持/赞助页 -->
+    <string name="support_title">支持 Eta Por</string>
+    <string name="support_entry">支持 Eta Por</string>
+    <string name="support_entry_summary">捐赠完全自愿，不影响任何功能</string>
+    <string name="support_intro">Eta Por 免费、无广告、无账号。\n——如果 Ta 替你省下了时间和精力，欢迎分担一点。</string>
+    <string name="support_section_direct">直接打开</string>
+    <string name="support_alipay_title">支付宝</string>
+    <string name="support_alipay_summary">一键打开付款页</string>
+    <string name="support_section_long_term">长期支持</string>
+    <string name="about_group_title">加入交流群</string>
+    <string name="about_group_summary">QQ 群 1132120965</string>
+    <string name="about_email_title">邮件联系</string>
+    <string name="about_email_summary">qm0mp@qq.com</string>
+    <string name="support_afdian_title">爱发电</string>
+    <string name="support_afdian_summary">按月或单次赞助，平台内支付</string>
+    <string name="support_link_missing">没有可打开的应用，已复制链接</string>
+    <string name="support_wechat_title">微信赞赏码</string>
+    <string name="support_wechat_hint">保存到相册后，打开微信「扫一扫 → 相册」选中这张图</string>
+    <string name="support_save_title">保存赞赏码到相册</string>
+    <string name="support_save_summary">存到 Pictures/Eta，之后可在微信里扫</string>
+    <string name="support_save_done">已保存到相册</string>
+    <string name="support_save_failed">保存失败，请检查存储空间</string>
+    <string name="support_alipay_missing">未检测到支付宝，已复制收款链接</string>
+    <string name="support_section_note">说明</string>
+    <string name="support_note_voluntary">捐赠完全自愿</string>
+    <string name="support_note_voluntary_summary">不解锁任何功能，也不影响更新；主要补贴模型调用费用与真机测试成本投入</string>
+    <string name="support_footer">感谢每一个把 ta 用起来的人，用起来本身就是支持。</string>
 </resources>

@@ -958,6 +958,9 @@ fun AgentAppRoot(
             entry<AppRoute.SelfCheck>(swipeDismiss = swipeDismiss) {
                 io.github.mangi.eta.ui.screens.selfcheck.FeatureSelfCheckScreen(onBack = { popRoute() })
             }
+            entry<AppRoute.Support>(swipeDismiss = swipeDismiss) {
+                io.github.mangi.eta.ui.screens.support.SupportScreen(onBack = { popRoute() })
+            }
             entry<AppRoute.DiagnosticsPatrol>(swipeDismiss = swipeDismiss) {
                 io.github.mangi.eta.ui.screens.selfcheck.DiagnosticsPatrolScreen(onBack = { popRoute() })
             }
