@@ -97,9 +97,6 @@ import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.repository.ProviderRepository
 import io.github.mangi.eta.data.repository.RuntimeConfigRepository
-import io.github.mangi.eta.systemizer.GoogleAppSystemizerInstaller
-import io.github.mangi.eta.systemizer.RootManager
-import io.github.mangi.eta.systemizer.SystemizerInstallResult
 import io.github.mangi.eta.ui.app.EnhancementSettingsHistory
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
 import io.github.mangi.eta.ui.components.EtaArrowPreference
@@ -159,10 +156,7 @@ private fun SettingsPageContent(
     val capabilities = rememberDeviceCapabilities()
     val enhancementHistory = remember(context.applicationContext) { EnhancementSettingsHistory(context) }
     var hasConnectedFramework by remember { mutableStateOf(enhancementHistory.hasConnected) }
-    var hasUsedSystemizer by remember { mutableStateOf(enhancementHistory.hasUsedSystemizer) }
-    var showSystemizerDialog by remember { mutableStateOf(false) }
     var showTestConsent by remember { mutableStateOf(false) }
-    var installingSystemizer by remember { mutableStateOf(false) }
 
     // 悬浮窗权限状态：授权后从系统设置返回时（ON_RESUME）刷新。
     var overlayGranted by remember {
@@ -963,68 +957,7 @@ private fun SettingsPageContent(
             )
         }
 
-        SystemizerConfirmDialog(
-            show = showSystemizerDialog,
-            installing = installingSystemizer,
-            onDismissRequest = {
-                if (!installingSystemizer) {
-                    showSystemizerDialog = false
-                }
-            },
-            onConfirm = {
-                if (installingSystemizer) return@SystemizerConfirmDialog
-                if (!capabilities.root.isGranted) {
-                    showSystemizerDialog = false
-                    onNavigate(AppRoute.SystemEnhance)
-                    return@SystemizerConfirmDialog
-                }
-                enhancementHistory.recordSystemizerUse()
-                hasUsedSystemizer = true
-                showSystemizerDialog = false
-                installingSystemizer = true
-                coroutineScope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        GoogleAppSystemizerInstaller(context.applicationContext).install()
-                    }
-                    installingSystemizer = false
-                    Toast.makeText(
-                        context.applicationContext,
-                        result.toToastMessage(context),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-            },
-        )
 
-}
-
-// ── 系统化确认对话框 ─────────────────────────────────────────────────────────
-
-@Composable
-private fun SystemizerConfirmDialog(
-    show: Boolean,
-    installing: Boolean,
-    onDismissRequest: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    EtaWindowDialog(
-        show = show,
-        title = stringResource(R.string.ui_convert_google_apps_to_system_apps_0f6d89),
-        summary = stringResource(R.string.ui_system_applications_have_voice_wake_up_permissions_f_0190f2),
-        onDismissRequest = onDismissRequest,
-    ) {
-        MiuixDialogActions(
-            confirmText = if (installing) {
-                stringResource(R.string.status_processing)
-            } else {
-                stringResource(R.string.action_confirm)
-            },
-            cancelEnabled = !installing,
-            confirmEnabled = !installing,
-            onCancel = onDismissRequest,
-            onConfirm = onConfirm,
-        )
-    }
 }
 
 // ── 带图标的布尔开关 ─────────────────────────────────────────────────────────
@@ -1188,25 +1121,6 @@ private fun isAgentAccessibilityEnabled(context: Context): Boolean {
     return enabledServices.split(':').any { it.equals(expected, ignoreCase = true) }
 }
 
-private fun SystemizerInstallResult.toToastMessage(context: Context): String =
-    when (this) {
-        SystemizerInstallResult.AlreadySystemized -> context.getString(R.string.systemizer_already_system)
-        SystemizerInstallResult.GoogleAppMissing -> context.getString(R.string.systemizer_google_missing)
-        SystemizerInstallResult.UnsupportedRootManager -> context.getString(R.string.systemizer_root_manager_missing)
-        SystemizerInstallResult.KernelSuMetamoduleMissing -> context.getString(R.string.systemizer_metamodule_missing)
-        is SystemizerInstallResult.RootPermissionUnavailable -> when (rootManager) {
-            RootManager.KERNEL_SU -> context.getString(R.string.systemizer_grant_kernelsu)
-            RootManager.MAGISK -> context.getString(R.string.systemizer_grant_magisk)
-            RootManager.UNSUPPORTED -> context.getString(R.string.systemizer_root_denied)
-        }
-        is SystemizerInstallResult.InstalledRebootRequired -> context.getString(R.string.systemizer_installed)
-        is SystemizerInstallResult.Failed -> commandOutput
-            .lineSequence()
-            .map { it.trim() }
-            .lastOrNull { it.isNotEmpty() }
-            ?.let { "$message：$it" }
-            ?: message
-    }
 
 /**
  * 设置项搜索索引：一个分组一条。

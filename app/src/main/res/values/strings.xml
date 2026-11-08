@@ -400,7 +400,6 @@
   <string name="ui_enter_the_url_in_the_address_bar_or_let_the_agent_br_e2ae90">在地址栏输入网址，或让 Agent 帮你查阅网页。会话只在 Eta 内使用。</string>
   <string name="ui_copy_4edd1d">复制</string>
   <string name="ui_install_087db6">安装</string>
-  <string name="ui_convert_google_apps_to_system_apps_0f6d89">将 Google App 转为系统应用</string>
   <string name="ui_this_will_close_the_current_page_and_clear_eta_brows_1cd331">将关闭当前页面并清除 Eta 浏览器的 Cookie 与站点数据。外部浏览器不会受到影响。</string>
   <string name="ui_xiaobu_xiaoai_compatible_entrance_ae918a">厂商助手兼容入口</string>
   <string name="injected_vivo_configure_model">请先打开 Eta，配置模型、API Key 和上下文窗口大小。</string>
@@ -482,7 +481,6 @@
   <string name="ui_remove_file_reference_04bbfc">移除文件引用</string>
   <string name="ui_system_assistant_takes_over_f46043">系统助手接管</string>
   <string name="ui_system_enhancement_dcd4ad">系统增强</string>
-  <string name="ui_system_applications_have_voice_wake_up_permissions_f_0190f2">系统应用享有语音唤醒权限、更少的自启限制，体验接近原生。将通过 Magisk / KernelSU 模块安装，重启后生效。</string>
   <string name="ui_system_prompt_word_193981">系统提示词</string>
   <string name="ui_absolute_path_9ac6fc">绝对路径</string>
   <string name="ui_edit_a7f814">编辑</string>
@@ -872,14 +870,6 @@
   <string name="settings_write_failed">配置写入失败</string>
   <string name="status_processing">处理中…</string>
   <string name="power_assistant_system_default">系统默认助手</string>
-  <string name="systemizer_already_system">Google App 已是系统 priv-app</string>
-  <string name="systemizer_google_missing">未安装 Google App</string>
-  <string name="systemizer_root_manager_missing">未检测到 Magisk 或 KernelSU</string>
-  <string name="systemizer_metamodule_missing">KernelSU 需先启用 metamodule 支持</string>
-  <string name="systemizer_grant_kernelsu">请在 KernelSU 中授予 Eta root 权限</string>
-  <string name="systemizer_grant_magisk">请在 Magisk 中授予 Eta root 权限</string>
-  <string name="systemizer_root_denied">未获得 root 权限</string>
-  <string name="systemizer_installed">安装完成，重启后生效</string>
   <string name="provider_error">失败：%1$s</string>
   <string name="provider_save_failed">保存失败</string>
   <string name="provider_delete_failed">删除失败</string>
