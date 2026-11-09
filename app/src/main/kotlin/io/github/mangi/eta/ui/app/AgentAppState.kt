@@ -304,10 +304,16 @@ internal class AgentAppState(
      */
     private fun refreshConversationModel() {
         val bound = providers.enabledModel(homeState.modelId)
+        val borrowVendorEnabled = Prefs.remotePreferencesForUi(EtaApp.serviceInstance)
+            ?.getBoolean(Prefs.Keys.AGENT_BORROW_BREENO, false) ?: false
         val pickerState = if (bound != null) {
-            AgentModelPickerProjector.project(providers, bound.provider.id, bound.model.id)
+            AgentModelPickerProjector.project(
+                providers, bound.provider.id, bound.model.id, borrowVendorEnabled,
+            )
         } else {
-            AgentModelPickerProjector.project(providers, defaultProviderId, defaultModelId)
+            AgentModelPickerProjector.project(
+                providers, defaultProviderId, defaultModelId, borrowVendorEnabled,
+            )
         }
         modelPickerState = pickerState.copy(isChanging = modelPickerState.isChanging)
         val effective = bound ?: providers.enabledModel(pickerState.selectedModel?.id)
@@ -2750,9 +2756,17 @@ internal class AgentAppState(
 
     /** 恢复当前会话已暂停的运行。 */
     fun resumeCurrentRun() {
-        val runId = runIdForSelectedConversation() ?: return
+        val runId = runIdForSelectedConversation()
+        // run 已经结束（审批被拦后模型收尾了）：没有可恢复的，
+        // 但暂停标记留着会让按钮永远显示「已暂停 · 点继续恢复」，点了也没反应。
+        if (runId == null) {
+            io.github.mangi.eta.agent.runtime.RunControl.clearAllPaused("ui.resume")
+            return
+        }
         scope.launch(Dispatchers.IO) {
             AgentRuntimeClient(appContext, AndroidAgentLogger).resumeRun(runId)
+            // 服务端可能已经没有这个 run，本地标记照样要清。
+            io.github.mangi.eta.agent.runtime.RunControl.setPaused(runId, false, "ui.resume")
         }
     }
 

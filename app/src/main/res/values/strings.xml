@@ -182,7 +182,7 @@
   <string name="conversation_unnamed">新对话</string>
   <string name="conversation_search_hint">搜索对话</string>
   <string name="conversation_navigator_title">会话导航</string>
-  <string name="conversation_navigator_search_hint">搜索本会话</string>
+  <string name="conversation_navigator_search_hint">搜索本会话，点击跳转，长按引用</string>
   <string name="conversation_navigator_empty">这个会话还没有可跳转的内容</string>
   <string name="conversation_navigator_no_match">没有匹配「%1$s」的消息</string>
   <string name="conversation_navigator_jump_latest">跳到最新</string>
@@ -294,6 +294,9 @@
   <string name="tool_open_system_panel">系统面板</string>
   <string name="tool_search_apps">搜索应用</string>
   <string name="tool_launch_app">打开应用</string>
+  <string name="tool_lingscreen_open_app">在灵屏打开应用</string>
+  <string name="lingscreen_return_title">正在真机上操作</string>
+  <string name="lingscreen_return_body">点此回到灵屏（%1$s）</string>
   <string name="tool_open_uri">用应用打开</string>
   <string name="tool_browser_use">浏览网页</string>
   <string name="tool_terminal">终端</string>
@@ -369,7 +372,7 @@
   <string name="ui_stop_a17f70">停止</string>
   <string name="ui_allow_sensitive_device_operation_3d42ea">允许敏感设备操作</string>
   <string name="ui_allows_the_model_to_call_web_searches_provided_by_th_2f752f">允许模型调用 Provider 提供的网页搜索</string>
-  <string name="ui_allow_reading_of_sensitive_device_information_feaec0">允许读取敏感设备信息</string>
+  <string name="ui_allow_reading_of_sensitive_device_information_feaec0">读取敏感设备信息</string>
   <string name="ui_about_bed172">关于</string>
   <string name="ui_after_closing_no_memory_will_be_injected_and_the_mod_db3d23">关闭后不注入记忆，也不允许模型读写；已有内容会保留</string>
   <string name="ui_built_in_09ceea">内置</string>
@@ -388,16 +391,18 @@
   <string name="ui_enable_vendor_assistant_custom_models_c8e465">启用厂商助手自定义模型</string>
   <string name="ui_vendor_assistant_custom_models_summary">在支持的厂商助手中使用 Eta 模型。</string>
   <string name="ui_vendor_assistant_require_prefix_summary">关闭后，普通打字和单次语音请求也交给 Eta。</string>
+  <string name="ui_borrow_vendor_assistant_model">借用小布模型</string>
+  <string name="ui_borrow_vendor_assistant_model_summary">把小布当成模型用：提问投进小布，回答旁路回来。需要 LSPosed 命中小布。</string>
+  <string name="ui_vendor_assistant_exclusive_summary">另一项正在接管厂商助手，先把它关掉。</string>
   <string name="ui_enable_this_provider_683a76">启用此 Provider</string>
   <string name="ui_enable_terminal_file_tools_18bb43">启用终端/文件工具</string>
-  <string name="ui_enable_web_browsing_tools_8b6b03">启用网页搜索、读取与浏览器</string>
+  <string name="ui_enable_web_browsing_tools_8b6b03">网页搜索与浏览</string>
   <string name="ui_enable_memory_4b69b7">启用记忆</string>
   <string name="ui_enable_device_direct_tools_e2d595">启用设备直达工具</string>
   <string name="ui_back_to_bottom_32282e">回到底部</string>
   <string name="ui_enter_the_url_in_the_address_bar_or_let_the_agent_br_e2ae90">在地址栏输入网址，或让 Agent 帮你查阅网页。会话只在 Eta 内使用。</string>
   <string name="ui_copy_4edd1d">复制</string>
   <string name="ui_install_087db6">安装</string>
-  <string name="ui_convert_google_apps_to_system_apps_0f6d89">将 Google App 转为系统应用</string>
   <string name="ui_this_will_close_the_current_page_and_clear_eta_brows_1cd331">将关闭当前页面并清除 Eta 浏览器的 Cookie 与站点数据。外部浏览器不会受到影响。</string>
   <string name="ui_xiaobu_xiaoai_compatible_entrance_ae918a">厂商助手兼容入口</string>
   <string name="injected_vivo_configure_model">请先打开 Eta，配置模型、API Key 和上下文窗口大小。</string>
@@ -439,8 +444,9 @@
   <string name="ui_support_chatgpt_deepseek_kimi_glm_qwen_etc_b31d02">支持 ChatGPT, DeepSeek, Kimi, GLM, Qwen等</string>
   <string name="ui_supports_files_and_folders_under_internal_storage_or_520786">支持任意本地绝对路径下的文件和文件夹</string>
   <string name="ui_support_thinking_5b9e4c">支持思考</string>
-  <string name="ui_new_anthropic_db6098">新增 Anthropic</string>
-  <string name="ui_added_openai_compatible_6bd471">新增 OpenAI-compatible</string>
+  <string name="ui_new_anthropic_db6098">新增 Anthropic 接口</string>
+  <string name="ui_added_openai_compatible_6bd471">新增 OpenAI 兼容接口</string>
+    <string name="ui_new_gemini">新增 Gemini 接口</string>
   <string name="ui_add_new_provider_74df54">新增提供商</string>
   <string name="ui_accessibility_enhancement_tools_8fd257">无障碍增强工具</string>
   <string name="ui_no_skills_installed_yet_4e960f">尚未安装任何 Skill</string>
@@ -462,7 +468,7 @@
   <string name="ui_clear_84fcd7">清空</string>
   <string name="ui_clear_all_memory_a43bd3">清空全部记忆？</string>
   <string name="ui_about_github_star_title">源代码</string>
-  <string name="ui_about_github_star_hint">如果 Eta 帮到了你，请在 GitHub 点个 Star，这对我们意义重大</string>
+  <string name="ui_about_github_star_hint">如果 Eta Por 帮到了你，请在 GitHub 点个 Star，这对我们意义重大</string>
   <string name="ui_about_version_title">版本</string>
   <string name="ui_about_feedback_title">问题反馈</string>
   <string name="settings_search_hint">搜索设置项</string>
@@ -478,7 +484,6 @@
   <string name="ui_remove_file_reference_04bbfc">移除文件引用</string>
   <string name="ui_system_assistant_takes_over_f46043">系统助手接管</string>
   <string name="ui_system_enhancement_dcd4ad">系统增强</string>
-  <string name="ui_system_applications_have_voice_wake_up_permissions_f_0190f2">系统应用享有语音唤醒权限、更少的自启限制，体验接近原生。将通过 Magisk / KernelSU 模块安装，重启后生效。</string>
   <string name="ui_system_prompt_word_193981">系统提示词</string>
   <string name="ui_absolute_path_9ac6fc">绝对路径</string>
   <string name="ui_edit_a7f814">编辑</string>
@@ -868,14 +873,6 @@
   <string name="settings_write_failed">配置写入失败</string>
   <string name="status_processing">处理中…</string>
   <string name="power_assistant_system_default">系统默认助手</string>
-  <string name="systemizer_already_system">Google App 已是系统 priv-app</string>
-  <string name="systemizer_google_missing">未安装 Google App</string>
-  <string name="systemizer_root_manager_missing">未检测到 Magisk 或 KernelSU</string>
-  <string name="systemizer_metamodule_missing">KernelSU 需先启用 metamodule 支持</string>
-  <string name="systemizer_grant_kernelsu">请在 KernelSU 中授予 Eta root 权限</string>
-  <string name="systemizer_grant_magisk">请在 Magisk 中授予 Eta root 权限</string>
-  <string name="systemizer_root_denied">未获得 root 权限</string>
-  <string name="systemizer_installed">安装完成，重启后生效</string>
   <string name="provider_error">失败：%1$s</string>
   <string name="provider_save_failed">保存失败</string>
   <string name="provider_delete_failed">删除失败</string>
@@ -1412,6 +1409,12 @@
     <string name="virtual_screen_completion_ok_title">任务已完成</string>
     <string name="virtual_screen_completion_fail_title">任务失败</string>
     <string name="virtual_screen_completion_ok_body">灵屏指令执行完毕</string>
+    <string name="virtual_screen_completion_stopped_title">任务已停止</string>
+    <string name="virtual_screen_completion_stopped_body">这次任务被手动终止，没有产生结果</string>
+    <string name="confirm_channel_name">需要确认的操作</string>
+    <string name="confirm_channel_desc">Agent 要动用资金、提交隐私或做不可撤销操作时提醒</string>
+    <string name="confirm_notify_title">需要你确认：%1$s</string>
+    <string name="confirm_notify_body">这一步已拦下，点开看具体内容</string>
     <string name="conversation_trimmed_capsule">已省略 %1$d 条</string>
     <string name="virtual_screen_home">主页</string>
     <string name="virtual_screen_menu">应用菜单</string>
@@ -1558,7 +1561,7 @@
     <string name="speech_api_key" translatable="false">API Key</string>
 
   <string name="usage_stats_title">用量统计</string>
-  <string name="usage_stats_summary">本地记录每次模型请求的 token 用量</string>
+  <string name="usage_stats_summary">本地统计，不外传</string>
   <string name="usage_range_today">今日</string>
   <string name="usage_range_month">近 30 天</string>
   <string name="usage_requests">请求次数</string>
@@ -1593,7 +1596,7 @@
   <string name="usage_export_share_title">分享用量 CSV</string>
   <string name="usage_export_failed">导出失败，请重试</string>
   <string name="data_usage_title">数据占用</string>
-  <string name="data_usage_summary">查看数据库大小与记录条数，清理旧数据</string>
+  <string name="data_usage_summary">数据库大小与清理</string>
   <string name="data_usage_version">版本</string>
   <string name="data_usage_database">数据库大小</string>
   <string name="data_usage_conversations">会话</string>
@@ -1664,7 +1667,7 @@
   <string name="memory_capsule_used">已用 %1$s / 总 %2$s</string>
   <string name="memory_capsule_available">可用 %1$s</string>
   <string name="diag_patrol_title">极致自动排查</string>
-  <string name="diag_patrol_entry_summary">定时在本机逐项巡检，异常才提醒，报告留档</string>
+  <string name="diag_patrol_entry_summary">定时巡检，异常才提醒</string>
   <string name="diag_patrol_group_title">极致自动排查</string>
   <string name="diag_patrol_view_hint">全文 %1$d 字，可上下滚动；点下面按钮整份复制</string>
   <string name="diag_patrol_copy_all">一键复制全文</string>
@@ -2275,30 +2278,13 @@
     <string name="lingscreen_edge_collapse">贴边自动折叠</string>
     <string name="lingscreen_edge_collapse_summary">把浮窗拖到屏幕左右边缘松手即收起成应用图标；停手 2 秒后缩成渐变条，点一下回到操作 app 图标，再点展开。</string>
     <string name="lingscreen_fluid_pinned">流体云常驻</string>
-    <string name="lingscreen_fluid_pinned_summary">没任务时也在流体云留一条 Eta，点它回 App；任务结束时由「空闲」接替进度卡片。</string>
+    <string name="lingscreen_fluid_pinned_summary">空闲时留一条快捷入口</string>
     <string name="lingscreen_fluid_downgrade">通知不进流体云</string>
-    <string name="lingscreen_fluid_downgrade_summary">开启后，运行进度卡与实时活动只作为普通通知留在通知栏，不再占用流体云与状态栏胶囊；暂停、停止、插入等按钮照常可用。</string>
+    <string name="lingscreen_fluid_downgrade_summary">只留普通通知，不占胶囊</string>
     <string name="lingscreen_entry_title">灵屏</string>
     <string name="lingscreen_keep_screen_on">操作时不息屏</string>
     <string name="lingscreen_keep_screen_on_summary">灵屏会话存在期间保持手机屏幕常亮，避免 Agent 操作到一半被息屏打断；会话结束自动释放。</string>
     <string name="lingscreen_export_log">导出灵屏日志</string>
-    <string name="lingscreen_return_title">正在真机上操作</string>
-    <string name="task_completion_channel">任务完成</string>
-    <string name="task_completion_ok_title">任务已完成</string>
-    <string name="task_completion_fail_title">任务失败</string>
-    <string name="task_completion_stopped_title">任务已停止</string>
-    <string name="task_completion_ok_body">处理完了，点开看结果</string>
-    <string name="task_completion_capsule_ok">已完成</string>
-    <string name="task_completion_capsule_fail">失败</string>
-    <string name="task_completion_capsule_stopped">已停止</string>
-    <string name="virtual_screen_completion_stopped_title">灵屏任务已停止</string>
-    <string name="virtual_screen_completion_stopped_body">你主动停止了这次运行。</string>
-    <string name="confirm_channel_name">Eta 确认提醒</string>
-    <string name="confirm_channel_desc">灵屏需要你确认时发通知</string>
-    <string name="confirm_notify_title">需要确认：%1$s</string>
-    <string name="confirm_notify_body">点开查看现场截图并确认</string>
-    <string name="tool_lingscreen_open_app">在灵屏打开应用</string>
-    <string name="lingscreen_return_body">点此回到灵屏（%1$s）</string>
     <string name="lingscreen_usage_title">使用说明</string>
     <string name="lingscreen_usage_body">· 双击浮窗：在 96 / 144 / 200 / 272 四档之间循环切换大小
 · 拖动浮窗：搬动位置；拖到左右边缘松手即收起
@@ -2308,4 +2294,52 @@
 · 流体云：点卡片回 App；点「接管」进全屏；用「暂停 / 继续」「终止」控制任务
 · 任务结束：浮窗自动收起，不会把最后一帧留在屏幕上
 · 只跑一个灵屏任务：第二个任务会收到「正被占用」，不会串台</string>
+    <!-- 设置页分组重排（方案 A）新增文案 -->
+    <string name="settings_section_model_capabilities">模型能力</string>
+    <string name="settings_section_extensions">扩展与自动化</string>
+    <string name="settings_section_persona">人格与提示词</string>
+    <string name="settings_section_system_integration">系统集成</string>
+    <string name="settings_section_accounts">账号与连接</string>
+    <string name="settings_section_diagnostics">诊断与维护</string>
+    <string name="settings_section_permissions_devices">权限与设备能力</string>
+    <string name="route_subagents">子智能体</string>
+    <string name="route_github_account">GitHub 账号</string>
+    <string name="settings_self_check_title">功能自检</string>
+    <string name="settings_test_privacy_title">测试与隐私</string>
+    <string name="settings_diagnostics_title">诊断与日志</string>
+    <!-- 说明：支持/赞助页 -->
+    <string name="support_title">支持 Eta Por</string>
+    <string name="support_entry">支持 Eta Por</string>
+    <string name="support_entry_summary">捐赠完全自愿，不影响任何功能</string>
+    <string name="support_intro">Eta Por 免费、无广告、无账号。\n——如果 Ta 替你省下了时间和精力，欢迎分担一点。</string>
+    <string name="support_section_direct">直接打开</string>
+    <string name="support_alipay_title">支付宝</string>
+    <string name="support_alipay_summary">一键打开付款页</string>
+    <string name="support_section_long_term">长期支持</string>
+    <string name="about_group_title">加入交流群</string>
+    <string name="about_group_summary">QQ 群 1132120965</string>
+    <string name="about_email_title">邮件联系</string>
+    <string name="about_email_summary">qm0mp@qq.com</string>
+    <string name="support_afdian_title">爱发电</string>
+    <string name="support_afdian_summary">按月或单次赞助，平台内支付</string>
+    <string name="support_link_missing">没有可打开的应用，已复制链接</string>
+    <string name="support_wechat_title">微信赞赏码</string>
+    <string name="support_wechat_hint">保存到相册后，打开微信「扫一扫 → 相册」选中这张图</string>
+    <string name="support_save_title">保存赞赏码到相册</string>
+    <string name="support_save_summary">存到 Pictures/Eta，之后可在微信里扫</string>
+    <string name="support_save_done">已保存到相册</string>
+    <string name="support_save_failed">保存失败，请检查存储空间</string>
+    <string name="support_alipay_missing">未检测到支付宝，已复制收款链接</string>
+    <string name="support_section_note">说明</string>
+    <string name="support_note_voluntary">捐赠完全自愿</string>
+    <string name="support_note_voluntary_summary">不解锁任何功能，也不影响更新；主要补贴模型调用费用与真机测试成本投入</string>
+    <string name="support_footer">感谢每一个把 ta 用起来的人，用起来本身就是支持。</string>
+    <string name="task_completion_channel">任务完成</string>
+    <string name="task_completion_ok_title">任务已完成</string>
+    <string name="task_completion_fail_title">任务失败</string>
+    <string name="task_completion_stopped_title">任务已停止</string>
+    <string name="task_completion_ok_body">处理完了，点开看结果</string>
+    <string name="task_completion_capsule_ok">已完成</string>
+    <string name="task_completion_capsule_fail">失败</string>
+    <string name="task_completion_capsule_stopped">已停止</string>
 </resources>

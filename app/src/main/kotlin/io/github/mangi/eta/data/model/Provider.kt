@@ -20,7 +20,15 @@ internal object ProviderAuthModes {
     const val OPENAI_CHATGPT = "openai_chatgpt"
     const val XAI_GROK = "xai_grok"
 
+    /**
+     * 借用厂商助手（当前实现为小布）自身的模型：不走 HTTP，
+     * 经 Eta 模块 hook 把提问投进助手，再把回答旁路回来。
+     */
+    const val BREENO_TAP = "breeno_tap"
+
     fun isOAuth(mode: String): Boolean = mode == OPENAI_CHATGPT || mode == XAI_GROK
+
+    fun isBorrowedVendor(mode: String): Boolean = mode == BREENO_TAP
 }
 
 internal object ProviderSourceTypes {
@@ -37,6 +45,10 @@ internal object ProviderSourceTypes {
     const val STEPFUN = "stepfun"
     const val SILICONFLOW = "siliconflow"
     const val OPENROUTER = "openrouter"
+    const val ZHIPU = "zhipu"
+    const val VOLCENGINE = "volcengine"
+    const val QIANFAN = "qianfan"
+    const val HUNYUAN = "hunyuan"
 }
 
 @Serializable
@@ -162,8 +174,8 @@ internal val ProviderSetting.typeLabel: String
     get() = when (this) {
         is AnthropicProviderSetting -> "Anthropic Messages"
         is GeminiProviderSetting -> "Gemini Interactions"
-        is OpenAiCompatibleProviderSetting -> "OpenAI-compatible"
-        is CustomProviderSetting -> "Custom OpenAI-compatible"
+        is OpenAiCompatibleProviderSetting -> "OpenAI 兼容"
+        is CustomProviderSetting -> "自定义 OpenAI 兼容"
     }
 
 internal val ProviderSetting.displayApiKeySummary: String

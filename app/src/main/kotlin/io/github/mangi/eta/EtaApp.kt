@@ -58,6 +58,8 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
             }
         }
         Prefs.initLocal(this)
+        // 前台判定：审批只在用户不在 App 里时才发通知，在场时会话卡已经在他眼前。
+        runCatching { io.github.mangi.eta.core.AppForeground.install(this) }
         // 测试版同意状态：任何进程启动都要能读到，且要在可能拉起服务/任务之前。
         io.github.mangi.eta.data.repository.TestConsentRepository.init(this)
         // 请求快照：只记 system 全文与工具描述，写盘在独立线程，失败不影响对话。
@@ -79,6 +81,9 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
         SettingsDataStore.init(this)
         runCatching { VscrDiag.init(this) }
         VirtualScreenFloatWindow.init(this)
+        // 待答/待审批卡片：上一次被杀掉时没答完的那条要能捡回来，
+        // 否则模型在等、用户回来却什么都看不到。
+        runCatching { io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard.init(this) }
         val predictiveBackEnabled = runBlocking(Dispatchers.IO) {
             AppearanceSettingsRepository.settings().predictiveBackEnabled
         }

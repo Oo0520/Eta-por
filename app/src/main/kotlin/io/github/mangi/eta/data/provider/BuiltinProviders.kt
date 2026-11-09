@@ -2,8 +2,10 @@ package io.github.mangi.eta.data.provider
 
 import io.github.mangi.eta.data.model.GeminiProviderSetting
 import io.github.mangi.eta.data.model.AnthropicProviderSetting
+import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.OpenAiCompatibleProviderSetting
 import io.github.mangi.eta.data.model.OpenAiEndpointMode
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSetting
 import io.github.mangi.eta.data.model.ProviderSourceTypes
 
@@ -24,11 +26,50 @@ internal object BuiltinProviders {
     const val OPENROUTER_ID = "builtin-openrouter"
     const val XAI_ID = "builtin-xai"
     const val GEMINI_ID = "builtin-gemini"
+    const val ZHIPU_ID = "builtin-zhipu"
+    const val VOLCENGINE_ID = "builtin-volcengine"
+    const val QIANFAN_ID = "builtin-qianfan"
+    const val HUNYUAN_ID = "builtin-hunyuan"
+    const val LOCAL_ID = "builtin-local"
 
-    /** 定制版只保留这两条内置：它们用于订阅账号（Codex / Grok）登录，删掉就没有登录入口了。 */
+    /** 借用厂商助手（小布）自身模型；不联网、不走 API Key。 */
+    const val BREENO_ID = "builtin-breeno"
+
+    /** 订阅账号（Codex / Grok）登录入口，删掉就没有登录入口了。 */
     val SUBSCRIPTION_PROVIDER_IDS: List<String> = listOf(OPENAI_ID, XAI_ID)
 
+    /**
+     * 真正会写进数据库的内置 provider：全部大厂预置项。
+     *
+     * ensureBuiltInsMerged() 只播种这个集合里的条目，并删除不在集合内的历史内置项，
+     * 所以新增内置 provider 必须同时登记到这里，否则重启后会被清掉。
+     * 借用厂商（小布）不在此列——它单独靠 [BREENO_ID] 注入，且不出现在提供商列表。
+     */
+    val SEEDED_PROVIDER_IDS: List<String> by lazy {
+        PROVIDERS
+            .filterNot { ProviderAuthModes.isBorrowedVendor(it.authMode) }
+            .map { it.id }
+    }
+
     val PROVIDERS: List<ProviderSetting> = listOf(
+        OpenAiCompatibleProviderSetting(
+            id = BREENO_ID,
+            name = "小布助手（借用）",
+            baseUrl = "http://breeno.local/tap",
+            sourceType = ProviderSourceTypes.CUSTOM,
+            authMode = ProviderAuthModes.BREENO_TAP,
+            isBuiltIn = true,
+            sortOrder = 99,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+            models = listOf(
+                Model(
+                    id = "builtin-breeno-default",
+                    modelId = "breeno",
+                    displayName = "小布助手",
+                    isBuiltIn = true,
+                ),
+            ),
+        ),
         OpenAiCompatibleProviderSetting(
             id = OPENAI_ID,
             name = "OpenAI",
@@ -134,6 +175,55 @@ internal object BuiltinProviders {
             name = "Gemini",
             isBuiltIn = true,
             sortOrder = 11,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = ZHIPU_ID,
+            name = "智谱 GLM",
+            baseUrl = "https://open.bigmodel.cn/api/paas/v4",
+            sourceType = ProviderSourceTypes.ZHIPU,
+            isBuiltIn = true,
+            sortOrder = 12,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = VOLCENGINE_ID,
+            name = "火山方舟",
+            baseUrl = "https://ark.cn-beijing.volces.com/api/v3",
+            sourceType = ProviderSourceTypes.VOLCENGINE,
+            isBuiltIn = true,
+            sortOrder = 13,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = QIANFAN_ID,
+            name = "百度千帆",
+            baseUrl = "https://qianfan.baidubce.com/v2",
+            sourceType = ProviderSourceTypes.QIANFAN,
+            isBuiltIn = true,
+            sortOrder = 14,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        OpenAiCompatibleProviderSetting(
+            id = HUNYUAN_ID,
+            name = "腾讯混元",
+            baseUrl = "https://api.hunyuan.cloud.tencent.com/v1",
+            sourceType = ProviderSourceTypes.HUNYUAN,
+            isBuiltIn = true,
+            sortOrder = 15,
+            systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        ),
+        /**
+         * 本地/局域网代理（Ollama、LM Studio、llama.cpp、one-api 等）。
+         * 这类端点普遍不校验 Key，运行时对本地地址放行空 Key；填了也照常带上。
+         */
+        OpenAiCompatibleProviderSetting(
+            id = LOCAL_ID,
+            name = "本地地址代理",
+            baseUrl = "http://127.0.0.1:8080/v1",
+            sourceType = ProviderSourceTypes.CUSTOM,
+            isBuiltIn = true,
+            sortOrder = 16,
             systemPrompt = DEFAULT_SYSTEM_PROMPT,
         ),
     )

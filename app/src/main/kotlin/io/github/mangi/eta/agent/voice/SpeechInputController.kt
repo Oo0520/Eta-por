@@ -58,6 +58,8 @@ internal class SpeechInputController(
      * [holdToTalk] 表示用户按住说话：松手才结束，期间的停顿不会自动发送。
      * 停顿自动发送只对构造时声明 [automaticEndpoint] 的入口生效，聊天听写始终等待用户确认。
      */
+    private var systemRecognition = false
+
     fun start(settings: SpeechSettings? = null, credentials: SpeechCredentials? = null, holdToTalk: Boolean = false) {
         cancel()
         val session = generation
@@ -66,6 +68,11 @@ internal class SpeechInputController(
             try {
                 val config = settings ?: SpeechSettingsRepository.settings()
                 if (!config.recognitionEnabled) return@launch
+                systemRecognition = config.asr == AsrProvider.SYSTEM
+                if (!systemRecognition) {
+                    beforeCapture()
+                    capturing = true
+                }
                 lease = SpeechAudioLease(context) { cancel() }.also { it.acquire(playback = false) }
                 val secrets = credentials ?: if (config.asr == AsrProvider.SYSTEM) SpeechCredentials()
                     else SpeechSettingsRepository.credentials(context)
@@ -88,8 +95,6 @@ internal class SpeechInputController(
                         var recording: Job? = null
                         val begin = {
                             if (recording == null) {
-                                beforeCapture()
-                                capturing = true
                                 recording = launch {
                                     try {
                                         audio.record(
@@ -228,6 +233,7 @@ internal class SpeechInputController(
         finishRequested = false
         autoSubmit = false
         refineTranscript = false
+        systemRecognition = false
         pendingSystemResult = null
         recorder?.cancel(); recorder = null
         releaseCapture()

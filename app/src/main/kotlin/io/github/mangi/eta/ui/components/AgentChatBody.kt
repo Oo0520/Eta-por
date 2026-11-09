@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -84,6 +85,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
+import io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.ui.app.AgentConversationRevisionReducer
 import io.github.mangi.eta.ui.app.LocalBlurEnabled
@@ -192,6 +194,8 @@ internal fun AgentChatBody(
     onSuggestionClick: (String) -> Unit,
     onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
+    /** 跳到别的会话：点「另一个会话在等你回答」用。 */
+    onOpenConversation: ((String) -> Unit)? = null,
     /** 空状态卡与输入框提示条上的「去接入」：跳到模型服务页。 */
     onOpenModelProviders: () -> Unit = {},
     characterName: String? = null,
@@ -376,6 +380,7 @@ internal fun AgentChatBody(
             onSuggestionClick = onSuggestionClick,
             onRunTraceClick = onRunTraceClick,
             onOpenBrowser = onOpenBrowser,
+            onOpenConversation = onOpenConversation,
             currentBrowserMessageId = currentBrowserMessageId,
             searchJump = searchJump,
             onSearchJumpConsumed = onSearchJumpConsumed,
@@ -459,6 +464,7 @@ private fun AgentChatScaffold(
     onSuggestionClick: (String) -> Unit,
     onRunTraceClick: () -> Unit,
     onOpenBrowser: () -> Unit,
+    onOpenConversation: ((String) -> Unit)? = null,
     currentBrowserMessageId: String?,
     searchJump: SearchJumpUiState? = null,
     onSearchJumpConsumed: () -> Unit = {},
@@ -489,6 +495,8 @@ private fun AgentChatScaffold(
     modifier: Modifier = Modifier,
 ) {
     val surfaceColor = MiuixTheme.colorScheme.surface
+    // 卡内输入态：审批卡展开输入框时收起底部聊天输入框，避免两个输入框同时在场。
+    var cardInputActive by remember { mutableStateOf(false) }
     val frostEnabled = hasMessages && LocalBlurEnabled.current && isRuntimeShaderSupported()
     val messageBackdrop = rememberLayerBackdrop {
         // Backdrop 必须包含不透明底色，否则文字边缘模糊到透明区域时会出现黑边。
@@ -497,7 +505,9 @@ private fun AgentChatScaffold(
     }
 
     Scaffold(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .then(if (cardInputActive) Modifier.imePadding() else Modifier),
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets(
             left = 0.dp,
@@ -506,7 +516,7 @@ private fun AgentChatScaffold(
             bottom = 0.dp,
         ),
         bottomBar = {
-            AgentChatBottomBar(
+            if (!cardInputActive) AgentChatBottomBar(
                 draftKey = draftKey,
                 messageBackdrop = messageBackdrop.takeIf { frostEnabled },
                 input = input,
@@ -592,11 +602,16 @@ private fun AgentChatScaffold(
                     scrollState = scrollState,
                     isStreaming = isStreaming,
                     bottomInset = bottomPadding,
+                    conversationKey = draftKey.orEmpty(),
+                    onSubmit = onSubmit,
+                    onCardEditingChanged = { cardInputActive = it },
+                    cardEditing = cardInputActive,
                     keepBottomAnchored = keepBottomAnchored,
                     onBottomAnchorChanged = onBottomAnchorChanged,
                     onSuggestionClick = onSuggestionClick,
                     onRunTraceClick = onRunTraceClick,
                     onOpenBrowser = onOpenBrowser,
+                    onOpenConversation = onOpenConversation,
                     onEditMessage = onEditMessage,
                     onDeleteMessage = onDeleteMessage,
                     onRegenerateMessage = onRegenerateMessage,
@@ -624,12 +639,21 @@ internal fun AgentConversationMessages(
     scrollState: LazyListState,
     isStreaming: Boolean,
     bottomInset: Dp,
+    /** 当前会话 key：审批卡按它做归属过滤，新会话不吃上一会话的卡。 */
+    conversationKey: String = "",
+    /** 问答卡选完后要把结果当成一条新用户消息提交，才能推动下一轮。 */
+    onSubmit: ((String) -> Unit)? = null,
+    /** 卡内是否正在输入：宿主据此收起底部输入框。 */
+    onCardEditingChanged: ((Boolean) -> Unit)? = null,
+    /** 卡内输入态：展开时把卡滚进可视区，别让键盘压着。 */
+    cardEditing: Boolean = false,
     keepBottomAnchored: Boolean,
     onBottomAnchorChanged: (Boolean) -> Unit,
     assistantOverlay: Boolean = false,
     onSuggestionClick: (String) -> Unit = {},
     onRunTraceClick: () -> Unit = {},
     onOpenBrowser: () -> Unit = {},
+    onOpenConversation: ((String) -> Unit)? = null,
     onEditMessage: (String) -> Unit = {},
     onDeleteMessage: (String) -> Unit = {},
     onRegenerateMessage: (String) -> Unit = {},
@@ -661,6 +685,9 @@ internal fun AgentConversationMessages(
     // 流式消息的渲染会话按 id 提升到列表层持有：item 滚出视口被 LazyColumn 销毁后，
     // 滑回时复用同一解析会话与打字机进度，避免整段内容重新解析并重放显现动画。
     val streamingMarkdownStates = remember { mutableStateMapOf<String, StreamingMarkdownState>() }
+    // 审批卡：AI 被拦下来的一步。挂在列表末尾跟消息一起滚，不另占浮层。
+    val pendingApprovals by AgentConfirmGuard.pendings.collectAsState()
+    val confirmContext = LocalContext.current
     val bottomItemIndex = timelineEntries.size
     // 进入/切换会话后落到最新一条：从胶囊、通知跳进来时也能直接看到最新回复，
     // 不用再手动点那个"到底部"箭头。只在进入时跳一次，之后用户往上翻历史不会被拽回来。
@@ -672,6 +699,14 @@ internal fun AgentConversationMessages(
         delay(80)
         onBottomAnchorChanged(true)
         scrollState.scrollToItem(Int.MAX_VALUE)
+    }
+    // 卡内输入展开：等键盘动画起来再滚，把卡推到可视区。
+    LaunchedEffect(cardEditing) {
+        if (cardEditing) {
+            delay(150)
+            onBottomAnchorChanged(true)
+            scrollState.animateScrollToItem(Int.MAX_VALUE)
+        }
     }
     val isUserDragging by scrollState.interactionSource.collectIsDraggedAsState()
     val isAtBottom by remember(scrollState) {
@@ -960,6 +995,94 @@ internal fun AgentConversationMessages(
                             currentBrowserMessageId = currentBrowserMessageId,
                             retainedStreamingStates = streamingMarkdownStates,
                             modifier = entryModifier,
+                        )
+                    }
+                }
+            }
+            pendingApprovals.firstOrNull {
+                it.conversationKey.isBlank() || it.conversationKey == conversationKey
+            }?.let { approval ->
+                item(key = "approval-card") {
+                    AgentApprovalCard(
+                        approval = AgentApprovalUi(
+                            token = approval.token,
+                            title = approval.title,
+                            // 提问不是危险动作，别把「不可撤销」贴到问卷上。
+                            riskLabel = if (approval.source == io.github.mangi.eta.agent.display.dashboard.PendingApproval.SOURCE_ASK) "" else approval.riskLabel,
+                            fields = approval.fields.map { it.label to it.value },
+                            quiet = approval.quiet,
+                            repeatCount = approval.repeatCount,
+                            body = approval.body,
+                            options = approval.options.map {
+                                AgentApprovalOptionUi(it.id, it.label, it.description)
+                            },
+                            allowMultiple = approval.allowMultiple,
+                        ),
+                        onChoose = { id ->
+                            // 返回非空 = 模型主动提问那条线：那一轮已经结束，
+                            // 必须把选择当成新消息提交，否则要么不继续、要么继续的是上一步。
+                            val followUp = AgentConfirmGuard.choose(confirmContext, approval.token, id)
+                            if (followUp != null) onSubmit?.invoke(followUp)
+                        },
+                        onChooseMany = { ids ->
+                            val followUp = AgentConfirmGuard.chooseMany(confirmContext, approval.token, ids)
+                            if (followUp != null) onSubmit?.invoke(followUp)
+                        },
+                        onChooseFreeform = { text, extraIds ->
+                            val followUp = AgentConfirmGuard.chooseFreeform(
+                                confirmContext, approval.token, text, extraIds,
+                            )
+                            if (followUp != null) onSubmit?.invoke(followUp)
+                        },
+                        onEditingChanged = { onCardEditingChanged?.invoke(it) },
+                        onSkip = {
+                            val followUp = AgentConfirmGuard.skip(confirmContext, approval.token)
+                            if (followUp != null) onSubmit?.invoke(followUp)
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            pendingApprovals.filter {
+                it.conversationKey.isNotBlank() && it.conversationKey != conversationKey
+            }.forEach { other ->
+                item(key = "approval-elsewhere-${other.token}") {
+                    // 一行灰字太容易被划过去，改成带底色的卡片：标题 + 问题 + 去处理。
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .background(
+                                color = MiuixTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                shape = RoundedCornerShape(16.dp),
+                            )
+                            .clickable(enabled = onOpenConversation != null) {
+                                onOpenConversation?.invoke(other.conversationKey)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "另一个会话在等你",
+                                style = MiuixTheme.textStyles.body2,
+                                fontWeight = FontWeight.Medium,
+                                color = MiuixTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "去处理",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Text(
+                            text = "「${other.title}」",
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp),
                         )
                     }
                 }

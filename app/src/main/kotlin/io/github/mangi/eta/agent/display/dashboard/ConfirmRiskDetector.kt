@@ -1,5 +1,7 @@
 package io.github.mangi.eta.agent.display.dashboard
 
+import org.json.JSONObject
+
 /**
  * 决策拦截器：在注入前判一次「这一下会不会花钱 / 泄隐私 / 不可逆」。
  *
@@ -22,10 +24,74 @@ internal object ConfirmRiskDetector {
     private val phonePattern = Regex("""(?<!\d)1[3-9]\d{9}(?!\d)""")
 
     private val privacyWords = listOf("身份证", "验证码", "银行卡", "收货地址", "手机号", "密码", "人脸", "定位")
-    private val irreversibleWords = listOf(
-        "发送", "提交订单", "立即支付", "确认支付", "确认付款", "转账", "删除", "注销", "退订",
-        "清空", "解绑", "解约", "发布", "同意并", "确认提交",
+    /**
+     * 不可撤销动作词表：**唯一一份**。
+     *
+     * 之前点击判定和页面级兜底各写一套，结果「立即付款」在兜底里能拦、点按钮时漏拦
+     * （2026-11-06 真机实测踩到）。要加词只加这里，别在别的文件另起一份。
+     */
+    internal val irreversibleWords = listOf(
+        "发送", "提交订单", "提交订单并支付", "确认提交", "同意并",
+        "立即支付", "确认支付", "去支付", "立即付款", "确认付款", "去付款", "付款",
+        "去结算", "结算", "立即购买", "确认下单", "下单",
+        "转账", "删除", "清空", "注销", "退订", "解绑", "解约", "发布",
     )
+
+    /** 供页面级兜底复用同一份词表。 */
+    internal fun isIrreversible(text: String): Boolean = irreversibleWords.any { text.contains(it) }
+
+    /** 终端类工具：命令本身就是判定依据。 */
+    private val terminalTools = setOf("terminal", "terminal_job", "terminal_daemon")
+
+    /**
+     * 明确的高危形态。刻意用最短的精确子串而不是宽泛正则——
+     * 宁可少拦几个变体，也不要因为「rm -rf 一个临时目录」天天烦人。
+     */
+    private val destructiveSnippets = listOf(
+        "rm -rf /", "rm -fr /", "rm -rf ~",
+        "mkfs", "dd if=", "of=/dev/block", "> /dev/block/",
+        "pm clear", "cmd package clear",
+        "wipe data", "wipe userdata", "fastboot flash", "fastboot erase",
+        "chmod -R 777 /",
+    )
+
+    /** 写这些位置等于改系统，出错不可回滚。 */
+    private val protectedWritePrefixes = listOf(
+        "/system", "/vendor", "/data/adb", "/init.rc", "/default.prop",
+    )
+
+    /**
+     * 非 GUI 工具的危险判定：只看工具名与参数。
+     *
+     * GUI 那条线由 [inspect] 处理（要屏上文本）；这里是另一条独立入口——
+     * terminal 里一条 `rm -rf /data` 的破坏力不比误点「确认支付」小，
+     * 而它原先完全不在拦截范围内。
+     */
+    fun inspectTool(toolName: String, args: JSONObject): ConfirmDraft? {
+        if (toolName in terminalTools) {
+            val command = args.optString("command").trim()
+            if (command.isEmpty()) return null
+            val hit = destructiveSnippets.firstOrNull { command.contains(it) } ?: return null
+            // rm -rf /data/local/tmp/xxx 是常规清理，别拦。
+            if (hit.startsWith("rm -rf /") && command.contains("/data/local/tmp")) return null
+            return ConfirmDraft(
+                risk = ConfirmRisk.IRREVERSIBLE,
+                title = "确认执行高危命令",
+                fields = listOf(ConfirmField("命令", command.take(80))),
+            )
+        }
+        if (toolName == "write_file" || toolName == "edit_file") {
+            val path = args.optString("path").trim()
+            if (path.isEmpty()) return null
+            if (protectedWritePrefixes.none { path.startsWith(it) }) return null
+            return ConfirmDraft(
+                risk = ConfirmRisk.IRREVERSIBLE,
+                title = "确认写入系统目录",
+                fields = listOf(ConfirmField("路径", path.take(80))),
+            )
+        }
+        return null
+    }
 
     fun inspect(target: String?, texts: List<String>): ConfirmDraft? {
         val tapped = target.orEmpty().trim()
@@ -47,14 +113,19 @@ internal object ConfirmRiskDetector {
             return ConfirmDraft(
                 risk = ConfirmRisk.PRIVACY,
                 title = "确认提交个人信息",
-                fields = collect(visible, keep = privacyOf(visible) + phoneOrAccountOf(haystack)),
+                fields = collect(
+                    visible,
+                    keep = listOf("动作" to tapped) + privacyOf(visible) + phoneOrAccountOf(haystack),
+                ),
             )
         }
-        if (irreversibleWords.any { tapped.contains(it) }) {
+        if (isIrreversible(tapped)) {
+            // 至少要写清「点在什么上」：屏上文本可能是空的（没 observe 过就直接点），
+            // 那时 keep 里这一条就是用户唯一能看到的依据。
             return ConfirmDraft(
                 risk = ConfirmRisk.IRREVERSIBLE,
                 title = "确认不可撤销操作",
-                fields = collect(visible, keep = emptyList()),
+                fields = collect(visible, keep = listOf("动作" to tapped)),
             )
         }
         return null

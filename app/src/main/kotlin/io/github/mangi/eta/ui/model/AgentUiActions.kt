@@ -9,6 +9,9 @@ sealed interface AgentHomeAction {
     data class ReasoningEffortChanged(val effort: ReasoningEffort) : AgentHomeAction
     data class ModelSelected(val modelId: String) : AgentHomeAction
     data class SubmitMessage(val text: String) : AgentHomeAction
+
+    /** 跳到指定会话：别的会话有卡在等时，点提示直接过去。 */
+    data class OpenConversation(val conversationKey: String) : AgentHomeAction
     data class InterruptAndSubmitMessage(val text: String) : AgentHomeAction
     data class QueueMessage(val text: String) : AgentHomeAction
     data class SteerQueuedMessage(val id: String) : AgentHomeAction

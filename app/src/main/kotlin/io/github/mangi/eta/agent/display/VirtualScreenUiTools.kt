@@ -48,7 +48,7 @@ internal class VirtualScreenUiTools(
                 }
                 else -> AgentConfirmGuard.labelAt(args.optInt("x", 0), args.optInt("y", 0))
             }
-            AgentConfirmGuard.inspect(context, target, name)?.let { draft ->
+            AgentConfirmGuard.inspect(context, target, name, runId)?.let { draft ->
                 return AgentModelClient.ToolResult(AgentConfirmGuard.blockedResult(draft))
             }
         }
@@ -358,7 +358,7 @@ internal class VirtualScreenUiTools(
         val node = nodes.nodes.firstOrNull { it.index == index } ?: error("INVALID_NODE_INDEX")
         if (name == "tap_element" || name == "long_press_element") {
             val label = node.text.ifBlank { node.desc }
-            AgentConfirmGuard.inspect(context, label, name)?.let { draft ->
+            AgentConfirmGuard.inspect(context, label, name, runId)?.let { draft ->
                 return AgentModelClient.ToolResult(AgentConfirmGuard.blockedResult(draft))
             }
         }

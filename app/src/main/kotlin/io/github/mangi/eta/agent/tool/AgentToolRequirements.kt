@@ -32,6 +32,7 @@ internal object AgentToolRequirements {
         register(
             RootRequirement.NONE,
             "get_current_context", "search_apps", "launch_app", "lingscreen_open_app", "open_uri", "browser_use", "web_search", "fetch_url",
+            "ask_user",
             "observe_screen", "tap", "tap_area", "tap_smart", "tap_element", "long_press",
             "long_press_element", "swipe", "scroll", "scroll_element", "type_text", "input_text",
             "replace_text", "clear_text", "set_clipboard", "get_clipboard", "paste_text",

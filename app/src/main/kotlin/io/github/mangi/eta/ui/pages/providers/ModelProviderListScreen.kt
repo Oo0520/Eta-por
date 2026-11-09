@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.EtaApp
 import io.github.mangi.eta.R
 import io.github.mangi.eta.data.model.ProviderSetting
+import io.github.mangi.eta.data.model.ProviderAuthModes
 import io.github.mangi.eta.data.model.ProviderSourceTypes
 import io.github.mangi.eta.data.model.typeLabel
 import io.github.mangi.eta.data.repository.ProviderRepository
@@ -67,10 +68,12 @@ internal fun ModelProviderListScreen(
     val filteredProviders = remember(providers, searchQuery) {
         val query = searchQuery.trim()
         providers.filter { provider ->
-            query.isBlank() ||
+            // 借用厂商由设置开关控制，不进「已配置提供商」列表，只在对话页模型列表里出现。
+            !ProviderAuthModes.isBorrowedVendor(provider.authMode) &&
+                (query.isBlank() ||
                 provider.name.contains(query, ignoreCase = true) ||
                 provider.baseUrl.contains(query, ignoreCase = true) ||
-                provider.typeLabel.contains(query, ignoreCase = true)
+                    provider.typeLabel.contains(query, ignoreCase = true))
         }
     }
 
@@ -118,7 +121,7 @@ internal fun ModelProviderListScreen(
                 )
                 EtaPreferenceDivider()
                 EtaArrowPreference(
-                    title = "新增 Gemini",
+                    title = stringResource(R.string.ui_new_gemini),
                     summary = "使用 API Key 连接原生 Interactions API",
                     startAction = { ProviderBrandIcon(ProviderSourceTypes.GEMINI) },
                     onClick = { onNavigate(AppRoute.ModelProviderNew(NewProviderType.Gemini)) },

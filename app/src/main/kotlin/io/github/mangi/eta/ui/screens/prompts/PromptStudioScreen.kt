@@ -5,10 +5,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.GppMaybe
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Inventory2
-import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.ViewAgenda
@@ -83,7 +83,7 @@ internal fun PromptStudioScreen(
                     },
                     summary = customizationContentText(profile),
                     startAction = {
-                        EtaPreferenceIcon(icon = Icons.Rounded.Psychology, tint = EtaPreferenceColors.Blue)
+                        EtaPreferenceIcon(icon = Icons.Rounded.Tune, tint = EtaPreferenceColors.Blue)
                     },
                     onClick = { onNavigate(AppRoute.PromptEditor) },
                 )

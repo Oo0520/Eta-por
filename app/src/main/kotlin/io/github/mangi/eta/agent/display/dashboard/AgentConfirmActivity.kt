@@ -169,7 +169,8 @@ internal class AgentConfirmActivity : ComponentActivity() {
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SheetButton("取消", Color(0xFFFF6B6B), Modifier.weight(1f)) {
-                            AgentLiveCoordinator.onAction(this@AgentConfirmActivity, token, LiveActionKind.REJECT)
+                            // 拒绝 = 通过 steering 明确告诉 AI 停手，而不是只改本机状态机。
+                            AgentConfirmGuard.reject(applicationContext, token, conversation)
                             finish()
                         }
                         SheetButton("去接管", Color(0xFFB6BEC9), Modifier.weight(1f)) {
@@ -178,7 +179,8 @@ internal class AgentConfirmActivity : ComponentActivity() {
                             finish()
                         }
                         SheetButton("确认", Color(0xFF5FE08C), Modifier.weight(1f), filled = true) {
-                            AgentLiveCoordinator.onAction(this@AgentConfirmActivity, token, LiveActionKind.CONFIRM)
+                            // 批准 = 发一个可执行的许可让 AI 继续；不重放旧坐标（快照可能已过期）。
+                            AgentConfirmGuard.approve(applicationContext, token, conversation)
                             finish()
                         }
                     }

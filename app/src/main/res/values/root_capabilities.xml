@@ -35,7 +35,7 @@
     <string name="capability_optional_root">可选增强权限</string>
     <string name="capability_import_denied">没有权限读取该路径，请选择文件导入或授权共享目录</string>
     <string name="capability_import_failed">文件导入失败，请重试</string>
-    <string name="capability_import_too_large">文件超过 32 MiB，无法导入</string>
+    <string name="capability_import_too_large">文件超过 32 MiB，无法复制导入。给 Eta 开启「所有文件访问权限」后会改为引用路径，不受此限。</string>
     <string name="capability_provider_created">已创建并设为当前模型服务商</string>
     <string name="capability_provider_saved">已保存并设为当前模型服务商</string>
     <string name="capability_linux_backend">运行方式</string>
@@ -67,7 +67,7 @@
     <string name="capability_location_access_required">授权位置访问后可用</string>
     <string name="capability_coloros_required">适用于 ColorOS</string>
     <plurals name="capability_workspace_partial_import">
-        <item quantity="other">已导入 %1$d 个文件，其余文件无法读取或超过 32 MiB</item>
+        <item quantity="other">已导入 %1$d 个文件，其余无法读取或超过 32 MiB（开启「所有文件访问权限」后可不受限）</item>
     </plurals>
     <string name="capability_workspace_public_granted">已授权，终端可访问公共目录</string>
     <string name="capability_workspace_parent">返回上级目录</string>
