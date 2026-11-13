@@ -8,6 +8,8 @@ const val DEFAULT_INTERFACE_SCALE = 1f
 
 @Serializable
 data class AppearanceSettings(
+    // 默认 MIUIX：本仓库大量界面仍是 Miuix 单分支实现，COUI 分支作为可切换的渐进选项。
+    val uiStyle: AppearanceUiStyle = AppearanceUiStyle.MIUIX,
     val themeMode: AppearanceThemeMode = AppearanceThemeMode.SYSTEM,
     val monetEnabled: Boolean = false,
     val paletteStyle: AppearancePaletteStyle = AppearancePaletteStyle.TONAL_SPOT,
@@ -22,6 +24,20 @@ data class AppearanceSettings(
     fun normalized(): AppearanceSettings = copy(
         interfaceScale = normalizeInterfaceScale(interfaceScale),
     )
+}
+
+@Serializable
+enum class AppearanceUiStyle(val persistedValue: String) {
+    COUI("coui"),
+    MIUIX("miuix");
+
+    val isCoui: Boolean
+        get() = this == COUI
+
+    companion object {
+        fun fromPersistedValue(value: String?): AppearanceUiStyle =
+            entries.firstOrNull { it.persistedValue == value } ?: MIUIX
+    }
 }
 
 @Serializable

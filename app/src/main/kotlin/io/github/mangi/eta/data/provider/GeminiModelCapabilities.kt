@@ -1,5 +1,6 @@
 package io.github.mangi.eta.data.provider
 
+import io.github.mangi.eta.data.model.Model
 import io.github.mangi.eta.data.model.ModelReasoningCapabilities
 import io.github.mangi.eta.data.model.ReasoningEffort
 
@@ -12,6 +13,7 @@ internal object GeminiModelCapabilities {
 
     private val lowToHigh = listOf(ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH)
     private val minimalToHigh = listOf(ReasoningEffort.MINIMAL) + lowToHigh
+    val configurableEfforts: List<ReasoningEffort> = minimalToHigh
     private val knownModels = mapOf(
         "gemini-4-argon" to capabilities(lowToHigh, ReasoningEffort.MEDIUM, hostedSearch = true),
         "gemini-3.8-flash" to capabilities(lowToHigh, ReasoningEffort.MEDIUM, hostedSearch = true),
@@ -25,6 +27,14 @@ internal object GeminiModelCapabilities {
     )
 
     fun reasoningCapabilities(modelId: String): ModelReasoningCapabilities? = knownModels[normalize(modelId)]?.reasoning
+
+    fun resolveReasoning(model: Model): ModelReasoningCapabilities = when (model.reasoningOverride) {
+        false -> ModelReasoningCapabilities()
+        true -> model.reasoningCapabilitiesOverride ?: ModelReasoningCapabilities()
+        null -> if (model.reasoning == false) ModelReasoningCapabilities() else {
+            model.reasoningCapabilities ?: requestReasoningCapabilities(model.modelId)
+        }
+    }
 
     // 未知模型只使用服务端默认值；不据此推断支持思考或必须思考。
     fun requestReasoningCapabilities(modelId: String): ModelReasoningCapabilities =
