@@ -220,6 +220,13 @@ internal class AgentAppState(
     }
 
     private var conversationTitles: Map<String, String> = initialConversations.titles
+
+    /** 当前会话标题；顶栏与分享场景使用，空白视为未命名。 */
+    val currentConversationTitle: String?
+        get() {
+            val id = conversationPaneState.selectedConversationId ?: return null
+            return conversationTitles[id]?.takeIf(String::isNotBlank)
+        }
     private var conversationUpdatedAt: Map<String, Long> = initialConversations.updatedAt
     private var conversationPinned: Map<String, Boolean> = initialConversations.pinned
 

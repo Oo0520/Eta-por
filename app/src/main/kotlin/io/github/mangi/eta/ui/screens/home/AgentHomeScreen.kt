@@ -7,6 +7,8 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard
 import io.github.mangi.eta.ui.app.AgentCommands
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import io.github.mangi.eta.ui.components.AgentChatBody
 import io.github.mangi.eta.ui.components.LocalRoleplayChat
 import io.github.mangi.eta.ui.components.chatConversationCompositionKey
@@ -44,6 +46,8 @@ internal fun AgentHomeScreen(
     /** 未接入模型时，空状态卡与提示条上的「去接入」。 */
     onOpenModelProviders: () -> Unit = {},
     isDrawerOpen: Boolean = false,
+    isBranching: Boolean = false,
+    topInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     // 审批卡按会话归属：切会话时告诉 Guard「现在看的是哪个」，别的会话的卡不在这里显示。

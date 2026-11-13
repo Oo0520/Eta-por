@@ -13,9 +13,12 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +37,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -54,6 +58,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,15 +68,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.dropShadow
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -79,17 +81,30 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.itos.coui.effect.couiButtonFeedback
+import com.itos.coui.layout.CouiPageDefaults
+import com.itos.coui.shape.CouiShape
+import com.itos.coui.text.CouiTextKind
+import com.itos.coui.text.Text as CouiText
+import com.itos.coui.theme.CouiTheme
 import io.github.mangi.eta.R
 import io.github.mangi.eta.agent.browser.AgentBrowserSession
 import io.github.mangi.eta.agent.display.dashboard.AgentConfirmGuard
+import io.github.mangi.eta.agent.browser.BrowserSessionSnapshot
+import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.ReasoningEffort
 import io.github.mangi.eta.ui.app.AgentConversationRevisionReducer
 import io.github.mangi.eta.ui.app.LocalBlurEnabled
 import io.github.mangi.eta.ui.markdown.StreamingMarkdownState
+import io.github.mangi.eta.ui.app.LocalUiStyle
+import io.github.mangi.eta.ui.markdown.StreamingMarkdownStateCache
+import io.github.mangi.eta.ui.model.ConversationHistoryLoadState
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentCommand
 import io.github.mangi.eta.ui.model.CommandConfirmUi
@@ -115,6 +130,7 @@ import io.github.mangi.eta.ui.model.UserMessageUi
 import io.github.mangi.eta.ui.model.latestContextUsage
 import io.github.mangi.eta.ui.voice.SpeechAutoReadAloud
 import io.github.mangi.eta.ui.voice.SpeechPlaybackHost
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.min
 import kotlinx.coroutines.CancellationException
@@ -130,6 +146,17 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.IconButtonDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.squircle.squircleBorder
+import top.yukonga.miuix.kmp.squircle.squircleSurface
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.graphicsLayer
 import top.yukonga.miuix.kmp.blur.BlendColorEntry
 import top.yukonga.miuix.kmp.blur.BlurDefaults
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
@@ -137,11 +164,6 @@ import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.blur.textureBlur
-import top.yukonga.miuix.kmp.squircle.squircleBorder
-import top.yukonga.miuix.kmp.squircle.squircleSurface
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.overScrollVertical
-import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 /**
  * 聊天主体：消息流 + 底部输入框。
@@ -155,6 +177,7 @@ internal fun AgentChatBody(
     messages: List<AgentChatMessageUi>,
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
+    isBranching: Boolean = false,
     input: String,
     isStreaming: Boolean,
     reasoningEffort: ReasoningEffort,
@@ -163,6 +186,7 @@ internal fun AgentChatBody(
     pendingFileReferences: List<PendingFileReferenceUi>,
     queuedMessages: List<QueuedMessageUi> = emptyList(),
     inputSyncVersion: Int = 0,
+    focusInputOnSync: Boolean = true,
     messageEdit: MessageEditUiState?,
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     onCompactContext: () -> Unit,
@@ -188,6 +212,7 @@ internal fun AgentChatBody(
     onCancelMessageEdit: () -> Unit,
     onDeleteMessage: (String) -> Unit,
     onRegenerateMessage: (String) -> Unit,
+    onBranchMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit,
     /** 从这条消息分出新会话；null 表示当前场景不给入口。 */
     onForkMessage: ((String) -> Unit)? = null,
@@ -230,6 +255,7 @@ internal fun AgentChatBody(
     onRemoveReference: (String) -> Unit,
     onRefreshToolAccess: () -> Unit,
     onToggleTool: (ToolToggleItem, Boolean) -> Unit,
+    topInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     val scrollState = rememberLazyListState()
@@ -326,6 +352,7 @@ internal fun AgentChatBody(
             input = input,
             modelPickerState = modelPickerState,
             isCompacting = isCompacting,
+            isBranching = isBranching,
             contextUsage = contextUsage,
             isStreaming = isStreaming,
             reasoningEffort = reasoningEffort,
@@ -334,6 +361,7 @@ internal fun AgentChatBody(
             pendingFileReferences = pendingFileReferences,
             queuedMessages = queuedMessages,
             inputSyncVersion = inputSyncVersion,
+            focusInputOnSync = focusInputOnSync,
             messageEdit = messageEdit,
             showEmptySuggestions = !isKeyboardVisible,
             keepBottomAnchored = keepBottomAnchored,
@@ -375,6 +403,7 @@ internal fun AgentChatBody(
             onCancelMessageEdit = onCancelMessageEdit,
             onDeleteMessage = onDeleteMessage,
             onRegenerateMessage = onRegenerateMessage,
+            onBranchMessage = onBranchMessage,
             onSelectReplyCandidate = onSelectReplyCandidate,
             onForkMessage = onForkMessage,
             onSuggestionClick = onSuggestionClick,
@@ -423,6 +452,7 @@ private fun AgentChatScaffold(
     input: String,
     modelPickerState: AgentModelPickerUiState,
     isCompacting: Boolean,
+    isBranching: Boolean,
     contextUsage: AgentContextUsageUi,
     isStreaming: Boolean,
     reasoningEffort: ReasoningEffort,
@@ -431,6 +461,7 @@ private fun AgentChatScaffold(
     pendingFileReferences: List<PendingFileReferenceUi>,
     queuedMessages: List<QueuedMessageUi>,
     inputSyncVersion: Int,
+    focusInputOnSync: Boolean,
     messageEdit: MessageEditUiState?,
     showEmptySuggestions: Boolean,
     keepBottomAnchored: Boolean,
@@ -459,6 +490,7 @@ private fun AgentChatScaffold(
     onCancelMessageEdit: () -> Unit,
     onDeleteMessage: (String) -> Unit,
     onRegenerateMessage: (String) -> Unit,
+    onBranchMessage: (String) -> Unit,
     onSelectReplyCandidate: (String, Int) -> Unit,
     onForkMessage: ((String) -> Unit)? = null,
     onSuggestionClick: (String) -> Unit,
@@ -521,6 +553,7 @@ private fun AgentChatScaffold(
                 messageBackdrop = messageBackdrop.takeIf { frostEnabled },
                 input = input,
                 modelPickerState = modelPickerState,
+                onModelSelected = onModelSelected,
                 onOpenModelProviders = onOpenModelProviders,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
@@ -532,6 +565,7 @@ private fun AgentChatScaffold(
                 pendingFileReferences = pendingFileReferences,
                 queuedMessages = queuedMessages,
                 inputSyncVersion = inputSyncVersion,
+                focusInputOnSync = focusInputOnSync,
                 messageEdit = messageEdit,
                 onSubmit = onSubmit,
                 onInterruptAndSubmit = onInterruptAndSubmit,
@@ -542,7 +576,6 @@ private fun AgentChatScaffold(
                 onReasoningEffortChange = onReasoningEffortChange,
                 onCompactContext = onCompactContext,
                 canCompactContext = canCompactContext,
-                onModelSelected = onModelSelected,
                 onStop = onStop,
             isPaused = isPaused,
             onPause = onPause,
@@ -650,6 +683,7 @@ internal fun AgentConversationMessages(
     keepBottomAnchored: Boolean,
     onBottomAnchorChanged: (Boolean) -> Unit,
     assistantOverlay: Boolean = false,
+    topInset: Dp = 0.dp,
     onSuggestionClick: (String) -> Unit = {},
     onRunTraceClick: () -> Unit = {},
     onOpenBrowser: () -> Unit = {},
@@ -657,6 +691,7 @@ internal fun AgentConversationMessages(
     onEditMessage: (String) -> Unit = {},
     onDeleteMessage: (String) -> Unit = {},
     onRegenerateMessage: (String) -> Unit = {},
+    onBranchMessage: (String) -> Unit = {},
     onSelectReplyCandidate: (String, Int) -> Unit = { _, _ -> },
     onForkMessage: ((String) -> Unit)? = null,
     messageActionsEnabled: Boolean = false,
@@ -921,8 +956,8 @@ internal fun AgentConversationMessages(
                 .scrollEndHaptic()
                 .overScrollVertical(),
             contentPadding = PaddingValues(
-                top = 16.dp,
-                bottom = bottomInset + 16.dp,
+                top = topInset + if (assistantOverlay) 8.dp else 10.dp,
+                bottom = bottomInset + 14.dp,
             ),
             overscrollEffect = null,
         ) {
@@ -965,9 +1000,12 @@ internal fun AgentConversationMessages(
                                 message.id == currentBrowserMessageId,
                             showCopyAction = message !is AgentMessageUi ||
                                 message.characterEditable || message.id in finalResultMessageIds,
-                            showMessageActions = message.id in finalResultMessageIds ||
-                                (message is AgentMessageUi && message.characterEditable),
+                            showMessageActions = !assistantOverlay && (
+                                message.id in finalResultMessageIds ||
+                                    (message is AgentMessageUi && message.characterEditable)
+                                ),
                             messageActionsEnabled = messageActionsEnabled,
+                            onBranchMessage = onBranchMessage,
                             isEditing = message.id == editTargetMessageId,
                             onEditMessage = onEditMessage,
                             onDeleteMessage = onDeleteMessage,
@@ -1100,37 +1138,59 @@ internal fun AgentConversationMessages(
             visible = !keepBottomAnchored && !isAtBottom,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = bottomInset + 12.dp),
+                .padding(bottom = bottomInset + 8.dp),
             enter = fadeIn(tween(160)) + scaleIn(tween(180), initialScale = 0.82f),
             exit = fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.86f),
         ) {
+            val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
+            val couiDark = CouiTheme.isDark
             IconButton(
-                // 与输入框同一套浮起层次：消息背景接近按钮底色时仍能一眼认出。
-                modifier = Modifier
-                    .dropShadow(
-                        shape = CircleShape,
-                        shadow = Shadow(radius = 8.dp, color = Color.Black, alpha = 0.08f),
-                    )
-                    .squircleBorder(
-                        width = 0.5.dp,
-                        color = MiuixTheme.colorScheme.outline.copy(alpha = 0.55f),
-                        cornerRadius = IconButtonDefaults.CornerRadius,
-                    ),
+                modifier = if (isCoui) {
+                    Modifier
+                        .dropShadow(
+                            shape = CircleShape,
+                            shadow = Shadow(
+                                radius = 10.dp,
+                                color = Color.Black,
+                                alpha = if (couiDark) 0.24f else 0.08f,
+                            ),
+                        )
+                        .border(
+                            width = 0.5.dp,
+                            color = if (couiDark) Color(0x22FFFFFF) else Color(0x10000000),
+                            shape = CircleShape,
+                        )
+                } else {
+                    Modifier
+                        .dropShadow(
+                            shape = CircleShape,
+                            shadow = Shadow(radius = 8.dp, color = Color.Black, alpha = 0.08f),
+                        )
+                        .squircleBorder(
+                            width = 0.5.dp,
+                            color = MiuixTheme.colorScheme.outline.copy(alpha = 0.55f),
+                            cornerRadius = IconButtonDefaults.CornerRadius,
+                        )
+                },
                 onClick = {
                     onBottomAnchorChanged(true)
                     coroutineScope.launch {
                         scrollState.animateScrollToItem(bottomItemIndex)
                     }
                 },
-                backgroundColor = MiuixTheme.colorScheme.surfaceContainerHigh,
-                minWidth = 40.dp,
-                minHeight = 40.dp,
+                backgroundColor = if (isCoui) {
+                    if (couiDark) Color(0xFF24262B) else Color.White
+                } else {
+                    MiuixTheme.colorScheme.surfaceContainerHigh
+                },
+                minWidth = 36.dp,
+                minHeight = 36.dp,
             ) {
                 Icon(
                     imageVector = Icons.Rounded.ArrowDownward,
                     contentDescription = stringResource(R.string.ui_back_to_bottom_32282e),
-                    modifier = Modifier.size(18.dp),
-                    tint = MiuixTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp),
+                    tint = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.78f),
                 )
             }
         }
@@ -1285,6 +1345,7 @@ private fun AgentChatBottomBar(
     messageBackdrop: LayerBackdrop?,
     input: String,
     modelPickerState: AgentModelPickerUiState,
+    onModelSelected: (String) -> Unit,
     /** 未接入模型时输入框上方提示条的「去接入」。 */
     onOpenModelProviders: () -> Unit = {},
     isCompacting: Boolean,
@@ -1297,6 +1358,7 @@ private fun AgentChatBottomBar(
     pendingFileReferences: List<PendingFileReferenceUi>,
     queuedMessages: List<QueuedMessageUi>,
     inputSyncVersion: Int,
+    focusInputOnSync: Boolean,
     messageEdit: MessageEditUiState?,
     onSubmit: (String) -> Unit,
     onInterruptAndSubmit: (String) -> Unit,
@@ -1307,7 +1369,6 @@ private fun AgentChatBottomBar(
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     onCompactContext: () -> Unit,
     canCompactContext: Boolean,
-    onModelSelected: (String) -> Unit,
     onStop: () -> Unit,
     isPaused: Boolean = false,
     onPause: () -> Unit = {},
@@ -1341,63 +1402,30 @@ private fun AgentChatBottomBar(
     onRefreshToolAccess: () -> Unit,
     onToggleTool: (ToolToggleItem, Boolean) -> Unit,
 ) {
-    Column(
+    val surface = MiuixTheme.colorScheme.surface
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .imePadding(),
     ) {
-        if (messageBackdrop != null) {
-            val blurColors = BlurDefaults.blurColors(
-                blendColors = listOf(
-                    BlendColorEntry(MiuixTheme.colorScheme.surface.copy(alpha = 0.72f))
+        // 底部以连续垂直渐隐承接悬浮输入胶囊，避免一整块不透明实心矩形把消息流生硬截断。
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to Color.Transparent,
+                        0.26f to surface.copy(alpha = 0.86f),
+                        0.55f to surface.copy(alpha = 0.98f),
+                        1.0f to surface,
+                    ),
                 ),
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(ChatBottomFrostHeight)
-                    // DstIn 让真实磨砂在顶部透明、靠近输入框时逐渐变实，消除硬裁切线。
-                    .graphicsLayer {
-                        compositingStrategy = CompositingStrategy.Offscreen
-                    }
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black),
-                            ),
-                            blendMode = BlendMode.DstIn,
-                        )
-                    }
-                    .textureBlur(
-                        backdrop = messageBackdrop,
-                        shape = RectangleShape,
-                        blurRadius = 20f,
-                        colors = blurColors,
-                    ),
-            )
-        } else {
-            // 空白主页沿用原来的轻微渐隐，不改变主页视觉。
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(16.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                MiuixTheme.colorScheme.surface,
-                            ),
-                        )
-                    ),
-            )
-        }
+        )
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MiuixTheme.colorScheme.surface)
                 .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                .padding(top = 14.dp, start = 14.dp, end = 14.dp, bottom = 10.dp),
         ) {
             LocalProfileSwitchToast(modifier = Modifier.fillMaxWidth())
             AnimatedVisibility(
@@ -1432,6 +1460,7 @@ private fun AgentChatBottomBar(
                 input = input,
                 draftKey = draftKey,
                 modelPickerState = modelPickerState,
+                onModelSelected = onModelSelected,
                 onOpenModelProviders = onOpenModelProviders,
                 isCompacting = isCompacting,
                 contextUsage = contextUsage,
@@ -1443,6 +1472,7 @@ private fun AgentChatBottomBar(
                 pendingFileReferences = pendingFileReferences,
                 queuedMessages = queuedMessages,
                 inputSyncVersion = inputSyncVersion,
+                focusInputOnSync = focusInputOnSync,
                 isEditingMessage = messageEdit != null,
                 editHasLaterTurns = messageEdit?.hasLaterTurns == true,
                 preserveFollowingMessages = messageEdit?.preserveFollowingMessages == true,
@@ -1455,7 +1485,6 @@ private fun AgentChatBottomBar(
                 onReasoningEffortChange = onReasoningEffortChange,
                 onCompactContext = onCompactContext,
                 canCompactContext = canCompactContext,
-                onModelSelected = onModelSelected,
                 onStop = onStop,
             isPaused = isPaused,
             onPause = onPause,
@@ -1588,12 +1617,16 @@ private fun EmptyChatState(
                     } else {
                         "先接入一个模型"
                     },
-                    style = MiuixTheme.textStyles.headline1,
+                    style = MiuixTheme.textStyles.title2.copy(
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = (-0.2).sp,
+                    ),
                     color = MiuixTheme.colorScheme.onSurface,
                 )
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(26.dp))
 
             if (!modelReady) {
                 ModelSetupCard(
@@ -1622,10 +1655,10 @@ private fun EmptyChatState(
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     suggestions.chunked(2).forEach { rowItems ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             rowItems.forEach { item ->
                                 SuggestionCard(
                                     item = item,
@@ -1691,28 +1724,54 @@ private fun SuggestionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier
-            .squircleSurface(color = MiuixTheme.colorScheme.surface, cornerRadius = 16.dp)
-            .squircleBorder(
-                width = 0.5.dp,
-                color = MiuixTheme.colorScheme.outline.copy(alpha = 0.5f),
-                cornerRadius = 16.dp,
-            )
+    val isCoui = LocalUiStyle.current == AppearanceUiStyle.COUI
+    val isDark = MiuixTheme.colorScheme.surface.luminance() < 0.5f
+    val ink = MiuixTheme.colorScheme.onSurface.copy(alpha = 1f)
+    val fill = ink.copy(alpha = if (isDark) 0.055f else 0.028f)
+    val border = ink.copy(alpha = if (isDark) 0.10f else 0.065f)
+    val interactionSource = remember { MutableInteractionSource() }
+    val shapeModifier = if (isCoui) {
+        val shape = CouiShape(15.dp, 2.2f)
+        Modifier
+            .couiButtonFeedback(isDark, interactionSource, enabled = true)
+            .clip(shape)
+            .background(fill, shape)
+            .border(0.5.dp, border, shape)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+    } else {
+        Modifier
+            .squircleSurface(color = fill, cornerRadius = 15.dp)
+            .squircleBorder(width = 0.5.dp, color = border, cornerRadius = 15.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
+    }
+    Row(
+        modifier = modifier
+            .then(shapeModifier)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp),
-            tint = MiuixTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(MiuixTheme.colorScheme.primary.copy(alpha = if (isDark) 0.16f else 0.10f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = item.icon,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = MiuixTheme.colorScheme.primary,
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
         Text(
             text = item.title,
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurface,
+            style = MiuixTheme.textStyles.body2.copy(
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.88f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1733,43 +1792,55 @@ private data class SuggestionItem(
  */
 @Composable
 private fun ChatNavigatorHandle(onOpen: () -> Unit) {
-    val density = LocalDensity.current
-    val triggerPx = with(density) { 16.dp.toPx() }
-    var upwardDrag by remember { mutableFloatStateOf(0f) }
-    // 外面这层只负责把热区摆到中间，本身不吃手势：只有小白条周围那一小块能滑能点，
-    // 否则整行都会变成隐形按钮，误触概率太高。
+    // 手势协程里引用回调；用 State 包一层，回调变化不重启正在进行的手势。
+    val openAction by rememberUpdatedState(onOpen)
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(14.dp),
+            .height(22.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .width(44.dp)
-                .height(14.dp)
-                .clickable(onClick = onOpen)
+                .width(56.dp)
+                .height(22.dp)
                 .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragStart = { upwardDrag = 0f },
-                        onDragCancel = { upwardDrag = 0f },
-                        onDragEnd = {
-                            // 只认「往上」的位移，往下拖当作误触直接丢弃。
-                            if (upwardDrag <= -triggerPx) onOpen()
-                            upwardDrag = 0f
-                        },
-                    ) { _, dragAmount ->
-                        upwardDrag = (upwardDrag + dragAmount).coerceAtMost(0f)
+                    // 单一手势源自己判定点击与拖拽。原先 clickable 叠 detectVerticalDragGestures
+                    // 会互相吞事件：触摸 slop（约 8dp）到 16dp 触发线之间是死区，热区又只有
+                    // 14dp 高，点按稍带漂移就被两边同时放弃，表现成「点了没反应」。
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val slopPx = viewConfiguration.touchSlop
+                        var lastY = down.position.y
+                        var netDy = 0f
+                        var dragStarted = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                                ?: return@awaitEachGesture
+                            val dy = change.position.y - lastY
+                            lastY = change.position.y
+                            netDy += dy
+                            // 过了 slop 才算拖拽，之后位移归小白条所有，防止被上层当滚动吃掉。
+                            if (!dragStarted && abs(netDy) > slopPx) dragStarted = true
+                            if (dragStarted && change.positionChanged()) change.consume()
+                            if (!change.pressed) {
+                                // 抬手即判定：没过 slop 是点击；过了 slop 但整体向上同样是打开
+                                // 意图（不再要求 16dp）；只有明确向下拖才不响应。
+                                if (!dragStarted || netDy <= 0f) openAction()
+                                return@awaitEachGesture
+                            }
+                        }
                     }
                 },
             contentAlignment = Alignment.Center,
         ) {
             Box(
                 modifier = Modifier
-                    .width(40.dp)
+                    .width(36.dp)
                     .height(4.dp)
                     .background(
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.36f),
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.35f),
                         shape = RoundedCornerShape(2.dp),
                     ),
             )
