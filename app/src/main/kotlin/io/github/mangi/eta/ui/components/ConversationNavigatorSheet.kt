@@ -44,7 +44,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
+import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -52,6 +52,10 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  *
  * 默认按轮次列出每一条用户提问（目录），输入关键词后列出所有命中消息；
  * 点任意一条就跳过去并高亮，和侧栏搜索命中用的是同一套跳转通道。
+ *
+ * 容器必须用 Window 系组件：本面板在 AgentAppRoot 的 entry 层组合，
+ * 那里没有 miuix Scaffold 祖先，Overlay 系（依赖 Scaffold 的 MiuixPopupHost）
+ * 在这个位置永远渲染不出来，表现成小白条点了没反应。
  */
 @Composable
 internal fun ConversationNavigatorSheet(
@@ -64,7 +68,12 @@ internal fun ConversationNavigatorSheet(
     onReference: (String) -> Unit = {},
     entriesFor: (String) -> List<ConversationNavEntry>,
 ) {
-    OverlayBottomSheet(
+    // 面板高度按主窗口算，必须在弹窗组合外取：WindowBottomSheet 的内容
+ // 跑在独立窗口里，在里面取 containerSize 拿到的是弹窗自身尺寸。
+    val density = LocalDensity.current
+    val sheetHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.82f
+
+    WindowBottomSheet(
         show = show,
         title = stringResource(R.string.conversation_navigator_title),
         onDismissRequest = onDismiss,
@@ -83,8 +92,6 @@ internal fun ConversationNavigatorSheet(
                 listState.scrollToItem(entries.lastIndex)
             }
         }
-        val density = LocalDensity.current
-        val sheetHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() } * 0.82f
 
         Column(
             modifier = Modifier
