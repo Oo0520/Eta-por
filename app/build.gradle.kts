@@ -53,7 +53,7 @@ android {
         targetSdk = 37
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
         // 两条线各自计号：正式线沿用上游发行号，测试线独立递增。
-        versionCode = if (isBetaBuild) 2026112102 else 2026112101
+        versionCode = if (isBetaBuild) 2026112104 else 2026112103
         versionName = if (isBetaBuild) "3.4.4-beta.1" else "3.4.4"
         buildConfigField("boolean", "BETA_BUILD", isBetaBuild.toString())
 
