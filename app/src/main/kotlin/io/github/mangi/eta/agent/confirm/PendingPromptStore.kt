@@ -5,21 +5,6 @@ import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** 卡片上的一个可选项。`id` 是回灌给模型的值，`label` 给用户看。 */
-internal data class PromptOption(
-    val id: String,
-    val label: String,
-    val description: String = "",
-)
-
-/** 系统内置选项 id。模型也能用这些 id 表达意图。 */
-internal object PromptOptionId {
-    const val APPROVE = "approve"
-    const val REJECT = "reject"
-    const val MANUAL = "manual"
-    const val REMEMBER = "remember"
-}
-
 /**
  * 待答问题 / 待审批项的落盘。
  *
