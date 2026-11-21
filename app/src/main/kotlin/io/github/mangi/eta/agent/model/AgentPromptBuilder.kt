@@ -4,6 +4,9 @@ import io.github.mangi.eta.agent.memory.AgentMemoryContext
 import io.github.mangi.eta.agent.skill.SkillContext
 import io.github.mangi.eta.agent.roleplay.RoleplayRunContext
 import io.github.mangi.eta.agent.terminal.TerminalExecutionContext
+import io.github.mangi.eta.agent.prompt.PromptCustomization
+import io.github.mangi.eta.agent.prompt.PromptCustomizationMode
+import io.github.mangi.eta.agent.prompt.PromptCustomizationStore
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -52,6 +55,14 @@ internal object AgentPromptBuilder {
         extraSystemContext: String = "",
     ): JSONArray {
         val messages = JSONArray()
+        // 提示词工坊：角色会话不吃自定义身份（人物设定优先），其余场景按 mode 生效。
+        val promptCustomization = runCatching { PromptCustomizationStore.load() }.getOrNull()
+            ?.takeIf { it.active && roleplayContext == null }
+        if (promptCustomization?.mode == PromptCustomizationMode.REPLACE) {
+            messages.put(systemMessage(promptCustomization.renderBlock(
+                header = "以下为用户自定义的身份设定，优先级高于内置身份描述；与内置描述冲突时以本节为准。",
+            )))
+        }
         if (roleplayContext == null && config.systemPrompt.isNotBlank()) {
             messages.put(systemMessage(config.systemPrompt))
         }
@@ -187,6 +198,9 @@ internal object AgentPromptBuilder {
         if (extraSystemContext.isNotBlank()) {
             messages.put(systemMessage(extraSystemContext))
         }
+        if (promptCustomization?.mode == PromptCustomizationMode.APPEND) {
+            messages.put(systemMessage(promptCustomization.renderBlock(header = "")))
+        }
         return messages
     }
 
@@ -200,6 +214,14 @@ internal object AgentPromptBuilder {
             "用户说明已授权、授权状态发生变化或需要确认 Root 时，调用 terminal(action=check_root) 实际验证；" +
             "它执行固定的 su -c 'id -u'，可能显示系统授权请求，结果会说明最近一次检测的状态。成功后的新命令默认使用 Root；既有会话与后台任务保持创建时的身份。" +
             "不得根据 su 文件大小、是否为符号链接或 ro.build.type 推断 Root 真伪；结论以实际检测和工具结果为准。"
+
+    private fun PromptCustomization.renderBlock(header: String): String = buildString {
+        if (header.isNotBlank()) appendLine(header)
+        if (baseSystemPrompt.isNotBlank()) appendLine(baseSystemPrompt.trim())
+        if (personaName.isNotBlank()) appendLine("身份：${personaName.trim()}")
+        if (personaStyle.isNotBlank()) appendLine("风格：${personaStyle.trim()}")
+        if (appendInstructions.isNotBlank()) appendLine(appendInstructions.trim())
+    }
 
     private fun buildMemorySystemMessage(context: AgentMemoryContext, writable: Boolean): JSONObject? {
         if (!context.enabled) return null
