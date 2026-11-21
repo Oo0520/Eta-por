@@ -29,6 +29,13 @@ require(buildMetadata == null || buildMetadata.matches(Regex("[0-9A-Za-z.-]+")))
 }
 val buildMetadataSuffix = buildMetadata?.let { "+$it" }.orEmpty()
 
+// ── 测试版（可与正式版并存安装）────────────────────────────────────────────
+// 同一 applicationId 在系统里只能存在一份，共存只能换安装身份；namespace 保持不变，
+// 所以源码包名、类名、Xposed 入口（META-INF/xposed/java_init.list）与 R 类都不受影响。
+// 用法：./gradlew :app:assembleRelease -Peta.beta=true
+val isBetaBuild = providers.gradleProperty("eta.beta").orNull.toBoolean()
+val betaApplicationId = "io.github.mangi.eta.beta"
+
 android {
     namespace = "io.github.mangi.eta"
     compileSdk {
@@ -39,12 +46,14 @@ android {
     ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
-        applicationId = "io.github.mangi.eta"
+        applicationId = if (isBetaBuild) betaApplicationId else "io.github.mangi.eta"
         minSdk = 34
         targetSdk = 37
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
-        versionCode = 2026111302
-        versionName = "3.4.4"
+        // 两条线各自计号：正式线沿用上游发行号，测试线独立递增。
+        versionCode = if (isBetaBuild) 2026112102 else 2026112101
+        versionName = if (isBetaBuild) "3.4.4-por.1-beta.1" else "3.4.4-por.1"
+        buildConfigField("boolean", "BETA_BUILD", isBetaBuild.toString())
 
         ndk {
             // 同时过滤本地与依赖 AAR 的原生库，确保 APK 仅包含 ARM64。
@@ -59,6 +68,12 @@ android {
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
+                // 三种方案一起签：v1 给老工具/非 Android 校验器认，v2 是 Android 7+ 的主校验，
+                // v3 是 Android 9+ 的换钥与降级保护。只签 v3 时，部分 root 模块、MT 管理器、
+                // 第三方安装器会报「未签名」或校验失败。
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
@@ -210,4 +225,12 @@ dependencies {
     testImplementation(libs.json)
     testImplementation(libs.room.testing)
     testImplementation(libs.robolectric)
+}
+
+// Compose 编译器会额外生成「Compose 映射报告」任务：只产出报告，不影响 APK 内容，
+// 但在低内存环境里偶发静默卡死。直接关掉。
+tasks.configureEach {
+    if (name.endsWith("ComposeMappingErrors") || name.endsWith("ComposeMapping")) {
+        enabled = false
+    }
 }
