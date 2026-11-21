@@ -230,7 +230,7 @@ internal object VirtualDisplayController {
         checkCancellation: () -> Unit = {},
     ): Int? {
         checkCancellation()
-        val displayId = ensureVirtualDisplay(context, rootAvailable) ?: return null
+        val displayId = ensureVirtualDisplay(context, rootAvailable = rootAvailable) ?: return null
         checkCancellation()
         val appContext = context.applicationContext
         mutePackageAudioFocusIfPossible(appContext, packageName, rootAvailable)
@@ -292,7 +292,7 @@ internal object VirtualDisplayController {
         checkCancellation: () -> Unit = {},
     ): Int? {
         checkCancellation()
-        val displayId = ensureVirtualDisplay(context, rootAvailable) ?: return null
+        val displayId = ensureVirtualDisplay(context, rootAvailable = rootAvailable) ?: return null
         checkCancellation()
         val appContext = context.applicationContext
         val started = runCatching {
