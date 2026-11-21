@@ -776,7 +776,7 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.prompt_studio_title),
                             icon = {
                                 CouiSettingsIcon(
-                                    Icons.Rounded.EditNote,
+                                    Icons.Rounded.Description,
                                     SettingsIconColors.Green,
                                 )
                             },
@@ -1234,7 +1234,7 @@ private fun SettingsPageContent(
                         )
                         ArrowPreference(
                             title = stringResource(R.string.prompt_studio_title),
-                            startAction = { SettingsIcon(Icons.Rounded.EditNote) },
+                            startAction = { SettingsIcon(Icons.Rounded.Description) },
                             onClick = { onNavigate(AppRoute.PromptStudio) },
                         )
                         val imageGenSettings by remember { ImageGenSettingsRepository.settingsFlow() }
