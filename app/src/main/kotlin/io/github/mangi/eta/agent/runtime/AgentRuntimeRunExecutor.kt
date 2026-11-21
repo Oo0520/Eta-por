@@ -227,7 +227,8 @@ internal class AgentRuntimeRunExecutor(
                 screenshotExcludedPackages = {
                     entrySurfaceGuard?.consumeScreenshotExcludedPackages().orEmpty()
                 },
-                beforeToolExecution = { toolName ->
+                beforeToolExecution = { toolCall ->
+                    val toolName = toolCall.name
                     val requiresAccessibility =
                         AgentToolRequirements.requiresAccessibility(toolName)
                     if (

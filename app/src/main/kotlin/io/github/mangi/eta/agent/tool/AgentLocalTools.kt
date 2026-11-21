@@ -98,7 +98,7 @@ internal class AgentLocalTools(
     private val screenObservationProvider: (
         (AgentScreenObservationContract.Options) -> RootShellDeviceController.Observation
     )? = null,
-    private val beforeToolExecution: (String) -> ToolExecutionDecision = {
+    private val beforeToolExecution: (AgentModelClient.ToolCall) -> ToolExecutionDecision = {
         ToolExecutionDecision.Allow
     },
     private val skillIndexService: SkillIndexService? = null,
@@ -225,7 +225,7 @@ internal class AgentLocalTools(
             val preparation = if (AgentToolRequirements.hasForegroundIntentFallback(toolCall.name)) {
                 ToolExecutionDecision.Allow
             } else {
-                beforeToolExecution(toolCall.name)
+                beforeToolExecution(toolCall)
             }
             when (val decision = preparation) {
                 ToolExecutionDecision.Allow -> Unit
@@ -342,7 +342,9 @@ internal class AgentLocalTools(
                 return JSONObject(errorResult("TOOL_DISABLED", "工具 $toolName 已在工具列表中关闭，本次未执行"))
             }
             deviceToolPermissionError(toolName)?.let { return JSONObject(it.content) }
-            return when (val decision = beforeToolExecution(toolName)) {
+            // 前台意图兜底路径没有原始 ToolCall，按名字合成一个空参数调用，判定口径一致。
+            val syntheticCall = AgentModelClient.ToolCall(id = "", name = toolName, argumentsJson = "{}")
+            return when (val decision = beforeToolExecution(syntheticCall)) {
                 ToolExecutionDecision.Allow -> {
                     publishedObservation.set(PublishedObservation())
                     action()
