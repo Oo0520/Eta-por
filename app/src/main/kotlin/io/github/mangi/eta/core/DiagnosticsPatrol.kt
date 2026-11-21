@@ -125,13 +125,34 @@ internal object DiagnosticsPatrol {
 
     // ── 对外入口 ────────────────────────────────────────────────────────────
 
+    /**
+     * 诊断包落盘目录：优先写共享目录（用户自己找得到），没有「所有文件访问权限」时
+     * 回退到应用外部目录，绝不让一次巡检白跑。
+     */
+    fun reportDir(context: Context): File {
+        val preferred = File(BASE_DIR)
+        runCatching { preferred.mkdirs() }
+        if (preferred.isDirectory) {
+            val probe = File(preferred, ".write-probe")
+            val writable = runCatching {
+                probe.writeText("ok")
+                probe.delete()
+                true
+            }.getOrDefault(false)
+            if (writable) return preferred
+        }
+        val fallback = File(context.getExternalFilesDir(null) ?: context.filesDir, "diag")
+        runCatching { fallback.mkdirs() }
+        return fallback
+    }
+
     /** 手动或定时跑一次完整巡检。 */
     suspend fun runOnce(context: Context, reason: String, exportBundle: Boolean = true): Report =
         withContext(Dispatchers.IO) {
             val app = context.applicationContext
             val settings = runCatching { SettingsDataStore.diagnosticsSettings() }.getOrNull()
             val now = System.currentTimeMillis()
-            val dir = File(BASE_DIR).apply { runCatching { mkdirs() } }
+            val dir = reportDir(app)
             val baseline = readBaseline(dir)
             val findings = mutableListOf<Finding>()
             val metrics = linkedMapOf<String, String>()
