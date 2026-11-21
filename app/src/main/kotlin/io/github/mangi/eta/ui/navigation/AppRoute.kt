@@ -37,6 +37,9 @@ sealed interface AppRoute : NavKey {
     data object Diagnostics : AppRoute
 
     @Serializable
+    data object PromptStudio : AppRoute
+
+    @Serializable
     data class ScheduledTaskDetail(val taskId: String) : AppRoute
 
     @Serializable

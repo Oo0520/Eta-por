@@ -1538,4 +1538,17 @@
   <string name="diag_patrol_run_now">立即巡检一次</string>
   <string name="diag_patrol_running">巡检中…</string>
   <string name="diag_patrol_never">还没跑过</string>
+  <string name="prompt_studio_title">提示词工坊</string>
+  <string name="prompt_studio_enabled">启用自定义提示词</string>
+  <string name="prompt_studio_enabled_summary">角色会话不生效，人物设定优先</string>
+  <string name="prompt_studio_mode_append">追加（保留内置身份）</string>
+  <string name="prompt_studio_mode_replace">替换（优先于内置身份）</string>
+  <string name="prompt_studio_content">内容</string>
+  <string name="prompt_studio_base">主身份设定</string>
+  <string name="prompt_studio_persona_name">身份名</string>
+  <string name="prompt_studio_persona_style">表达风格</string>
+  <string name="prompt_studio_append">追加指令</string>
+  <string name="prompt_studio_save">保存</string>
+  <string name="prompt_studio_saved">已保存</string>
+  <string name="prompt_studio_empty">保存失败</string>
 </resources>

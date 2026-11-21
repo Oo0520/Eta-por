@@ -772,6 +772,18 @@ private fun SettingsPageContent(
                         )
                     }
                     item {
+                        CouiPreference(
+                            title = stringResource(R.string.prompt_studio_title),
+                            icon = {
+                                CouiSettingsIcon(
+                                    Icons.Rounded.EditNote,
+                                    SettingsIconColors.Green,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.PromptStudio) },
+                        )
+                    }
+                    item {
                         val imageGenSettings by remember { ImageGenSettingsRepository.settingsFlow() }
                             .collectAsState(initial = ImageGenSettings())
                         CouiPreference(
@@ -1219,6 +1231,11 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.settings_diagnostics_title),
                             startAction = { SettingsIcon(Icons.Rounded.BugReport) },
                             onClick = { onNavigate(AppRoute.Diagnostics) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.prompt_studio_title),
+                            startAction = { SettingsIcon(Icons.Rounded.EditNote) },
+                            onClick = { onNavigate(AppRoute.PromptStudio) },
                         )
                         val imageGenSettings by remember { ImageGenSettingsRepository.settingsFlow() }
                             .collectAsState(initial = ImageGenSettings())

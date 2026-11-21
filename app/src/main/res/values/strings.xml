@@ -1557,4 +1557,17 @@
   <string name="diag_patrol_run_now">Run a patrol now</string>
   <string name="diag_patrol_running">Patrolling…</string>
   <string name="diag_patrol_never">Never run yet</string>
+  <string name="prompt_studio_title">Prompt Studio</string>
+  <string name="prompt_studio_enabled">Enable custom prompt</string>
+  <string name="prompt_studio_enabled_summary">Ignored in roleplay sessions; character persona wins</string>
+  <string name="prompt_studio_mode_append">Append (keep built-in identity)</string>
+  <string name="prompt_studio_mode_replace">Replace (takes precedence)</string>
+  <string name="prompt_studio_content">Content</string>
+  <string name="prompt_studio_base">Base identity</string>
+  <string name="prompt_studio_persona_name">Persona name</string>
+  <string name="prompt_studio_persona_style">Speaking style</string>
+  <string name="prompt_studio_append">Additional instructions</string>
+  <string name="prompt_studio_save">Save</string>
+  <string name="prompt_studio_saved">Saved</string>
+  <string name="prompt_studio_empty">Save failed</string>
 </resources>
