@@ -50,7 +50,16 @@ internal object VirtualDisplayController {
     private val lock = Any()
     private val creationLock = Any()
     private val sessions = VirtualDisplaySessionRegistry()
-    private val sessionState: VirtualDisplaySessionState get() = sessions.primary()
+
+    private fun stateOf(owner: String): VirtualDisplaySessionState = sessions.slot(owner)
+
+    /**
+     * 当前持有活屏的 owner。多开的资源层（每 owner 一套 ImageReader / 帧缓存）还没拆完，
+     * 所以同一时刻最多只有一块屏；第二块请求会被 [ensureVirtualDisplay] 拒绝并回退主屏。
+     */
+    private fun activeOwner(): String? = sessions.activeOwner()
+
+    private fun activeState(): VirtualDisplaySessionState? = activeOwner()?.let { sessions.slot(it) }
     private val mutableSnapshots = MutableStateFlow(VirtualDisplaySnapshot.Inactive)
     val snapshots: StateFlow<VirtualDisplaySnapshot> = mutableSnapshots.asStateFlow()
 
@@ -82,7 +91,7 @@ internal object VirtualDisplayController {
     }
 
     fun currentDisplayId(): Int = synchronized(lock) {
-        sessionState.active?.displayId ?: Display.DEFAULT_DISPLAY
+        activeState()?.active?.displayId ?: Display.DEFAULT_DISPLAY
     }
 
     /**
@@ -90,23 +99,33 @@ internal object VirtualDisplayController {
      */
     fun ensureVirtualDisplay(
         context: Context,
+        owner: String = VirtualDisplaySessionRegistry.DEFAULT_OWNER,
         rootAvailable: () -> Boolean = { RootAccess.isGranted },
     ): Int? {
         val appContext = context.applicationContext
         val manager = appContext.getSystemService(DisplayManager::class.java) ?: return null
+        val state = stateOf(owner)
+        val holder = activeOwner()
+        if (holder != null && holder != owner) {
+            // 资源层按 owner 拆完之前只允许一块屏；第二个会话走主屏回退，不抢屏。
+            AndroidAgentLogger.warnThrottled("virtual_display_busy") {
+                "Virtual display busy: holder=$holder requester=$owner"
+            }
+            return null
+        }
         // 创建可包含 Binder 与 Root 等待；发布状态和释放不等待这把创建锁。
         synchronized(creationLock) {
-            val existing = synchronized(lock) { sessionState.active }
+            val existing = synchronized(lock) { state.active }
             if (existing != null) {
                 val bridge = synchronized(lock) { displayResources?.bridge }
                 if ((bridge == null || bridge.isAlive) && isDisplayUsable(manager, existing.displayId)) {
                     synchronized(lock) {
-                        if (sessionState.isCurrent(existing.token)) return existing.displayId
+                        if (state.isCurrent(existing.token)) return existing.displayId
                     }
                 }
                 releaseSession(appContext, rootAvailable, existing.token)
             }
-            val token = synchronized(lock) { sessionState.begin() }
+            val token = synchronized(lock) { state.begin() }
             val frameWorker = HandlerThread("eta-virtual-display-frame")
             var reader: ImageReader? = null
             var inProcessDisplay: VirtualDisplay? = null
@@ -125,7 +144,7 @@ internal object VirtualDisplayController {
                         appContext, frames.surface, width, height, densityDpi, rootAvailable,
                     ) { process ->
                         val ownsSession = synchronized(lock) {
-                            sessionState.isCurrent(token) && displayResources?.bridge?.process === process
+                            state.isCurrent(token) && displayResources?.bridge?.process === process
                         }
                         if (ownsSession) releaseSession(appContext, rootAvailable, token)
                     }
@@ -161,7 +180,7 @@ internal object VirtualDisplayController {
                     return null
                 }
                 synchronized(lock) {
-                    if (rootBridge?.isAlive == false || !sessionState.activate(token, id)) return null
+                    if (rootBridge?.isAlive == false || !state.activate(token, id)) return null
                     displayResources = VirtualDisplaySessionResources(
                         frames, frameWorker, inProcessDisplay, rootBridge, manager, listener,
                     )
@@ -180,7 +199,7 @@ internal object VirtualDisplayController {
                 return null
             } finally {
                 if (!accepted) {
-                    synchronized(lock) { sessionState.invalidate(token) }
+                    synchronized(lock) { state.invalidate(token) }
                     VirtualDisplaySessionResources(
                         reader, frameWorker, inProcessDisplay, rootBridge, manager, listener,
                     ).close()
@@ -392,7 +411,7 @@ internal object VirtualDisplayController {
                 if (bmp != null && !bmp.isRecycled) {
                     return runCatching { bmp.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
                 }
-                if (sessionState.active == null) return null
+                if (activeState()?.active == null) return null
             }
             if (SystemClock.elapsedRealtime() >= deadline) return null
             try {
@@ -518,14 +537,29 @@ internal object VirtualDisplayController {
         rootAvailable: () -> Boolean = { RootAccess.isGranted },
     ) = releaseSession(context, rootAvailable)
 
+    /**
+     * 只关掉某个 owner 的虚拟屏。它确实是当前活屏时才真正释放资源，
+     * 否则只把这一槽从表里摘掉（多开后每个会话各自关自己的）。
+     */
+    fun releaseOwner(
+        owner: String,
+        context: Context? = null,
+        rootAvailable: () -> Boolean = { RootAccess.isGranted },
+    ) {
+        val holdsActiveDisplay = synchronized(lock) { sessions.activeOf(owner) != null }
+        if (holdsActiveDisplay) releaseSession(context, rootAvailable)
+        sessions.closeOwner(owner)
+    }
+
     private fun releaseSession(
         context: Context?,
         rootAvailable: () -> Boolean,
         expected: VirtualDisplaySessionState.Token? = null,
     ) {
         val resources = synchronized(lock) {
-            if (expected != null && !sessionState.isCurrent(expected)) return
-            sessionState.invalidate()
+            val state = activeState() ?: return
+            if (expected != null && !state.isCurrent(expected)) return
+            state.invalidate()
             highFrequencyPreview = false
             mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
             if (context != null && mutedPackages.isNotEmpty()) {
@@ -560,7 +594,7 @@ internal object VirtualDisplayController {
             val bitmap = decodeImageToBitmap(image) ?: return
             var oldBitmap: Bitmap? = null
             synchronized(lock) {
-                if (sessionState.active == null || displayResources?.reader !== reader) {
+                if (activeState()?.active == null || displayResources?.reader !== reader) {
                     bitmap.recycle()
                     return
                 }

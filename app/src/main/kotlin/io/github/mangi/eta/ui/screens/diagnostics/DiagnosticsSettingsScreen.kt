@@ -79,11 +79,10 @@ internal fun DiagnosticsSettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    val intervalLabel = DiagnosticsPatrolInterval.label(settings.intervalMinutes)
     val lastLine = when {
         status != null -> status!!
         settings.lastAt <= 0L -> stringResource(R.string.diag_patrol_never)
-        else -> "$intervalLabel · ${settings.lastLevel.ifBlank { "-" }} · ${settings.lastSummary.ifBlank { "-" }}"
+        else -> "上次巡检 · ${settings.lastSummary.ifBlank { settings.lastLevel.ifBlank { "-" } }}"
     }
 
     when (LocalUiStyle.current) {
