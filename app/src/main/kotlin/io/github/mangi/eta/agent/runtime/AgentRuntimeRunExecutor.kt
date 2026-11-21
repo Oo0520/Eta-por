@@ -11,6 +11,7 @@ import io.github.mangi.eta.data.db.EtaDatabase
 import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.model.AgentModelExecutionException
 import io.github.mangi.eta.agent.model.AgentModelFailure
+import io.github.mangi.eta.agent.model.AgentToolSchemaCompactor
 import io.github.mangi.eta.agent.model.AgentHttpClient
 import io.github.mangi.eta.agent.imagegen.ImageGenToolCatalog
 import io.github.mangi.eta.agent.imagegen.ImageGenToolExecutor
@@ -188,6 +189,11 @@ internal class AgentRuntimeRunExecutor(
                 }
             }
             val mcpTools = JSONArray().also(mcpSnapshot::appendModelTools)
+            // MCP 描述来自第三方服务器，长度不受控（实测两个 server 合计约 190KB）：
+            // 只截断自然语言描述，type/enum/required 等结构一律保留，不影响校验与执行。
+            if (mcpTools.length() > 0) {
+                runCatching { AgentToolSchemaCompactor.compactMcp(mcpTools) }
+            }
             val browserKey = AgentConversationIdentity.fromHandoff(request.handoff, request.runId)
             browserBinding = BrowserSessionRegistry.acquireRun(browserKey, request.runId)
             guiRun = guiControl.openRun(request.runId, runController) { status ->
