@@ -29,11 +29,13 @@ require(buildMetadata == null || buildMetadata.matches(Regex("[0-9A-Za-z.-]+")))
 }
 val buildMetadataSuffix = buildMetadata?.let { "+$it" }.orEmpty()
 
-// ── 测试版（可与正式版并存安装）────────────────────────────────────────────
-// 同一 applicationId 在系统里只能存在一份，共存只能换安装身份；namespace 保持不变，
-// 所以源码包名、类名、Xposed 入口（META-INF/xposed/java_init.list）与 R 类都不受影响。
-// 用法：./gradlew :app:assembleRelease -Peta.beta=true
+// ── 包名：默认与上游完全一致 ───────────────────────────────────────────────
+// 上游 applicationId = io.github.mangi.eta。本机当前装的是本分支旧测试包
+// io.github.mangi.eta.beta，所以默认走上游包名即可两个同时装、对照测试。
+// 需要再打一个测试身份时用 -Peta.beta=true（+ .beta 后缀），namespace 不变，
+// 源码包名、类名、Xposed 入口与 R 类都不受影响。
 val isBetaBuild = providers.gradleProperty("eta.beta").orNull.toBoolean()
+val upstreamApplicationId = "io.github.mangi.eta"
 val betaApplicationId = "io.github.mangi.eta.beta"
 
 android {
@@ -46,13 +48,13 @@ android {
     ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
-        applicationId = if (isBetaBuild) betaApplicationId else "io.github.mangi.eta"
+        applicationId = if (isBetaBuild) betaApplicationId else upstreamApplicationId
         minSdk = 34
         targetSdk = 37
         // versionCode 规则：yyyyMMdd + 两位当日序号（01 起），发版时随 versionName 一起手动递增。
         // 两条线各自计号：正式线沿用上游发行号，测试线独立递增。
         versionCode = if (isBetaBuild) 2026112102 else 2026112101
-        versionName = if (isBetaBuild) "3.4.4-por.1-beta.1" else "3.4.4-por.1"
+        versionName = if (isBetaBuild) "3.4.4-beta.1" else "3.4.4"
         buildConfigField("boolean", "BETA_BUILD", isBetaBuild.toString())
 
         ndk {
