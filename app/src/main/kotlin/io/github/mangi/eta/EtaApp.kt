@@ -12,6 +12,7 @@ import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.AppStrings
+import io.github.mangi.eta.agent.confirm.AgentConfirmGuard
 import io.github.mangi.eta.core.DiagnosticsAutoExport
 import io.github.mangi.eta.core.DiagnosticsPatrolAlarm
 import io.github.mangi.eta.core.safeLogType
@@ -81,6 +82,8 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
             }
         }
         XposedServiceHelper.registerListener(this)
+        runCatching { AgentConfirmGuard.init(this) }
+            .onFailure { AndroidAgentLogger.warn("Confirm guard init failed: type=${it.safeLogType()}") }
         // 极致自动排查：每次进程冷启动按上次巡检时间重排下一次闹钟；顺带重排诊断包定期导出。
         applicationScope.launch {
             runCatching { DiagnosticsPatrolAlarm.refresh(this@EtaApp) }

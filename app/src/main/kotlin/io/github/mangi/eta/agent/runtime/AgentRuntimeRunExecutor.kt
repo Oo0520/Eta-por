@@ -12,6 +12,7 @@ import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.model.AgentModelExecutionException
 import io.github.mangi.eta.agent.model.AgentModelFailure
 import io.github.mangi.eta.agent.model.AgentToolSchemaCompactor
+import io.github.mangi.eta.agent.confirm.AgentConfirmGuard
 import io.github.mangi.eta.agent.model.AgentHttpClient
 import io.github.mangi.eta.agent.imagegen.ImageGenToolCatalog
 import io.github.mangi.eta.agent.imagegen.ImageGenToolExecutor
@@ -237,7 +238,7 @@ internal class AgentRuntimeRunExecutor(
                     val toolName = toolCall.name
                     val requiresAccessibility =
                         AgentToolRequirements.requiresAccessibility(toolName)
-                    if (
+                    val gate = if (
                         !requiresAccessibility &&
                         !AgentOverlayVisibilityPolicy.requiresEntrySurfaceDismissal(toolName)
                     ) {
@@ -260,6 +261,22 @@ internal class AgentRuntimeRunExecutor(
                                     message = "入口窗口关闭未完成；本次工具未执行，请勿在当前任务中重复调用",
                                 )
                             else -> ToolExecutionDecision.Allow
+                        }
+                    }
+                    if (gate !is ToolExecutionDecision.Allow) {
+                        gate
+                    } else {
+                        val args = runCatching { org.json.JSONObject(toolCall.argumentsJson) }
+                            .getOrDefault(org.json.JSONObject())
+                        val draft = AgentConfirmGuard.inspect(appContext, toolName, args, request.runId)
+                        if (draft == null) {
+                            gate
+                        } else {
+                            ToolExecutionDecision.Reject(
+                                code = "CONFIRM_REQUIRED",
+                                message = "这一步命中「${draft.risk}」风险，已在通知里发起确认：${draft.title}。" +
+                                    "等用户批准后重试，未批准前不要重复调用。",
+                            )
                         }
                     }
                 },

@@ -211,6 +211,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- 审批闸门：通知上的「批准 / 拒绝」动作落点 -->
+        <receiver
+            android:name=".agent.confirm.ConfirmActionReceiver"
+            android:exported="false" />
+
         <!-- 极致自动排查（移植自 fork）：周期闹钟 + 诊断包定期导出，均无常驻进程 -->
         <receiver
             android:name=".core.DiagnosticsPatrolReceiver"
