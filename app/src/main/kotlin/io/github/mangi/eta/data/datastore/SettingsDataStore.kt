@@ -19,6 +19,7 @@ import io.github.mangi.eta.data.model.AppearanceTopBarBlurStyle
 import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.AssistantOverlaySettings
 import io.github.mangi.eta.data.model.ConversationTitleSettings
+import io.github.mangi.eta.data.model.DiagnosticsSettings
 import io.github.mangi.eta.data.model.ImageGenSettings
 import io.github.mangi.eta.data.model.SpeechSettings
 import io.github.mangi.eta.data.model.SubagentSettings
@@ -38,6 +39,7 @@ internal object SettingsDataStore {
     private val SUBAGENT_SETTINGS = stringPreferencesKey("subagent_settings_v1")
     private val CONVERSATION_TITLE_SETTINGS = stringPreferencesKey("conversation_title_settings_v1")
     private val ASSISTANT_OVERLAY_SETTINGS = stringPreferencesKey("assistant_overlay_settings_v1")
+    private val DIAGNOSTICS_SETTINGS = stringPreferencesKey("diagnostics_settings_v1")
     private val speechJson = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -157,6 +159,26 @@ internal object SettingsDataStore {
     suspend fun setAssistantOverlaySettings(settings: AssistantOverlaySettings) {
         ensureInitialized()
         dataStore.edit { it[ASSISTANT_OVERLAY_SETTINGS] = speechJson.encodeToString(settings) }
+    }
+
+    fun diagnosticsSettingsFlow(): Flow<DiagnosticsSettings> {
+        ensureInitialized()
+        return dataStore.data
+            .catch { cause ->
+                if (cause is IOException) emit(emptyPreferences()) else throw cause
+            }
+            .map { prefs ->
+                prefs[DIAGNOSTICS_SETTINGS]?.let { raw ->
+                    runCatching { speechJson.decodeFromString<DiagnosticsSettings>(raw) }.getOrNull()
+                } ?: DiagnosticsSettings()
+            }
+    }
+
+    suspend fun diagnosticsSettings(): DiagnosticsSettings = diagnosticsSettingsFlow().first()
+
+    suspend fun setDiagnosticsSettings(settings: DiagnosticsSettings) {
+        ensureInitialized()
+        dataStore.edit { it[DIAGNOSTICS_SETTINGS] = speechJson.encodeToString(settings) }
     }
 
     private const val STORE_NAME = "eta_settings"

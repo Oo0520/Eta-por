@@ -12,6 +12,8 @@ import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.core.AppStrings
+import io.github.mangi.eta.core.DiagnosticsAutoExport
+import io.github.mangi.eta.core.DiagnosticsPatrolAlarm
 import io.github.mangi.eta.core.safeLogType
 import io.github.mangi.eta.data.datastore.SettingsDataStore
 import io.github.mangi.eta.data.repository.AgentMemoryRepository
@@ -79,6 +81,13 @@ class EtaApp : Application(), XposedServiceHelper.OnServiceListener {
             }
         }
         XposedServiceHelper.registerListener(this)
+        // 极致自动排查：每次进程冷启动按上次巡检时间重排下一次闹钟；顺带重排诊断包定期导出。
+        applicationScope.launch {
+            runCatching { DiagnosticsPatrolAlarm.refresh(this@EtaApp) }
+                .onFailure { AndroidAgentLogger.warn("Diagnostics patrol alarm init failed: type=${it.safeLogType()}") }
+        }
+        runCatching { DiagnosticsAutoExport.refresh(this@EtaApp) }
+            .onFailure { AndroidAgentLogger.warn("Diagnostics auto export init failed: type=${it.safeLogType()}") }
         applicationScope.launch {
             try {
                 SpeechOssUpload(this@EtaApp).retryPending(this@EtaApp)
