@@ -53,13 +53,20 @@ internal object VirtualDisplayController {
 
     private fun stateOf(owner: String): VirtualDisplaySessionState = sessions.slot(owner)
 
-    /**
-     * 当前持有活屏的 owner。多开的资源层（每 owner 一套 ImageReader / 帧缓存）还没拆完，
-     * 所以同一时刻最多只有一块屏；第二块请求会被 [ensureVirtualDisplay] 拒绝并回退主屏。
-     */
+    /** 当前持有活屏的 owner（表里第一个活槽，只作兜底判定）。 */
     private fun activeOwner(): String? = sessions.activeOwner()
 
-    private fun activeState(): VirtualDisplaySessionState? = activeOwner()?.let { sessions.slot(it) }
+    /**
+     * 预览跟随焦点：焦点屏活着就镜像它；焦点屏没活（或从没设过）时退回任一活屏。
+     * 预览只有 [mutableSnapshots] 一份，其它 owner 的帧只进各自的帧状态。
+     */
+    private fun previewOwnerLocked(): String? =
+        sessions.focusedOwner?.takeIf { sessions.activeOf(it) != null } ?: sessions.activeOwner()
+
+    /** 由 displayId 反查 owner；只认活屏，查不到返回 null。 */
+    private fun ownerOfDisplayLocked(displayId: Int): String? =
+        sessions.activeOwners().firstOrNull { sessions.activeOf(it)?.displayId == displayId }
+
     private val mutableSnapshots = MutableStateFlow(VirtualDisplaySnapshot.Inactive)
     val snapshots: StateFlow<VirtualDisplaySnapshot> = mutableSnapshots.asStateFlow()
 
@@ -69,10 +76,19 @@ internal object VirtualDisplayController {
     @Volatile
     private var highFrequencyPreview: Boolean = false
 
-    private var displayResources: VirtualDisplaySessionResources? = null
-    private var latestFullBitmap: Bitmap? = null
-    private var lastUiFrameAtElapsedMs: Long = 0L
-    private val mutedPackages = linkedSetOf<String>()
+    /** 每个 owner 一块屏的底层资源（HandlerThread / ImageReader / Root 桥 / DisplayListener）。 */
+    private val resourcesByOwner = HashMap<String, VirtualDisplaySessionResources>()
+
+    /** 每个 owner 最近一帧的原始位图与 UI 节流时间戳；预览只读焦点那一份。 */
+    private class FrameState(val reader: ImageReader) {
+        var latest: Bitmap? = null
+        var lastUiAt: Long = 0L
+    }
+
+    private val framesByOwner = HashMap<String, FrameState>()
+
+    /** 音频焦点静音按 owner 记账：释放谁就只还原谁静音过的包。 */
+    private val mutedPackagesByOwner = HashMap<String, LinkedHashSet<String>>()
 
     fun isBackendAvailable(rootAvailable: Boolean, lsposedAvailable: Boolean): Boolean =
         rootAvailable || lsposedAvailable
@@ -91,7 +107,52 @@ internal object VirtualDisplayController {
     }
 
     fun currentDisplayId(): Int = synchronized(lock) {
-        activeState()?.active?.displayId ?: Display.DEFAULT_DISPLAY
+        previewOwnerLocked()?.let { sessions.activeOf(it)?.displayId } ?: Display.DEFAULT_DISPLAY
+    }
+
+    /**
+     * 切换预览焦点：只把快照切到该 owner 最近一帧，别的屏照常跑。
+     * 焦点屏不存在时返回 false，不动当前快照。
+     */
+    fun focus(owner: String): Boolean {
+        if (!sessions.focus(owner)) return false
+        synchronized(lock) { publishPreviewLocked(owner) }
+        return true
+    }
+
+    /**
+     * 把 [owner] 那块屏的最近一帧发布成预览快照（只此一份 [mutableSnapshots]）。
+     * 没有可用帧时清空 frame，保留该屏的 displayId / 尺寸；屏已不在则置 Inactive。
+     */
+    private fun publishPreviewLocked(owner: String) {
+        val active = sessions.activeOf(owner)
+        if (active == null) {
+            mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
+            return
+        }
+        val frame = framesByOwner[owner]
+        val previous = mutableSnapshots.value
+        val sameDisplay = previous.active && previous.displayId == active.displayId
+        val preview = frame?.latest?.takeIf { !it.isRecycled }?.let { createUiPreviewBitmap(it).asImageBitmap() }
+        val width = frame?.reader?.width?.takeIf { it > 0 } ?: previous.width
+        val height = frame?.reader?.height?.takeIf { it > 0 } ?: previous.height
+        mutableSnapshots.value = VirtualDisplaySnapshot(
+            active = true,
+            displayId = active.displayId,
+            width = width,
+            height = height,
+            appName = if (sameDisplay) previous.appName else "",
+            packageName = if (sameDisplay) previous.packageName else "",
+            userControlling = sameDisplay && previous.userControlling,
+            materializingToMain = false,
+            frame = preview ?: if (sameDisplay) previous.frame else null,
+            frameSequence = if (preview != null) {
+                frameSequenceGenerator.incrementAndGet()
+            } else {
+                previous.frameSequence
+            },
+            touchEffect = if (sameDisplay) previous.touchEffect else null,
+        )
     }
 
     /**
@@ -105,28 +166,29 @@ internal object VirtualDisplayController {
         val appContext = context.applicationContext
         val manager = appContext.getSystemService(DisplayManager::class.java) ?: return null
         val state = stateOf(owner)
-        val holder = activeOwner()
-        if (holder != null && holder != owner) {
-            // 资源层按 owner 拆完之前只允许一块屏；第二个会话走主屏回退，不抢屏。
-            AndroidAgentLogger.warnThrottled("virtual_display_busy") {
-                "Virtual display busy: holder=$holder requester=$owner"
-            }
-            return null
-        }
         // 创建可包含 Binder 与 Root 等待；发布状态和释放不等待这把创建锁。
         synchronized(creationLock) {
+            // 上限判定放在创建锁内，避免两个 owner 同时穿过「还能再开一个」的检查。
+            if (!sessions.canOpenNew(owner)) {
+                // 到上限只回绝这一个请求，调用方自己回退主屏；已在跑的屏不受影响。
+                AndroidAgentLogger.warnThrottled("virtual_display_busy") {
+                    "Virtual display limit reached: active=${sessions.activeOwners()} " +
+                        "requester=$owner max=${VirtualDisplaySessionRegistry.MAX_SESSIONS}"
+                }
+                return null
+            }
             val existing = synchronized(lock) { state.active }
             if (existing != null) {
-                val bridge = synchronized(lock) { displayResources?.bridge }
+                val bridge = synchronized(lock) { resourcesByOwner[owner]?.bridge }
                 if ((bridge == null || bridge.isAlive) && isDisplayUsable(manager, existing.displayId)) {
                     synchronized(lock) {
                         if (state.isCurrent(existing.token)) return existing.displayId
                     }
                 }
-                releaseSession(appContext, rootAvailable, existing.token)
+                releaseSession(appContext, rootAvailable, existing.token, owner)
             }
             val token = synchronized(lock) { state.begin() }
-            val frameWorker = HandlerThread("eta-virtual-display-frame")
+            val frameWorker = HandlerThread("eta-virtual-display-frame-$owner")
             var reader: ImageReader? = null
             var inProcessDisplay: VirtualDisplay? = null
             var rootBridge: RootVirtualDisplayBridge? = null
@@ -144,9 +206,9 @@ internal object VirtualDisplayController {
                         appContext, frames.surface, width, height, densityDpi, rootAvailable,
                     ) { process ->
                         val ownsSession = synchronized(lock) {
-                            state.isCurrent(token) && displayResources?.bridge?.process === process
+                            state.isCurrent(token) && resourcesByOwner[owner]?.bridge?.process === process
                         }
-                        if (ownsSession) releaseSession(appContext, rootAvailable, token)
+                        if (ownsSession) releaseSession(appContext, rootAvailable, token, owner)
                     }
                 }
                 val id = rootBridge?.displayId ?: run {
@@ -160,11 +222,11 @@ internal object VirtualDisplayController {
                     override fun onDisplayAdded(displayId: Int) = Unit
                     override fun onDisplayChanged(displayId: Int) {
                         if (displayId == id && !isDisplayUsable(manager, id)) {
-                            releaseSession(appContext, rootAvailable, token)
+                            releaseSession(appContext, rootAvailable, token, owner)
                         }
                     }
                     override fun onDisplayRemoved(displayId: Int) {
-                        if (displayId == id) releaseSession(appContext, rootAvailable, token)
+                        if (displayId == id) releaseSession(appContext, rootAvailable, token, owner)
                     }
                 }
                 manager.registerDisplayListener(listener, handler)
@@ -181,15 +243,19 @@ internal object VirtualDisplayController {
                 }
                 synchronized(lock) {
                     if (rootBridge?.isAlive == false || !state.activate(token, id)) return null
-                    displayResources = VirtualDisplaySessionResources(
-                        frames, frameWorker, inProcessDisplay, rootBridge, manager, listener,
+                    val replacedResources = resourcesByOwner.put(
+                        owner,
+                        VirtualDisplaySessionResources(
+                            frames, frameWorker, inProcessDisplay, rootBridge, manager, listener,
+                        ),
                     )
-                    mutableSnapshots.value = VirtualDisplaySnapshot(
-                        active = true,
-                        displayId = id,
-                        width = width,
-                        height = height,
-                    )
+                    val replacedFrame = framesByOwner.put(owner, FrameState(frames))
+                    replacedFrame?.latest?.let { if (!it.isRecycled) it.recycle() }
+                    if (replacedResources != null) {
+                        thread(name = "eta-vd-cleanup-$owner", isDaemon = true) { replacedResources.close() }
+                    }
+                    // 只有它本来就是预览焦点时才刷快照；第二块屏不许抢别人的画面。
+                    if (previewOwnerLocked() == owner) publishPreviewLocked(owner)
                     accepted = true
                 }
                 AndroidAgentLogger.info("Virtual display ready: displayId=$id size=${width}x$height")
@@ -233,7 +299,9 @@ internal object VirtualDisplayController {
         val displayId = ensureVirtualDisplay(context, rootAvailable = rootAvailable) ?: return null
         checkCancellation()
         val appContext = context.applicationContext
-        mutePackageAudioFocusIfPossible(appContext, packageName, rootAvailable)
+        val sessionOwner = synchronized(lock) { ownerOfDisplayLocked(displayId) }
+            ?: VirtualDisplaySessionRegistry.DEFAULT_OWNER
+        mutePackageAudioFocusIfPossible(appContext, sessionOwner, packageName, rootAvailable)
 
         var launchedByRoot = false
         if (rootAvailable()) {
@@ -354,7 +422,12 @@ internal object VirtualDisplayController {
         }
 
         val appContext = context.applicationContext
-        restoreMutedPackages(appContext, rootAvailable)
+        // 破壁只作用于当前这块屏；别的 owner 的会话不受牵连。
+        val owner = synchronized(lock) { ownerOfDisplayLocked(snapshot.displayId) }
+        if (owner != null) {
+            val muted = synchronized(lock) { takeMutedPackagesLocked(owner) }
+            restoreMutedPackages(appContext, rootAvailable, muted)
+        }
 
         val moved = moveVirtualTaskToMainDisplay(
             context = appContext,
@@ -370,7 +443,10 @@ internal object VirtualDisplayController {
             Thread.currentThread().interrupt()
         }
 
-        release(appContext, rootAvailable)
+        if (owner != null) {
+            releaseSession(appContext, rootAvailable, expected = null, owner = owner)
+            sessions.closeOwner(owner)
+        }
         return moved
     }
 
@@ -392,7 +468,9 @@ internal object VirtualDisplayController {
             val info = pm.getApplicationInfo(pkg, 0)
             pm.getApplicationLabel(info).toString().trim().takeIf { it.isNotBlank() }
         }.getOrNull() ?: pkg
-        mutePackageAudioFocusIfPossible(appContext, pkg, rootAvailable)
+        val sessionOwner = synchronized(lock) { ownerOfDisplayLocked(current.displayId) }
+            ?: VirtualDisplaySessionRegistry.DEFAULT_OWNER
+        mutePackageAudioFocusIfPossible(appContext, sessionOwner, pkg, rootAvailable)
         synchronized(lock) {
             val latest = mutableSnapshots.value
             if (latest.active && latest.packageName != pkg) {
@@ -403,15 +481,27 @@ internal object VirtualDisplayController {
             }
         }
     }
-    fun captureScreenshotBitmap(waitUpToMs: Long = 450L): Bitmap? {
+    /**
+     * 取当前预览焦点屏（[VirtualDisplaySessionRegistry.focusedOwner]，没有就退到任一活屏）的最近一帧。
+     * 签名保持不变：observe_screen 等既有调用方不用改。
+     */
+    fun captureScreenshotBitmap(waitUpToMs: Long = 450L): Bitmap? =
+        captureScreenshotForOwner(null, waitUpToMs)
+
+    /** 取指定会话那一块屏的最近一帧；该会话没有活屏时返回 null。 */
+    fun captureScreenshotBitmapFor(owner: String, waitUpToMs: Long = 450L): Bitmap? =
+        captureScreenshotForOwner(owner, waitUpToMs)
+
+    private fun captureScreenshotForOwner(owner: String?, waitUpToMs: Long): Bitmap? {
         val deadline = SystemClock.elapsedRealtime() + waitUpToMs.coerceAtLeast(0L)
         while (true) {
             synchronized(lock) {
-                val bmp = latestFullBitmap
+                val target = owner ?: previewOwnerLocked() ?: return null
+                if (owner != null && sessions.activeOf(owner) == null) return null
+                val bmp = framesByOwner[target]?.latest
                 if (bmp != null && !bmp.isRecycled) {
                     return runCatching { bmp.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
                 }
-                if (activeState()?.active == null) return null
             }
             if (SystemClock.elapsedRealtime() >= deadline) return null
             try {
@@ -532,53 +622,98 @@ internal object VirtualDisplayController {
         }
     }
 
+    /** 释放全部 owner（对外语义不变：停服务、收工时一块屏都不留）。 */
     fun release(
         context: Context? = null,
         rootAvailable: () -> Boolean = { RootAccess.isGranted },
-    ) = releaseSession(context, rootAvailable)
+    ) {
+        val owners = synchronized(lock) {
+            val table = LinkedHashSet<String>()
+            table.addAll(resourcesByOwner.keys)
+            table.addAll(framesByOwner.keys)
+            table.addAll(sessions.activeOwners())
+            table
+        }
+        if (owners.isEmpty() && !mutableSnapshots.value.active) return
+        for (owner in owners) {
+            releaseSession(context, rootAvailable, expected = null, owner = owner)
+        }
+        synchronized(lock) {
+            if (mutableSnapshots.value.active) mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
+            highFrequencyPreview = false
+        }
+    }
 
     /**
-     * 只关掉某个 owner 的虚拟屏。它确实是当前活屏时才真正释放资源，
-     * 否则只把这一槽从表里摘掉（多开后每个会话各自关自己的）。
+     * 只关掉某个 owner 的虚拟屏：资源、帧缓存、它自己静音过的包，别家一点不动。
      */
     fun releaseOwner(
         owner: String,
         context: Context? = null,
         rootAvailable: () -> Boolean = { RootAccess.isGranted },
     ) {
-        val holdsActiveDisplay = synchronized(lock) { sessions.activeOf(owner) != null }
-        if (holdsActiveDisplay) releaseSession(context, rootAvailable)
+        releaseSession(context, rootAvailable, expected = null, owner = owner)
         sessions.closeOwner(owner)
+        synchronized(lock) {
+            val next = previewOwnerLocked()
+            if (next == null) {
+                mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
+            } else {
+                publishPreviewLocked(next)
+            }
+        }
     }
 
+    /**
+     * 释放单个 owner：[expected] 不为空时必须仍是同一个 token；只摘这个 owner 的资源与帧状态。
+     * 只有在它正处于预览焦点时，快照才切到下一个活屏（没有就 Inactive）。
+     */
     private fun releaseSession(
         context: Context?,
         rootAvailable: () -> Boolean,
         expected: VirtualDisplaySessionState.Token? = null,
+        owner: String,
     ) {
-        val resources = synchronized(lock) {
-            val state = activeState() ?: return
+        var detached: VirtualDisplaySessionResources? = null
+        var frameBitmap: Bitmap? = null
+        var mutedRestore: List<String> = emptyList()
+        synchronized(lock) {
+            val active = sessions.activeOf(owner)
+            val resources = resourcesByOwner[owner]
+            val frames = framesByOwner[owner]
+            if (active == null && resources == null && frames == null) return
+            val state = sessions.slot(owner)
             if (expected != null && !state.isCurrent(expected)) return
+            val wasPreview = previewOwnerLocked() == owner
             state.invalidate()
-            highFrequencyPreview = false
-            mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
-            if (context != null && mutedPackages.isNotEmpty()) {
-                restoreMutedPackages(context.applicationContext, rootAvailable)
-            } else {
-                mutedPackages.clear()
+            detached = resourcesByOwner.remove(owner)
+            frameBitmap = framesByOwner.remove(owner)?.latest
+            mutedRestore = takeMutedPackagesLocked(owner)
+            if (wasPreview) {
+                val next = previewOwnerLocked()
+                if (next == null) {
+                    mutableSnapshots.value = VirtualDisplaySnapshot.Inactive
+                    highFrequencyPreview = false
+                } else {
+                    publishPreviewLocked(next)
+                }
             }
-            val detached = displayResources
-            displayResources = null
-            latestFullBitmap?.let { if (!it.isRecycled) it.recycle() }
-            latestFullBitmap = null
-            lastUiFrameAtElapsedMs = 0L
-            detached
         }
-        if (resources != null) {
-            thread(name = "eta-vd-cleanup", isDaemon = true) { resources.close() }
+        val bitmapToRecycle = frameBitmap
+        if (bitmapToRecycle != null && !bitmapToRecycle.isRecycled) bitmapToRecycle.recycle()
+        val resourcesToClose = detached
+        if (resourcesToClose != null) {
+            thread(name = "eta-vd-cleanup-$owner", isDaemon = true) { resourcesToClose.close() }
+        }
+        if (context != null && mutedRestore.isNotEmpty()) {
+            restoreMutedPackages(context.applicationContext, rootAvailable, mutedRestore)
         }
     }
 
+    /**
+     * 帧回调按 [reader] 身份反查 owner：找不到就丢弃这一帧（别的会话的旧 reader 迟到帧）。
+     * 只有预览焦点那一块屏刷 UI，其它 owner 的帧只更新自己的最近帧供截图。
+     */
     private fun onFrameAvailable(reader: ImageReader) {
         val image = try {
             reader.acquireLatestImage()
@@ -589,26 +724,35 @@ internal object VirtualDisplayController {
         try {
             val now = SystemClock.elapsedRealtime()
             val minIntervalMs = if (highFrequencyPreview) 30L else 160L
-            val shouldUpdateUi = now - lastUiFrameAtElapsedMs >= minIntervalMs || latestFullBitmap == null
 
             val bitmap = decodeImageToBitmap(image) ?: return
             var oldBitmap: Bitmap? = null
             synchronized(lock) {
-                if (activeState()?.active == null || displayResources?.reader !== reader) {
+                val owner = framesByOwner.entries.firstOrNull { it.value.reader === reader }?.key
+                val frame = owner?.let { framesByOwner[it] }
+                if (owner == null || frame == null) {
                     bitmap.recycle()
                     return
                 }
-                oldBitmap = latestFullBitmap
-                latestFullBitmap = bitmap
+                val active = sessions.activeOf(owner)
+                if (active == null || resourcesByOwner[owner]?.reader !== reader) {
+                    bitmap.recycle()
+                    return
+                }
+                val shouldUpdateUi = previewOwnerLocked() == owner &&
+                    (now - frame.lastUiAt >= minIntervalMs || frame.latest == null)
+                oldBitmap = frame.latest
+                frame.latest = bitmap
                 if (shouldUpdateUi) {
-                    lastUiFrameAtElapsedMs = now
-                    val previewBitmap = createUiPreviewBitmap(bitmap)
+                    frame.lastUiAt = now
                     val current = mutableSnapshots.value
-                    if (current.active) {
+                    if (current.active && current.displayId == active.displayId) {
                         mutableSnapshots.value = current.copy(
-                            frame = previewBitmap.asImageBitmap(),
+                            frame = createUiPreviewBitmap(bitmap).asImageBitmap(),
                             frameSequence = frameSequenceGenerator.incrementAndGet(),
                         )
+                    } else {
+                        publishPreviewLocked(owner)
                     }
                 }
             }
@@ -795,11 +939,14 @@ internal object VirtualDisplayController {
 
     private fun mutePackageAudioFocusIfPossible(
         context: Context,
+        owner: String,
         packageName: String,
         rootAvailable: () -> Boolean,
     ) {
         if (!rootAvailable() || !DeviceToolContract.validPackageName(packageName)) return
-        val added = synchronized(lock) { mutedPackages.add(packageName) }
+        val added = synchronized(lock) {
+            mutedPackagesByOwner.getOrPut(owner) { LinkedHashSet() }.add(packageName)
+        }
         if (!added) return
         val userId = DeviceToolContract.appUserId(context)
         thread(name = "eta-vd-audio-shield", isDaemon = true) {
@@ -817,21 +964,21 @@ internal object VirtualDisplayController {
         }
     }
 
+    /** 调用方持有 [lock]：把某个 owner 的静音账本整本摘走，返回内容供异步还原。 */
+    private fun takeMutedPackagesLocked(owner: String): List<String> =
+        mutedPackagesByOwner.remove(owner)?.toList().orEmpty()
+
     private fun restoreMutedPackages(
         context: Context,
         rootAvailable: () -> Boolean,
+        packages: List<String>,
     ) {
-        val toRestore = synchronized(lock) {
-            val copy = mutedPackages.toList()
-            mutedPackages.clear()
-            copy
-        }
-        if (toRestore.isEmpty() || !rootAvailable()) return
+        if (packages.isEmpty() || !rootAvailable()) return
         val userId = DeviceToolContract.appUserId(context)
         thread(name = "eta-vd-audio-restore", isDaemon = true) {
             val exec = BoundedRootCommandExecutor(AndroidAgentLogger, rootAvailable = rootAvailable)
             try {
-                for (pkg in toRestore) {
+                for (pkg in packages) {
                     if (!DeviceToolContract.validPackageName(pkg)) continue
                     exec.execute(
                         "cmd appops set --user $userId ${DeviceToolContract.quote(pkg)} TAKE_AUDIO_FOCUS allow",
