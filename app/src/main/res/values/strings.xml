@@ -1570,4 +1570,10 @@
   <string name="prompt_studio_save">Save</string>
   <string name="prompt_studio_saved">Saved</string>
   <string name="prompt_studio_empty">Save failed</string>
+  <string name="conversation_categories_title">Conversation categories</string>
+  <string name="conversation_categories_new">New category</string>
+  <string name="conversation_categories_name">Category name</string>
+  <string name="conversation_categories_add">Add</string>
+  <string name="conversation_categories_list">Categories</string>
+  <string name="conversation_categories_empty">No category yet</string>
 </resources>

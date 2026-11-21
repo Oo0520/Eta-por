@@ -630,6 +630,7 @@ private fun titleForRoute(route: AppRoute?): String = when (route) {
     is AppRoute.WebToolsSettings -> stringResource(R.string.web_tools_settings_title)
     is AppRoute.Diagnostics -> stringResource(R.string.settings_diagnostics_title)
     is AppRoute.PromptStudio -> stringResource(R.string.prompt_studio_title)
+    is AppRoute.ConversationCategories -> stringResource(R.string.conversation_categories_title)
     is AppRoute.ImageGenSettings -> stringResource(R.string.image_gen_settings_title)
     is AppRoute.ImageGenGallery -> stringResource(R.string.image_gen_gallery_title)
     is AppRoute.Skills -> stringResource(R.string.route_skills)

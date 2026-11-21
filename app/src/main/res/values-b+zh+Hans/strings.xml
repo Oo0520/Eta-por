@@ -1551,4 +1551,10 @@
   <string name="prompt_studio_save">保存</string>
   <string name="prompt_studio_saved">已保存</string>
   <string name="prompt_studio_empty">保存失败</string>
+  <string name="conversation_categories_title">会话分类</string>
+  <string name="conversation_categories_new">新建分类</string>
+  <string name="conversation_categories_name">分类名</string>
+  <string name="conversation_categories_add">添加</string>
+  <string name="conversation_categories_list">已有分类</string>
+  <string name="conversation_categories_empty">还没有分类</string>
 </resources>

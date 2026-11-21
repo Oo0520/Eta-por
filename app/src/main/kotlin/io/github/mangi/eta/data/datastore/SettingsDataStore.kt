@@ -20,6 +20,7 @@ import io.github.mangi.eta.data.model.AppearanceUiStyle
 import io.github.mangi.eta.data.model.AssistantOverlaySettings
 import io.github.mangi.eta.data.model.ConversationTitleSettings
 import io.github.mangi.eta.data.model.DiagnosticsSettings
+import io.github.mangi.eta.data.model.ConversationCategoryState
 import io.github.mangi.eta.data.model.ImageGenSettings
 import io.github.mangi.eta.data.model.SpeechSettings
 import io.github.mangi.eta.data.model.SubagentSettings
@@ -40,6 +41,7 @@ internal object SettingsDataStore {
     private val CONVERSATION_TITLE_SETTINGS = stringPreferencesKey("conversation_title_settings_v1")
     private val ASSISTANT_OVERLAY_SETTINGS = stringPreferencesKey("assistant_overlay_settings_v1")
     private val DIAGNOSTICS_SETTINGS = stringPreferencesKey("diagnostics_settings_v1")
+    private val CONVERSATION_CATEGORIES = stringPreferencesKey("conversation_categories_v1")
     private val speechJson = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -179,6 +181,23 @@ internal object SettingsDataStore {
     suspend fun setDiagnosticsSettings(settings: DiagnosticsSettings) {
         ensureInitialized()
         dataStore.edit { it[DIAGNOSTICS_SETTINGS] = speechJson.encodeToString(settings) }
+    }
+
+    fun conversationCategoriesFlow(): Flow<ConversationCategoryState> {
+        ensureInitialized()
+        return dataStore.data
+            .catch { cause ->
+                if (cause is IOException) emit(emptyPreferences()) else throw cause
+            }
+            .map { prefs -> ConversationCategoryState.decode(prefs[CONVERSATION_CATEGORIES]) }
+    }
+
+    suspend fun conversationCategories(): ConversationCategoryState =
+        conversationCategoriesFlow().first()
+
+    suspend fun setConversationCategories(state: ConversationCategoryState) {
+        ensureInitialized()
+        dataStore.edit { it[CONVERSATION_CATEGORIES] = state.toJson() }
     }
 
     private const val STORE_NAME = "eta_settings"

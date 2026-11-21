@@ -1447,4 +1447,10 @@
   <string name="prompt_studio_save">儲存</string>
   <string name="prompt_studio_saved">已儲存</string>
   <string name="prompt_studio_empty">儲存失敗</string>
+  <string name="conversation_categories_title">會話分類</string>
+  <string name="conversation_categories_new">新增分類</string>
+  <string name="conversation_categories_name">分類名</string>
+  <string name="conversation_categories_add">新增</string>
+  <string name="conversation_categories_list">已有分類</string>
+  <string name="conversation_categories_empty">還沒有分類</string>
 </resources>
