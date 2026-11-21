@@ -49,7 +49,8 @@ internal object VirtualDisplayController {
 
     private val lock = Any()
     private val creationLock = Any()
-    private val sessionState = VirtualDisplaySessionState()
+    private val sessions = VirtualDisplaySessionRegistry()
+    private val sessionState: VirtualDisplaySessionState get() = sessions.primary()
     private val mutableSnapshots = MutableStateFlow(VirtualDisplaySnapshot.Inactive)
     val snapshots: StateFlow<VirtualDisplaySnapshot> = mutableSnapshots.asStateFlow()
 
