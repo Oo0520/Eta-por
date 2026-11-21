@@ -760,6 +760,18 @@ private fun SettingsPageContent(
                         )
                     }
                     item {
+                        CouiPreference(
+                            title = stringResource(R.string.settings_diagnostics_title),
+                            icon = {
+                                CouiSettingsIcon(
+                                    Icons.Rounded.BugReport,
+                                    SettingsIconColors.Yellow,
+                                )
+                            },
+                            onClick = { onNavigate(AppRoute.Diagnostics) },
+                        )
+                    }
+                    item {
                         val imageGenSettings by remember { ImageGenSettingsRepository.settingsFlow() }
                             .collectAsState(initial = ImageGenSettings())
                         CouiPreference(
@@ -1202,6 +1214,11 @@ private fun SettingsPageContent(
                             title = stringResource(R.string.web_tools_settings_title),
                             startAction = { SettingsIcon(Icons.Rounded.TravelExplore) },
                             onClick = { onNavigate(AppRoute.WebToolsSettings) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.settings_diagnostics_title),
+                            startAction = { SettingsIcon(Icons.Rounded.BugReport) },
+                            onClick = { onNavigate(AppRoute.Diagnostics) },
                         )
                         val imageGenSettings by remember { ImageGenSettingsRepository.settingsFlow() }
                             .collectAsState(initial = ImageGenSettings())

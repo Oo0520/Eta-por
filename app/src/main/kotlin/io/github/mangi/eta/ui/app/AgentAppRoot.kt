@@ -100,6 +100,7 @@ import io.github.mangi.eta.ui.screens.settings.ConversationTitleSettingsScreen
 import io.github.mangi.eta.ui.screens.skills.AgentSkillsScreen
 import io.github.mangi.eta.ui.screens.subagent.SubagentSettingsScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxEnvironmentScreen
+import io.github.mangi.eta.ui.screens.diagnostics.DiagnosticsSettingsScreen
 import io.github.mangi.eta.ui.screens.terminal.LinuxFilesScreen
 import io.github.mangi.eta.ui.screens.terminal.SharedFoldersScreen
 import io.github.mangi.eta.ui.screens.terminal.TerminalEntryScreen
@@ -510,6 +511,9 @@ fun AgentAppRoot(
                     }
                     entry<AppRoute.WebToolsSettings>(swipeDismiss = activeSwipeDismiss) {
                         WebToolsSettingsScreen(onBack = ::popRoute)
+                    }
+                    entry<AppRoute.Diagnostics>(swipeDismiss = activeSwipeDismiss) {
+                        DiagnosticsSettingsScreen(onBack = ::popRoute)
                     }
                     entry<AppRoute.ImageGenSettings>(swipeDismiss = activeSwipeDismiss) {
                         ImageGenSettingsScreen(

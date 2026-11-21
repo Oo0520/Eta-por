@@ -1530,4 +1530,12 @@
   <string name="scheduled_notification_gui_ready_title">定时任务就绪：%1$s</string>
   <string name="scheduled_action_run_now">立即试跑</string>
   <string name="scheduled_action_stop">停止运行</string>
+  <string name="settings_diagnostics_title">诊断与巡检</string>
+  <string name="diag_patrol_enable">极致自动排查</string>
+  <string name="diag_patrol_enable_summary">按周期检查存储、内存、权限、数据库与运行状态，无常驻进程</string>
+  <string name="diag_patrol_interval_title">巡检周期</string>
+  <string name="diag_patrol_interval_current">当前</string>
+  <string name="diag_patrol_run_now">立即巡检一次</string>
+  <string name="diag_patrol_running">巡检中…</string>
+  <string name="diag_patrol_never">还没跑过</string>
 </resources>

@@ -1549,4 +1549,12 @@
   <string name="scheduled_notification_gui_ready_title">Ready to run: %1$s</string>
   <string name="scheduled_action_run_now">Run now</string>
   <string name="scheduled_action_stop">Stop</string>
+  <string name="settings_diagnostics_title">Diagnostics Patrol</string>
+  <string name="diag_patrol_enable">Automatic patrol</string>
+  <string name="diag_patrol_enable_summary">Checks storage, memory, permissions, database and runtime state on a schedule; no background process</string>
+  <string name="diag_patrol_interval_title">Patrol interval</string>
+  <string name="diag_patrol_interval_current">Current</string>
+  <string name="diag_patrol_run_now">Run a patrol now</string>
+  <string name="diag_patrol_running">Patrolling…</string>
+  <string name="diag_patrol_never">Never run yet</string>
 </resources>
