@@ -292,11 +292,12 @@ internal object VirtualDisplayController {
         packageName: String,
         appName: String,
         launchIntent: Intent,
+        owner: String = VirtualDisplaySessionRegistry.DEFAULT_OWNER,
         rootAvailable: () -> Boolean = { RootAccess.isGranted },
         checkCancellation: () -> Unit = {},
     ): Int? {
         checkCancellation()
-        val displayId = ensureVirtualDisplay(context, rootAvailable = rootAvailable) ?: return null
+        val displayId = ensureVirtualDisplay(context, owner = owner, rootAvailable = rootAvailable) ?: return null
         checkCancellation()
         val appContext = context.applicationContext
         val sessionOwner = synchronized(lock) { ownerOfDisplayLocked(displayId) }
@@ -356,11 +357,12 @@ internal object VirtualDisplayController {
         context: Context,
         intent: Intent,
         targetLabel: String,
+        owner: String = VirtualDisplaySessionRegistry.DEFAULT_OWNER,
         rootAvailable: () -> Boolean = { RootAccess.isGranted },
         checkCancellation: () -> Unit = {},
     ): Int? {
         checkCancellation()
-        val displayId = ensureVirtualDisplay(context, rootAvailable = rootAvailable) ?: return null
+        val displayId = ensureVirtualDisplay(context, owner = owner, rootAvailable = rootAvailable) ?: return null
         checkCancellation()
         val appContext = context.applicationContext
         val started = runCatching {

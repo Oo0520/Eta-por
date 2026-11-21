@@ -200,6 +200,7 @@ internal class AgentRuntimeRunExecutor(
                 context = appContext,
                 logger = AndroidAgentLogger,
                 browserRunId = request.runId,
+                virtualDisplayOwner = conversationId,
                 browserSession = BrowserSessionRegistry.get(browserKey),
                 guiControl = guiRun,
                 browserToolsEnabled = {

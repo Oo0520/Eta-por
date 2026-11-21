@@ -6,6 +6,7 @@ import io.github.mangi.eta.agent.model.AgentModelClient
 import io.github.mangi.eta.agent.terminal.ShellProcessSupervisor
 import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
 import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController
+import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplaySessionRegistry
 import io.github.mangi.eta.core.AgentLogger
 
 import android.content.ClipData
@@ -28,6 +29,7 @@ internal class RootShellDeviceController(
     private val logger: AgentLogger,
     private val screenshotExcludedPackages: () -> Set<String> = { emptySet() },
     private val rootAvailable: () -> Boolean = { RootAccess.isGranted },
+    private val virtualDisplayOwner: String = VirtualDisplaySessionRegistry.DEFAULT_OWNER,
 ) : AutoCloseable {
     private val processSupervisor = ShellProcessSupervisor(rootAvailable = rootAvailable)
 
@@ -826,7 +828,7 @@ internal class RootShellDeviceController(
 
     private fun captureScreenshot(displayId: Int = Display.DEFAULT_DISPLAY): ScreenCapture {
         if (CanvasRoutingPolicy.isVirtualDisplay(displayId)) {
-            val vdBitmap = VirtualDisplayController.captureScreenshotBitmap()
+            val vdBitmap = VirtualDisplayController.captureScreenshotBitmapFor(virtualDisplayOwner)
             if (vdBitmap != null) {
                 val image = try {
                     runCatching {

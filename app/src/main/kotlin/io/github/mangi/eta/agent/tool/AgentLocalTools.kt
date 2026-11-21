@@ -32,6 +32,7 @@ import io.github.mangi.eta.agent.runtime.AgentRunCancelledException
 import io.github.mangi.eta.agent.runtime.GuiControlCoordinator
 import io.github.mangi.eta.agent.virtualdisplay.CanvasRoutingPolicy
 import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplayController
+import io.github.mangi.eta.agent.virtualdisplay.VirtualDisplaySessionRegistry
 import io.github.mangi.eta.agent.skill.SkillCompatibilityChecker
 import io.github.mangi.eta.agent.skill.SkillIndexService
 import io.github.mangi.eta.agent.skill.SkillInstallErrorCode
@@ -73,6 +74,7 @@ internal class AgentLocalTools(
     private val context: Context,
     private val logger: AgentLogger,
     private val browserRunId: String = "",
+    private val virtualDisplayOwner: String = VirtualDisplaySessionRegistry.DEFAULT_OWNER,
     private val browserToolsEnabled: () -> Boolean = {
         Prefs.isEnabled(Prefs.Keys.AGENT_BROWSER_TOOLS)
     },
@@ -122,7 +124,8 @@ internal class AgentLocalTools(
     @Volatile
     private var activeDisplayId: Int = Display.DEFAULT_DISPLAY
     private val browserSessionRef = lazy { browserSession ?: AgentBrowserSession() }
-    private val deviceController = RootShellDeviceController(logger, screenshotExcludedPackages, rootAvailable)
+    private val deviceController =
+        RootShellDeviceController(logger, screenshotExcludedPackages, rootAvailable, virtualDisplayOwner)
     private val rootCommandExecutor = BoundedRootCommandExecutor(logger, rootAvailable = rootAvailable)
     private val structuredDeviceTools = AgentStructuredDeviceTools(
         context = context,
@@ -948,6 +951,7 @@ internal class AgentLocalTools(
                 packageName = app.packageName,
                 appName = app.appName,
                 launchIntent = launchIntent,
+                owner = virtualDisplayOwner,
                 rootAvailable = rootAvailable,
                 checkCancellation = ::checkCancellation,
             )
@@ -1076,6 +1080,7 @@ internal class AgentLocalTools(
                 context = context,
                 intent = intent,
                 targetLabel = uri.host ?: uri.scheme.orEmpty(),
+                owner = virtualDisplayOwner,
                 rootAvailable = rootAvailable,
                 checkCancellation = ::checkCancellation,
             )
