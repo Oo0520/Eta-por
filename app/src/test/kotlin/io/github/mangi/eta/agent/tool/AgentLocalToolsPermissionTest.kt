@@ -68,7 +68,8 @@ class AgentLocalToolsPermissionTest {
         val tools = tools(
             guiControl = control,
             screenObservationProvider = { observation("observed", it.includeScreenshot) },
-            beforeToolExecution = { name ->
+            beforeToolExecution = { call ->
+                val name = call.name
                 if (name in setOf("observe_screen", "release_gui")) ToolExecutionDecision.Allow
                 else ToolExecutionDecision.Reject("ACTION_REACHED", "动作执行前测试边界")
             },
@@ -465,7 +466,7 @@ class AgentLocalToolsPermissionTest {
         screenObservationProvider: (
             (AgentScreenObservationContract.Options) -> RootShellDeviceController.Observation
         )? = null,
-        beforeToolExecution: (String) -> ToolExecutionDecision = {
+        beforeToolExecution: (AgentModelClient.ToolCall) -> ToolExecutionDecision = {
             ToolExecutionDecision.Allow
         },
         guiControl: GuiControlCoordinator.RunControl? = null,
